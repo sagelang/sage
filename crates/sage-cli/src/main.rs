@@ -1,7 +1,7 @@
 //! Command-line interface for the Sage language.
 
 use clap::{Parser, Subcommand};
-use miette::{IntoDiagnostic, Result, WrapErr};
+use miette::{Diagnostic, IntoDiagnostic, Result, Severity, WrapErr};
 use sage_checker::check;
 use sage_interpreter::{Runtime, RuntimeConfig};
 use sage_lexer::lex;
@@ -81,11 +81,16 @@ async fn run_file(path: &PathBuf, mock: bool) -> Result<()> {
 
     // Type check
     let check_result = check(&program);
-    if !check_result.errors.is_empty() {
-        for err in &check_result.errors {
-            let report = miette::Report::new(err.clone()).with_source_code(source.clone());
-            eprintln!("{report:?}");
+    let mut has_errors = false;
+    for err in &check_result.errors {
+        let report = miette::Report::new(err.clone()).with_source_code(source.clone());
+        eprintln!("{report:?}");
+        // Only count actual errors, not warnings
+        if err.severity().unwrap_or(Severity::Error) == Severity::Error {
+            has_errors = true;
         }
+    }
+    if has_errors {
         miette::bail!("Type errors in {filename}");
     }
 
@@ -144,12 +149,13 @@ fn check_file(path: &PathBuf) -> Result<()> {
     if let Some(program) = program {
         // Type check
         let check_result = check(&program);
-        if !check_result.errors.is_empty() {
-            for err in &check_result.errors {
-                let report = miette::Report::new(err.clone()).with_source_code(source.clone());
-                eprintln!("{report:?}");
+        for err in &check_result.errors {
+            let report = miette::Report::new(err.clone()).with_source_code(source.clone());
+            eprintln!("{report:?}");
+            // Only count actual errors, not warnings
+            if err.severity().unwrap_or(Severity::Error) == Severity::Error {
+                has_errors = true;
             }
-            has_errors = true;
         }
     }
 

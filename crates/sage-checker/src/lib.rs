@@ -376,4 +376,57 @@ mod tests {
         let (_, result) = check_source(source);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
     }
+
+    #[test]
+    fn check_unused_belief_warning() {
+        let source = r#"
+            agent Worker {
+                belief unused: Int
+
+                on start {
+                    emit(42)
+                }
+            }
+
+            agent Main {
+                on start {
+                    let w = spawn Worker { unused: 1 }
+                    emit(await w)
+                }
+            }
+            run Main
+        "#;
+
+        let (_, result) = check_source(source);
+        // Should have exactly one warning for unused belief
+        assert_eq!(result.errors.len(), 1);
+        assert!(matches!(
+            result.errors[0],
+            CheckError::UnusedBelief { .. }
+        ));
+    }
+
+    #[test]
+    fn check_used_belief_no_warning() {
+        let source = r#"
+            agent Worker {
+                belief value: Int
+
+                on start {
+                    emit(self.value * 2)
+                }
+            }
+
+            agent Main {
+                on start {
+                    let w = spawn Worker { value: 21 }
+                    emit(await w)
+                }
+            }
+            run Main
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
 }

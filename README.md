@@ -152,9 +152,9 @@ sage check examples/hello.sg
 - [x] **TASK-039** — research.sg (full demo)
 
 ### Milestone 8: Polish
-- [ ] **TASK-040** — Error message polish
-- [ ] **TASK-041** — Compiler warning for unused beliefs
-- [ ] **TASK-042** — CONTRIBUTING.md and issue templates
+- [x] **TASK-040** — Error message polish
+- [x] **TASK-041** — Compiler warning for unused beliefs
+- [x] **TASK-042** — CONTRIBUTING.md and issue templates
 
 ## Project Structure
 

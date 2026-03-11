@@ -6,7 +6,7 @@ use crate::types::Type;
 use sage_parser::{
     AgentDecl, BinOp, Block, EventKind, Expr, FnDecl, Literal, Program, Stmt, UnaryOp,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Result of type checking a program.
 pub struct CheckResult {
@@ -30,6 +30,8 @@ pub struct Checker {
     in_function: bool,
     /// The expected return type of the current function.
     expected_return: Option<Type>,
+    /// Beliefs accessed in the current agent (for unused belief warnings).
+    used_beliefs: HashSet<String>,
 }
 
 impl Checker {
@@ -43,6 +45,7 @@ impl Checker {
             current_agent: None,
             in_function: false,
             expected_return: None,
+            used_beliefs: HashSet::new(),
         }
     }
 
@@ -146,6 +149,7 @@ impl Checker {
 
     fn check_agent(&mut self, agent: &AgentDecl) {
         self.current_agent = Some(agent.name.name.clone());
+        self.used_beliefs.clear();
 
         for handler in &agent.handlers {
             self.push_scope();
@@ -162,6 +166,14 @@ impl Checker {
 
             self.check_block(&handler.body);
             self.pop_scope();
+        }
+
+        // Check for unused beliefs
+        for belief in &agent.beliefs {
+            if !self.used_beliefs.contains(&belief.name.name) {
+                self.errors
+                    .push(CheckError::unused_belief(&belief.name.name, &belief.span));
+            }
         }
 
         self.current_agent = None;
@@ -373,6 +385,8 @@ impl Checker {
                 };
 
                 if let Some(ty) = agent.beliefs.get(&field.name) {
+                    // Mark this belief as used
+                    self.used_beliefs.insert(field.name.clone());
                     ty.clone()
                 } else {
                     self.errors

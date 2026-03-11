@@ -177,6 +177,17 @@ pub enum CheckError {
     },
 
     // =========================================================================
+    // Warnings
+    // =========================================================================
+    #[error("unused belief `{name}`")]
+    #[diagnostic(code(sage::unused_belief), severity(Warning))]
+    UnusedBelief {
+        name: String,
+        #[label("declared but never accessed")]
+        span: SourceSpan,
+    },
+
+    // =========================================================================
     // Misc errors
     // =========================================================================
     #[error("return statement outside of function")]
@@ -376,6 +387,14 @@ impl CheckError {
     pub fn non_bool_condition(found: impl Into<String>, span: &Span) -> Self {
         Self::NonBoolCondition {
             found: found.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create an unused belief warning.
+    pub fn unused_belief(name: impl Into<String>, span: &Span) -> Self {
+        Self::UnusedBelief {
+            name: name.into(),
             span: to_source_span(span),
         }
     }
