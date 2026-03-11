@@ -1,0 +1,125 @@
+# Sage
+
+A programming language where **agents are first-class citizens** — not a library, not a framework, but a semantic primitive baked into the compiler and runtime.
+
+Sage targets professional software developers building AI-native systems. Instead of wrestling with Python frameworks like LangChain or CrewAI, you write agents as naturally as you write functions.
+
+```sage
+agent Researcher {
+    belief topic: String
+
+    on start {
+        let summary: Inferred<String> = infer(
+            "Write a concise 2-sentence summary of: {self.topic}"
+        )
+        emit(summary)
+    }
+}
+
+agent Coordinator {
+    on start {
+        let r1 = spawn Researcher { topic: "quantum computing" }
+        let r2 = spawn Researcher { topic: "CRISPR gene editing" }
+
+        let s1 = await r1
+        let s2 = await r2
+
+        print(s1)
+        print(s2)
+    }
+}
+
+run Coordinator
+```
+
+## Status
+
+**Work in progress** — currently implementing the POC (Proof of Concept).
+
+See [docs/RFC-0001-poc.md](docs/RFC-0001-poc.md) for the full specification.
+
+## Building
+
+```bash
+cargo build --release
+```
+
+## Implementation Progress
+
+### Milestone 1: Project Scaffolding
+- [x] **TASK-001** — Initialize Cargo workspace
+- [x] **TASK-002** — Set up CI (GitHub Actions)
+- [x] **TASK-003** — Define shared types crate (`sage-types`)
+
+### Milestone 2: Lexer
+- [x] **TASK-004** — Define Token enum
+- [x] **TASK-005** — Implement lexer public API
+- [x] **TASK-006** — Lexer tests *(comprehensive coverage included in TASK-004/005)*
+
+### Milestone 3: Parser
+- [ ] **TASK-007** — Define AST types
+- [ ] **TASK-008** — Parser: top-level structure
+- [ ] **TASK-009** — Parser: agent declarations
+- [ ] **TASK-010** — Parser: statements
+- [ ] **TASK-011** — Parser: expressions
+- [ ] **TASK-012** — Parser: function declarations
+- [ ] **TASK-013** — Parser error recovery
+- [ ] **TASK-014** — Parser tests
+
+### Milestone 4: Name Resolution + Type Checker
+- [ ] **TASK-015** — Name resolver
+- [ ] **TASK-016** — Type environment
+- [ ] **TASK-017** — Type checker: agents
+- [ ] **TASK-018** — Type checker: expressions
+- [ ] **TASK-019** — Type checker: statements
+- [ ] **TASK-020** — Type checker: functions
+- [ ] **TASK-021** — Entry agent validation
+- [ ] **TASK-022** — Type checker tests
+
+### Milestone 5: Interpreter & Runtime
+- [ ] **TASK-023** — Value enum and runtime environment
+- [ ] **TASK-024** — Prelude built-in functions
+- [ ] **TASK-025** — Expression evaluator
+- [ ] **TASK-026** — Statement evaluator
+- [ ] **TASK-027** — Agent task spawning
+- [ ] **TASK-028** — Await and send implementation
+- [ ] **TASK-029** — LLM backend
+- [ ] **TASK-030** — Wire infer expression to LLM backend
+- [ ] **TASK-031** — Runtime entry point
+- [ ] **TASK-032** — Minimal supervision (fail-fast)
+- [ ] **TASK-033** — Interpreter tests
+
+### Milestone 6: CLI
+- [ ] **TASK-034** — CLI binary with clap
+- [ ] **TASK-035** — Release binary and README
+
+### Milestone 7: Examples and Demo
+- [ ] **TASK-036** — hello.sg
+- [ ] **TASK-037** — infer.sg
+- [ ] **TASK-038** — two_agents.sg
+- [ ] **TASK-039** — research.sg (full demo)
+
+### Milestone 8: Polish
+- [ ] **TASK-040** — Error message polish
+- [ ] **TASK-041** — Compiler warning for unused beliefs
+- [ ] **TASK-042** — CONTRIBUTING.md and issue templates
+
+## Project Structure
+
+```
+sage/
+├── crates/
+│   ├── sage-types/        # Shared type definitions (Span, Ident, TypeExpr)
+│   ├── sage-lexer/        # Tokenizer (logos-based)
+│   ├── sage-parser/       # Parser (chumsky-based)
+│   ├── sage-checker/      # Name resolution + type checker
+│   ├── sage-interpreter/  # Tree-walking interpreter + runtime
+│   └── sage-cli/          # CLI entry point
+├── docs/
+│   └── RFC-0001-poc.md    # Full language specification
+└── examples/              # Example .sg programs
+```
+
+## License
+
+MIT

@@ -1,0 +1,15 @@
+[package]
+name = "sage-checker"
+description = "Name resolution and type checker for the Sage language"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sage-parser = { path = "../sage-parser" }
+sage-types = { path = "../sage-types" }
+miette = { version = "7", features = ["fancy"] }
+thiserror = "2"
+
+[lints]
+workspace = true
