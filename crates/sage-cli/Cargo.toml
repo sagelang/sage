@@ -17,6 +17,7 @@ sage-interpreter = { path = "../sage-interpreter" }
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
 miette = { version = "7", features = ["fancy"] }
+dotenvy = "0.15"
 
 [lints]
 workspace = true
