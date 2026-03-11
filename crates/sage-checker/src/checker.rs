@@ -402,7 +402,15 @@ impl Checker {
                 Type::Error
             }
 
-            Expr::Infer { result_ty, .. } => {
+            Expr::Infer { template, result_ty, .. } => {
+                // Track belief usage in template interpolations
+                for part in &template.parts {
+                    if let sage_parser::StringPart::Interpolation(ident) = part {
+                        if let Some(field) = ident.name.strip_prefix("self.") {
+                            self.used_beliefs.insert(field.to_string());
+                        }
+                    }
+                }
                 // infer returns Inferred<T>, default to Inferred<String>
                 let inner = result_ty.as_ref().map_or(Type::String, resolve_type);
                 Type::Inferred(Box::new(inner))
