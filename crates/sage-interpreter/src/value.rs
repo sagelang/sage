@@ -40,6 +40,12 @@ impl Value {
         }
     }
 
+    /// Check if this value is Unit.
+    #[must_use]
+    pub fn is_unit(&self) -> bool {
+        matches!(self, Value::Unit)
+    }
+
     /// Try to get this value as an integer.
     #[must_use]
     pub fn as_int(&self) -> Option<i64> {

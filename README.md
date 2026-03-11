@@ -69,6 +69,33 @@ See [docs/RFC-0001-poc.md](docs/RFC-0001-poc.md) for the full specification.
 cargo build --release
 ```
 
+## Usage
+
+Run a Sage program:
+
+```bash
+# With mock LLM (for testing)
+sage run examples/hello.sg --mock
+
+# With real LLM (requires SAGE_API_KEY)
+export SAGE_API_KEY="your-openai-api-key"
+sage run examples/research.sg
+```
+
+Check a program for errors without running:
+
+```bash
+sage check examples/hello.sg
+```
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SAGE_API_KEY` | OpenAI API key for LLM inference | Required for `infer` |
+| `SAGE_LLM_URL` | Base URL for OpenAI-compatible API | `https://api.openai.com/v1` |
+| `SAGE_MODEL` | Model to use | `gpt-4o-mini` |
+
 ## Implementation Progress
 
 ### Milestone 1: Project Scaffolding
@@ -115,14 +142,14 @@ cargo build --release
 - [x] **TASK-033** — Interpreter tests
 
 ### Milestone 6: CLI
-- [ ] **TASK-034** — CLI binary with clap
-- [ ] **TASK-035** — Release binary and README
+- [x] **TASK-034** — CLI binary with clap
+- [x] **TASK-035** — Release binary and README
 
 ### Milestone 7: Examples and Demo
-- [ ] **TASK-036** — hello.sg
-- [ ] **TASK-037** — infer.sg
-- [ ] **TASK-038** — two_agents.sg
-- [ ] **TASK-039** — research.sg (full demo)
+- [x] **TASK-036** — hello.sg
+- [x] **TASK-037** — infer.sg
+- [x] **TASK-038** — two_agents.sg
+- [x] **TASK-039** — research.sg (full demo)
 
 ### Milestone 8: Polish
 - [ ] **TASK-040** — Error message polish

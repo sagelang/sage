@@ -1,0 +1,13 @@
+// Demonstrates the infer expression for LLM calls
+// Run with: sage run examples/infer.sg
+// (Requires SAGE_API_KEY environment variable, or use --mock)
+
+agent Main {
+    on start {
+        let response = infer("What is 2 + 2? Reply with just the number.")
+        print("LLM says: " ++ response)
+        emit(response)
+    }
+}
+
+run Main

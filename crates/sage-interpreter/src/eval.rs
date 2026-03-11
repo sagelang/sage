@@ -432,11 +432,16 @@ fn interpolate_template(
         match part {
             StringPart::Literal(s) => result.push_str(s),
             StringPart::Interpolation(ident) => {
-                // Try regular variable first, then belief
-                let value = env
-                    .get(&ident.name)
-                    .or_else(|| env.get_belief(&ident.name))
-                    .ok_or_else(|| RuntimeError::undefined_variable(&ident.name, &ident.span))?;
+                // Handle self.field syntax for belief access
+                let value = if let Some(field) = ident.name.strip_prefix("self.") {
+                    env.get_belief(field)
+                        .ok_or_else(|| RuntimeError::undefined_belief(field, &ident.span))?
+                } else {
+                    // Try regular variable first, then belief
+                    env.get(&ident.name)
+                        .or_else(|| env.get_belief(&ident.name))
+                        .ok_or_else(|| RuntimeError::undefined_variable(&ident.name, &ident.span))?
+                };
                 result.push_str(&value.to_string());
             }
         }

@@ -1,0 +1,11 @@
+// Hello World in Sage
+// The simplest possible agent that emits a greeting
+
+agent Main {
+    on start {
+        print("Hello from Sage!")
+        emit(42)
+    }
+}
+
+run Main

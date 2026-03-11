@@ -1,0 +1,48 @@
+// Full research demo: parallel LLM-powered research agents
+// This is the canonical Sage example showing the language's key features:
+// - Agents as first-class primitives
+// - Beliefs as agent state
+// - spawn/await for concurrency
+// - infer for LLM integration
+//
+// Run with: sage run examples/research.sg
+// (Requires SAGE_API_KEY environment variable, or use --mock for testing)
+
+agent Researcher {
+    belief topic: String
+
+    on start {
+        let summary = infer(
+            "Write a concise 2-sentence summary of: {self.topic}"
+        )
+        emit(summary)
+    }
+}
+
+agent Coordinator {
+    on start {
+        print("Starting research on two topics...")
+
+        // Spawn researchers in parallel
+        let r1 = spawn Researcher { topic: "quantum computing" }
+        let r2 = spawn Researcher { topic: "CRISPR gene editing" }
+
+        // Await results
+        let s1 = await r1
+        let s2 = await r2
+
+        // Display findings
+        print("")
+        print("=== Research Results ===")
+        print("")
+        print("Quantum Computing:")
+        print(s1)
+        print("")
+        print("CRISPR Gene Editing:")
+        print(s2)
+
+        emit("Research complete")
+    }
+}
+
+run Coordinator
