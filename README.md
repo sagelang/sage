@@ -1,8 +1,26 @@
-# Sage
+<p align="center">
+  <img src="assets/ward.png" alt="Ward the Owl" width="200">
+</p>
 
-A programming language where **agents are first-class citizens** — not a library, not a framework, but a semantic primitive baked into the compiler and runtime.
+<h1 align="center">Sage</h1>
 
-Sage targets professional software developers building AI-native systems. Instead of wrestling with Python frameworks like LangChain or CrewAI, you write agents as naturally as you write functions.
+<p align="center">
+  <strong>A programming language where agents are first-class citizens.</strong><br>
+  <em>Ward is watching.</em>
+</p>
+
+<p align="center">
+  <a href="#status">Status</a> •
+  <a href="#building">Building</a> •
+  <a href="#implementation-progress">Progress</a> •
+  <a href="docs/RFC-0001-poc.md">Specification</a>
+</p>
+
+---
+
+Sage is not a library or framework — agents are a **semantic primitive** baked into the compiler and runtime. It targets professional software developers building AI-native systems.
+
+Instead of wrestling with Python frameworks like LangChain or CrewAI, you write agents as naturally as you write functions:
 
 ```sage
 agent Researcher {
@@ -35,6 +53,13 @@ run Coordinator
 ## Status
 
 **Work in progress** — currently implementing the POC (Proof of Concept).
+
+| | |
+|---|---|
+| **Language** | Sage |
+| **Extension** | `.sg` |
+| **Mascot** | Ward the Owl |
+| **Implementation** | Rust |
 
 See [docs/RFC-0001-poc.md](docs/RFC-0001-poc.md) for the full specification.
 
@@ -117,6 +142,8 @@ sage/
 │   └── sage-cli/          # CLI entry point
 ├── docs/
 │   └── RFC-0001-poc.md    # Full language specification
+├── assets/
+│   └── ward.png           # Ward the Owl mascot
 └── examples/              # Example .sg programs
 ```
 
