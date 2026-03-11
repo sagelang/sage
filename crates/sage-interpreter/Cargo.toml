@@ -11,10 +11,14 @@ sage-checker = { path = "../sage-checker" }
 sage-types = { path = "../sage-types" }
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json"] }
+futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 miette = { version = "7", features = ["fancy"] }
 thiserror = "2"
+
+[dev-dependencies]
+sage-lexer = { path = "../sage-lexer" }
 
 [lints]
 workspace = true

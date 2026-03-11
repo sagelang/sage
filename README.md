@@ -102,17 +102,17 @@ cargo build --release
 - [x] **TASK-022** — Type checker tests
 
 ### Milestone 5: Interpreter & Runtime
-- [ ] **TASK-023** — Value enum and runtime environment
-- [ ] **TASK-024** — Prelude built-in functions
-- [ ] **TASK-025** — Expression evaluator
-- [ ] **TASK-026** — Statement evaluator
-- [ ] **TASK-027** — Agent task spawning
-- [ ] **TASK-028** — Await and send implementation
-- [ ] **TASK-029** — LLM backend
-- [ ] **TASK-030** — Wire infer expression to LLM backend
-- [ ] **TASK-031** — Runtime entry point
-- [ ] **TASK-032** — Minimal supervision (fail-fast)
-- [ ] **TASK-033** — Interpreter tests
+- [x] **TASK-023** — Value enum and runtime environment
+- [x] **TASK-024** — Prelude built-in functions
+- [x] **TASK-025** — Expression evaluator
+- [x] **TASK-026** — Statement evaluator
+- [x] **TASK-027** — Agent task spawning
+- [x] **TASK-028** — Await and send implementation
+- [x] **TASK-029** — LLM backend
+- [x] **TASK-030** — Wire infer expression to LLM backend
+- [x] **TASK-031** — Runtime entry point
+- [x] **TASK-032** — Minimal supervision (fail-fast)
+- [x] **TASK-033** — Interpreter tests
 
 ### Milestone 6: CLI
 - [ ] **TASK-034** — CLI binary with clap
