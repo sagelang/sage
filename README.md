@@ -10,10 +10,9 @@
 </p>
 
 <p align="center">
-  <a href="#status">Status</a> •
+  <a href="#installation">Install</a> •
   <a href="#language-syntax">Syntax</a> •
-  <a href="#building">Building</a> •
-  <a href="#implementation-progress">Progress</a> •
+  <a href="#usage">Usage</a> •
   <a href="docs/RFC-0001-poc.md">Specification</a>
 </p>
 
@@ -54,14 +53,14 @@ run Coordinator;
 
 ## Status
 
-**Work in progress** — currently implementing the POC (Proof of Concept).
+**v0.1.0 released** — POC complete. Compiles to native binaries via Rust.
 
 | | |
 |---|---|
-| **Language** | Sage |
+| **Latest** | [v0.1.0](https://github.com/cargopete/sage/releases/tag/v0.1.0) |
 | **Extension** | `.sg` |
-| **Mascot** | Ward the Owl |
-| **Implementation** | Rust |
+| **Platforms** | macOS (ARM), Linux (x86_64) |
+| **Build time** | ~0.4s |
 
 See [docs/RFC-0001-poc.md](docs/RFC-0001-poc.md) for the full specification.
 
@@ -167,22 +166,33 @@ Following Rust conventions:
 curl -fsSL https://raw.githubusercontent.com/cargopete/sage/main/scripts/install.sh | bash
 ```
 
-### From Source
+This downloads the pre-compiled toolchain (~100-230MB) - no Rust required.
+
+### Manual Install
+
+**macOS (Apple Silicon):**
+```bash
+curl -fsSL https://github.com/cargopete/sage/releases/latest/download/sage-v0.1.0-aarch64-apple-darwin.tar.gz | tar xz
+sudo mv sage-v0.1.0-aarch64-apple-darwin /usr/local/sage
+sudo ln -sf /usr/local/sage/bin/sage /usr/local/bin/sage
+echo 'export SAGE_TOOLCHAIN=/usr/local/sage/toolchain' >> ~/.zshrc
+```
+
+**Linux (x86_64):**
+```bash
+curl -fsSL https://github.com/cargopete/sage/releases/latest/download/sage-v0.1.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+sudo mv sage-v0.1.0-x86_64-unknown-linux-gnu /usr/local/sage
+sudo ln -sf /usr/local/sage/bin/sage /usr/local/bin/sage
+echo 'export SAGE_TOOLCHAIN=/usr/local/sage/toolchain' >> ~/.bashrc
+```
+
+### From Source (for contributors)
 
 ```bash
 git clone https://github.com/cargopete/sage
 cd sage
 cargo build --release
-# Binary is at target/release/sage
-```
-
-### Pre-compiled Toolchain (Optional)
-
-For faster builds (~0.4s vs ~10s), build the toolchain:
-
-```bash
-./scripts/build-toolchain.sh
-export SAGE_TOOLCHAIN=dist/$(rustc -vV | grep host | cut -d' ' -f2)
+./scripts/build-toolchain.sh  # Optional: for fast builds
 ```
 
 ## Usage
