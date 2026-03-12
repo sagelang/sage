@@ -4,10 +4,10 @@
 
 agent Main {
     on start {
-        let response = infer("What is 2 + 2? Reply with just the number.")
-        print("LLM says: " ++ response)
-        emit(response)
+        let response = infer("What is 2 + 2? Reply with just the number.");
+        print("LLM says: " ++ response);
+        emit(response);
     }
 }
 
-run Main
+run Main;

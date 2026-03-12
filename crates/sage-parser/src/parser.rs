@@ -58,7 +58,9 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
             Token::KwRun,
         ]));
 
-    let run_stmt = just(Token::KwRun).ignore_then(ident_token_parser(src.clone()));
+    let run_stmt = just(Token::KwRun)
+        .ignore_then(ident_token_parser(src.clone()))
+        .then_ignore(just(Token::Semicolon));
 
     top_level.repeated().then(run_stmt).map_with_span(
         move |(items, run_agent), span: Range<usize>| {
@@ -255,6 +257,7 @@ fn stmt_parser(
         )
         .then_ignore(just(Token::Eq))
         .then(expr_parser(src.clone()))
+        .then_ignore(just(Token::Semicolon))
         .map_with_span(move |((name, ty), value), span: Range<usize>| Stmt::Let {
             name,
             ty,
@@ -264,6 +267,7 @@ fn stmt_parser(
 
     let return_stmt = just(Token::KwReturn)
         .ignore_then(expr_parser(src2.clone()).or_not())
+        .then_ignore(just(Token::Semicolon))
         .map_with_span(move |value, span: Range<usize>| Stmt::Return {
             value,
             span: make_span(&src2, span),
@@ -310,14 +314,16 @@ fn stmt_parser(
     let assign_stmt = ident_token_parser(src5.clone())
         .then_ignore(just(Token::Eq))
         .then(expr_parser(src5.clone()))
+        .then_ignore(just(Token::Semicolon))
         .map_with_span(move |(name, value), span: Range<usize>| Stmt::Assign {
             name,
             value,
             span: make_span(&src5, span),
         });
 
-    let expr_stmt =
-        expr_parser(src6.clone()).map_with_span(move |expr, span: Range<usize>| Stmt::Expr {
+    let expr_stmt = expr_parser(src6.clone())
+        .then_ignore(just(Token::Semicolon))
+        .map_with_span(move |expr, span: Range<usize>| Stmt::Expr {
             expr,
             span: make_span(&src6, span),
         });
@@ -809,12 +815,13 @@ fn literal_parser(source: Arc<str>) -> impl Parser<Token, Expr, Error = ParseErr
         span: make_span(&src4, span),
     });
 
+    let src6 = source.clone();
     let string_lit = filter_map(move |span: Range<usize>, token| match token {
         Token::StringLit => {
             let text = &src5[span.start..span.end];
             let inner = &text[1..text.len() - 1];
-            let unescaped = unescape_string(inner);
-            Ok(Literal::String(unescaped))
+            let parts = parse_string_template(inner, &make_span(&src5, span.clone()));
+            Ok(parts)
         }
         _ => Err(Simple::expected_input_found(
             span,
@@ -822,9 +829,25 @@ fn literal_parser(source: Arc<str>) -> impl Parser<Token, Expr, Error = ParseErr
             Some(token),
         )),
     })
-    .map_with_span(move |value, span: Range<usize>| Expr::Literal {
-        value,
-        span: make_span(&source, span),
+    .map_with_span(move |parts, span: Range<usize>| {
+        let span = make_span(&src6, span);
+        // If no interpolations, use a simple string literal
+        if parts.len() == 1 {
+            if let StringPart::Literal(s) = &parts[0] {
+                return Expr::Literal {
+                    value: Literal::String(s.clone()),
+                    span,
+                };
+            }
+        }
+        // Otherwise, use StringInterp
+        Expr::StringInterp {
+            template: StringTemplate {
+                parts,
+                span: span.clone(),
+            },
+            span,
+        }
     });
 
     let bool_lit = just(Token::KwTrue)
@@ -917,31 +940,6 @@ fn parse_string_template(s: &str, span: &Span) -> Vec<StringPart> {
     parts
 }
 
-/// Unescape a string literal.
-fn unescape_string(s: &str) -> String {
-    let mut result = String::new();
-    let mut chars = s.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            if let Some(escaped) = chars.next() {
-                result.push(match escaped {
-                    'n' => '\n',
-                    't' => '\t',
-                    'r' => '\r',
-                    '\\' => '\\',
-                    '"' => '"',
-                    other => other,
-                });
-            }
-        } else {
-            result.push(ch);
-        }
-    }
-
-    result
-}
-
 // =============================================================================
 // Tests
 // =============================================================================
@@ -962,10 +960,10 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    emit(42)
+                    emit(42);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (prog, errors) = parse_str(source);
@@ -985,10 +983,10 @@ mod tests {
                 belief max_words: Int
 
                 on start {
-                    emit(self.topic)
+                    emit(self.topic);
                 }
             }
-            run Researcher
+            run Researcher;
         "#;
 
         let (prog, errors) = parse_str(source);
@@ -1005,18 +1003,18 @@ mod tests {
         let source = r#"
             agent Worker {
                 on start {
-                    print("started")
+                    print("started");
                 }
 
                 on message(msg: String) {
-                    print(msg)
+                    print(msg);
                 }
 
                 on stop {
-                    print("stopped")
+                    print("stopped");
                 }
             }
-            run Worker
+            run Worker;
         "#;
 
         let (prog, errors) = parse_str(source);
@@ -1036,15 +1034,15 @@ mod tests {
     fn parse_function() {
         let source = r#"
             fn greet(name: String) -> String {
-                return "Hello, " ++ name
+                return "Hello, " ++ name;
             }
 
             agent Main {
                 on start {
-                    emit(greet("World"))
+                    emit(greet("World"));
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (prog, errors) = parse_str(source);
@@ -1061,12 +1059,12 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    let x: Int = 42
-                    let y = "hello"
-                    emit(x)
+                    let x: Int = 42;
+                    let y = "hello";
+                    emit(x);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (prog, errors) = parse_str(source);
@@ -1084,13 +1082,13 @@ mod tests {
             agent Main {
                 on start {
                     if true {
-                        emit(1)
+                        emit(1);
                     } else {
-                        emit(2)
+                        emit(2);
                     }
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (prog, errors) = parse_str(source);
@@ -1107,12 +1105,12 @@ mod tests {
             agent Main {
                 on start {
                     for x in [1, 2, 3] {
-                        print(x)
+                        print(x);
                     }
-                    emit(0)
+                    emit(0);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (prog, errors) = parse_str(source);
@@ -1129,18 +1127,18 @@ mod tests {
             agent Worker {
                 belief name: String
                 on start {
-                    emit(self.name)
+                    emit(self.name);
                 }
             }
 
             agent Main {
                 on start {
-                    let w = spawn Worker { name: "test" }
-                    let result = await w
-                    emit(result)
+                    let w = spawn Worker { name: "test" };
+                    let result = await w;
+                    emit(result);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (prog, errors) = parse_str(source);
@@ -1153,11 +1151,11 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    let result = infer("What is 2+2?")
-                    emit(result)
+                    let result = infer("What is 2+2?");
+                    emit(result);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (prog, errors) = parse_str(source);
@@ -1170,11 +1168,11 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    let x = 2 + 3 * 4
-                    emit(x)
+                    let x = 2 + 3 * 4;
+                    emit(x);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (prog, errors) = parse_str(source);
@@ -1196,12 +1194,12 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    let name = "World"
-                    let msg = infer("Greet {name}")
-                    emit(msg)
+                    let name = "World";
+                    let msg = infer("Greet {name}");
+                    emit(msg);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (prog, errors) = parse_str(source);
@@ -1232,10 +1230,10 @@ mod tests {
 
             agent Main {
                 on start {
-                    emit(42)
+                    emit(42);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (prog, errors) = parse_str(source);
@@ -1251,11 +1249,11 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    let x = [1, 2, 3
-                    emit(42)
+                    let x = [1, 2, 3;
+                    emit(42);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (prog, errors) = parse_str(source);
@@ -1278,10 +1276,10 @@ mod tests {
 
             agent Main {
                 on start {
-                    emit(42)
+                    emit(42);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (_prog, errors) = parse_str(source);

@@ -3,9 +3,9 @@
 
 agent Main {
     on start {
-        print("Hello from Sage!")
-        emit(42)
+        print("Hello from Sage!");
+        emit(42);
     }
 }
 
-run Main
+run Main;

@@ -135,6 +135,16 @@ impl SymbolTable {
             },
         );
 
+        // str(T) -> String (accepts any type)
+        self.builtins.insert(
+            "str",
+            BuiltinInfo {
+                name: "str",
+                params: None, // Special handling - accepts any type
+                return_type: Type::String,
+            },
+        );
+
         // int_to_str(Int) -> String
         self.builtins.insert(
             "int_to_str",

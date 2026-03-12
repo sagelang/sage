@@ -210,6 +210,10 @@ pub enum Token {
     /// String concatenation operator.
     #[token("++")]
     PlusPlus,
+
+    /// Statement terminator.
+    #[token(";")]
+    Semicolon,
 }
 
 impl Token {
@@ -367,6 +371,7 @@ impl std::fmt::Display for Token {
             Token::And => write!(f, "&&"),
             Token::Or => write!(f, "||"),
             Token::PlusPlus => write!(f, "++"),
+            Token::Semicolon => write!(f, ";"),
         }
     }
 }

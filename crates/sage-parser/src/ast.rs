@@ -360,6 +360,14 @@ pub enum Expr {
         /// Span covering the expression (including parens).
         span: Span,
     },
+
+    /// Interpolated string: `"Hello, {name}!"`
+    StringInterp {
+        /// The string template with interpolations.
+        template: StringTemplate,
+        /// Span covering the expression.
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -380,7 +388,8 @@ impl Expr {
             | Expr::List { span, .. }
             | Expr::Literal { span, .. }
             | Expr::Var { span, .. }
-            | Expr::Paren { span, .. } => span,
+            | Expr::Paren { span, .. }
+            | Expr::StringInterp { span, .. } => span,
         }
     }
 }

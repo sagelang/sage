@@ -197,10 +197,10 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    emit(42)
+                    emit(42);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let result = run_source(source).await.expect("should run");
@@ -212,11 +212,11 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    let x = 2 + 3 * 4
-                    emit(x)
+                    let x = 2 + 3 * 4;
+                    emit(x);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let result = run_source(source).await.expect("should run");
@@ -227,15 +227,15 @@ mod tests {
     async fn run_with_function() {
         let source = r#"
             fn add(a: Int, b: Int) -> Int {
-                return a + b
+                return a + b;
             }
 
             agent Main {
                 on start {
-                    emit(add(10, 20))
+                    emit(add(10, 20));
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let result = run_source(source).await.expect("should run");
@@ -247,15 +247,15 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    let x = 10
+                    let x = 10;
                     if x > 5 {
-                        emit(1)
+                        emit(1);
                     } else {
-                        emit(0)
+                        emit(0);
                     }
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let result = run_source(source).await.expect("should run");
@@ -267,14 +267,14 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    let sum = 0
+                    let sum = 0;
                     for x in [1, 2, 3, 4, 5] {
-                        sum = sum + x
+                        sum = sum + x;
                     }
-                    emit(sum)
+                    emit(sum);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let result = run_source(source).await.expect("should run");
@@ -286,11 +286,11 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    let msg = "Hello, " ++ "World!"
-                    emit(msg)
+                    let msg = "Hello, " ++ "World!";
+                    emit(msg);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let result = run_source(source).await.expect("should run");
@@ -302,12 +302,12 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    let items = [1, 2, 3]
-                    let count = len(items)
-                    emit(count)
+                    let items = [1, 2, 3];
+                    let count = len(items);
+                    emit(count);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let result = run_source(source).await.expect("should run");
@@ -321,18 +321,18 @@ mod tests {
                 belief value: Int
 
                 on start {
-                    emit(self.value * 2)
+                    emit(self.value * 2);
                 }
             }
 
             agent Main {
                 on start {
-                    let w = spawn Worker { value: 21 }
-                    let result = await w
-                    emit(result)
+                    let w = spawn Worker { value: 21 };
+                    let result = await w;
+                    emit(result);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let result = run_source(source).await.expect("should run");
@@ -344,11 +344,11 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    let response = infer("What is 2+2?")
-                    emit(response)
+                    let response = infer("What is 2+2?");
+                    emit(response);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let result = run_source(source).await.expect("should run");
@@ -361,20 +361,38 @@ mod tests {
         let source = r#"
             fn factorial(n: Int) -> Int {
                 if n <= 1 {
-                    return 1
+                    return 1;
                 }
-                return n * factorial(n - 1)
+                return n * factorial(n - 1);
             }
 
             agent Main {
                 on start {
-                    emit(factorial(5))
+                    emit(factorial(5));
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let result = run_source(source).await.expect("should run");
         assert_eq!(result, Value::Int(120));
+    }
+
+    #[tokio::test]
+    async fn run_with_string_interpolation() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let name = "Sage";
+                    let version = 1;
+                    let msg = "Hello from {name} v{version}!";
+                    emit(msg);
+                }
+            }
+            run Main;
+        "#;
+
+        let result = run_source(source).await.expect("should run");
+        assert_eq!(result, Value::String("Hello from Sage v1!".into()));
     }
 }

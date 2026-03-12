@@ -14,35 +14,35 @@ agent Researcher {
     on start {
         let summary = infer(
             "Write a concise 2-sentence summary of: {self.topic}"
-        )
-        emit(summary)
+        );
+        emit(summary);
     }
 }
 
 agent Coordinator {
     on start {
-        print("Starting research on two topics...")
+        print("Starting research on two topics...");
 
         // Spawn researchers in parallel
-        let r1 = spawn Researcher { topic: "quantum computing" }
-        let r2 = spawn Researcher { topic: "CRISPR gene editing" }
+        let r1 = spawn Researcher { topic: "quantum computing" };
+        let r2 = spawn Researcher { topic: "CRISPR gene editing" };
 
         // Await results
-        let s1 = await r1
-        let s2 = await r2
+        let s1 = await r1;
+        let s2 = await r2;
 
         // Display findings
-        print("")
-        print("=== Research Results ===")
-        print("")
-        print("Quantum Computing:")
-        print(s1)
-        print("")
-        print("CRISPR Gene Editing:")
-        print(s2)
+        print("");
+        print("=== Research Results ===");
+        print("");
+        print("Quantum Computing:");
+        print(s1);
+        print("");
+        print("CRISPR Gene Editing:");
+        print(s2);
 
-        emit("Research complete")
+        emit("Research complete");
     }
 }
 
-run Coordinator
+run Coordinator;

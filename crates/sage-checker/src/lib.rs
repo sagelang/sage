@@ -16,10 +16,10 @@
 //! let source = r#"
 //!     agent Main {
 //!         on start {
-//!             emit(42)
+//!             emit(42);
 //!         }
 //!     }
-//!     run Main
+//!     run Main;
 //! "#;
 //!
 //! let lex_result = lex(source).expect("lexing failed");
@@ -68,10 +68,10 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    emit(42)
+                    emit(42);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (_, result) = check_source(source);
@@ -83,10 +83,10 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    emit(x)
+                    emit(x);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (_, result) = check_source(source);
@@ -102,11 +102,11 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    let x = 1 + "hello"
-                    emit(x)
+                    let x = 1 + "hello";
+                    emit(x);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (_, result) = check_source(source);
@@ -122,12 +122,12 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    let x: Int = 42
-                    let y: String = "hello"
-                    emit(x)
+                    let x: Int = 42;
+                    let y: String = "hello";
+                    emit(x);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (_, result) = check_source(source);
@@ -139,11 +139,11 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    let x: String = 42
-                    emit(x)
+                    let x: String = 42;
+                    emit(x);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (_, result) = check_source(source);
@@ -155,16 +155,16 @@ mod tests {
     fn check_function_call() {
         let source = r#"
             fn add(a: Int, b: Int) -> Int {
-                return a + b
+                return a + b;
             }
 
             agent Main {
                 on start {
-                    let sum = add(1, 2)
-                    emit(sum)
+                    let sum = add(1, 2);
+                    emit(sum);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (_, result) = check_source(source);
@@ -175,16 +175,16 @@ mod tests {
     fn check_wrong_arg_count() {
         let source = r#"
             fn greet(name: String) -> String {
-                return name
+                return name;
             }
 
             agent Main {
                 on start {
-                    let msg = greet("a", "b")
-                    emit(msg)
+                    let msg = greet("a", "b");
+                    emit(msg);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (_, result) = check_source(source);
@@ -199,18 +199,18 @@ mod tests {
                 belief name: String
 
                 on start {
-                    emit(self.name)
+                    emit(self.name);
                 }
             }
 
             agent Main {
                 on start {
-                    let w = spawn Worker { name: "test" }
-                    let result = await w
-                    emit(result)
+                    let w = spawn Worker { name: "test" };
+                    let result = await w;
+                    emit(result);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (_, result) = check_source(source);
@@ -224,17 +224,17 @@ mod tests {
                 belief name: String
 
                 on start {
-                    emit(self.name)
+                    emit(self.name);
                 }
             }
 
             agent Main {
                 on start {
-                    let w = spawn Worker { }
-                    emit(0)
+                    let w = spawn Worker { };
+                    emit(0);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (_, result) = check_source(source);
@@ -252,10 +252,10 @@ mod tests {
                 belief x: Int
 
                 on start {
-                    emit(self.x)
+                    emit(self.x);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (_, result) = check_source(source);
@@ -272,12 +272,12 @@ mod tests {
             agent Main {
                 on start {
                     for x in [1, 2, 3] {
-                        print(int_to_str(x))
+                        print(int_to_str(x));
                     }
-                    emit(0)
+                    emit(0);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (_, result) = check_source(source);
@@ -290,12 +290,12 @@ mod tests {
             agent Main {
                 on start {
                     if 42 {
-                        emit(1)
+                        emit(1);
                     }
-                    emit(0)
+                    emit(0);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (_, result) = check_source(source);
@@ -310,15 +310,15 @@ mod tests {
     fn check_self_outside_agent() {
         let source = r#"
             fn broken() -> Int {
-                return self.x
+                return self.x;
             }
 
             agent Main {
                 on start {
-                    emit(0)
+                    emit(0);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (_, result) = check_source(source);
@@ -334,11 +334,11 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    let x: Inferred<String> = infer("Hello")
-                    emit(x)
+                    let x: Inferred<String> = infer("Hello");
+                    emit(x);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (_, result) = check_source(source);
@@ -350,11 +350,11 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    let msg = "Hello, " ++ "World"
-                    emit(msg)
+                    let msg = "Hello, " ++ "World";
+                    emit(msg);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (_, result) = check_source(source);
@@ -366,11 +366,11 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    print("Hello")
-                    emit(0)
+                    print("Hello");
+                    emit(0);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (_, result) = check_source(source);
@@ -384,17 +384,17 @@ mod tests {
                 belief unused: Int
 
                 on start {
-                    emit(42)
+                    emit(42);
                 }
             }
 
             agent Main {
                 on start {
-                    let w = spawn Worker { unused: 1 }
-                    emit(await w)
+                    let w = spawn Worker { unused: 1 };
+                    emit(await w);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (_, result) = check_source(source);
@@ -413,20 +413,79 @@ mod tests {
                 belief value: Int
 
                 on start {
-                    emit(self.value * 2)
+                    emit(self.value * 2);
                 }
             }
 
             agent Main {
                 on start {
-                    let w = spawn Worker { value: 21 }
-                    emit(await w)
+                    let w = spawn Worker { value: 21 };
+                    emit(await w);
                 }
             }
-            run Main
+            run Main;
         "#;
 
         let (_, result) = check_source(source);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_str_builtin() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let a = str(42);
+                    let b = str(3.14);
+                    let c = str(true);
+                    let d = str("hello");
+                    print(a ++ b ++ c ++ d);
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_string_interpolation() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let name = "World";
+                    let count = 42;
+                    let msg = "Hello, {name}! Count is {count}.";
+                    print(msg);
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_string_interpolation_undefined_var() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let msg = "Hello, {undefined}!";
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(
+            result.errors[0],
+            CheckError::UndefinedVariable { .. }
+        ));
     }
 }

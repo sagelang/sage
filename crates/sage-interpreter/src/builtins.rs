@@ -19,6 +19,7 @@ pub async fn call_builtin(
         "len" => builtin_len(args, span),
         "push" => builtin_push(args, span),
         "join" => builtin_join(args, span),
+        "str" => builtin_str(args, span),
         "int_to_str" => builtin_int_to_str(args, span),
         "str_contains" => builtin_str_contains(args, span),
         "sleep_ms" => builtin_sleep_ms(args, span).await,
@@ -31,7 +32,7 @@ pub async fn call_builtin(
 pub fn is_builtin(name: &str) -> bool {
     matches!(
         name,
-        "print" | "len" | "push" | "join" | "int_to_str" | "str_contains" | "sleep_ms"
+        "print" | "len" | "push" | "join" | "str" | "int_to_str" | "str_contains" | "sleep_ms"
     )
 }
 
@@ -114,6 +115,35 @@ fn builtin_join(args: Vec<Value>, span: &Span) -> RuntimeResult<Value> {
         .collect();
 
     Ok(Value::String(strings?.join(separator)))
+}
+
+/// `str(T) -> String` - Convert any value to a string.
+fn builtin_str(args: Vec<Value>, span: &Span) -> RuntimeResult<Value> {
+    if args.len() != 1 {
+        return Err(RuntimeError::internal(
+            format!("str expects 1 argument, got {}", args.len()),
+            span,
+        ));
+    }
+
+    let result = match &args[0] {
+        Value::Int(n) => n.to_string(),
+        Value::Float(f) => f.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::String(s) => s.clone(),
+        Value::Unit => "()".to_string(),
+        Value::List(items) => {
+            let inner: Vec<String> = items.iter().map(ToString::to_string).collect();
+            format!("[{}]", inner.join(", "))
+        }
+        Value::Agent(_) => "<agent>".to_string(),
+        Value::Option(opt) => match opt {
+            Some(v) => format!("Some({})", v),
+            None => "None".to_string(),
+        },
+    };
+
+    Ok(Value::String(result))
 }
 
 /// `int_to_str(Int) -> String`
@@ -218,6 +248,27 @@ mod tests {
         let span = dummy_span();
         let result = builtin_int_to_str(vec![Value::Int(42)], &span);
         assert_eq!(result.unwrap(), Value::String("42".into()));
+    }
+
+    #[test]
+    fn test_builtin_str() {
+        let span = dummy_span();
+
+        // Int
+        let result = builtin_str(vec![Value::Int(42)], &span);
+        assert_eq!(result.unwrap(), Value::String("42".into()));
+
+        // Float
+        let result = builtin_str(vec![Value::Float(3.14)], &span);
+        assert_eq!(result.unwrap(), Value::String("3.14".into()));
+
+        // Bool
+        let result = builtin_str(vec![Value::Bool(true)], &span);
+        assert_eq!(result.unwrap(), Value::String("true".into()));
+
+        // String (identity)
+        let result = builtin_str(vec![Value::String("hello".into())], &span);
+        assert_eq!(result.unwrap(), Value::String("hello".into()));
     }
 
     #[test]

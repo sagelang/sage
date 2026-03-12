@@ -529,6 +529,35 @@ impl Checker {
             }
 
             Expr::Paren { inner, .. } => self.check_expr(inner),
+
+            Expr::StringInterp { template, .. } => {
+                // Check all interpolated identifiers
+                for part in &template.parts {
+                    if let sage_parser::StringPart::Interpolation(ident) = part {
+                        // Handle self.field references
+                        if let Some(field) = ident.name.strip_prefix("self.") {
+                            if let Some(agent_name) = &self.current_agent {
+                                if let Some(agent) = self.symbols.get_agent(agent_name) {
+                                    if agent.beliefs.contains_key(field) {
+                                        self.used_beliefs.insert(field.to_string());
+                                    } else {
+                                        self.errors.push(CheckError::undefined_belief(
+                                            field,
+                                            &ident.span,
+                                        ));
+                                    }
+                                }
+                            } else {
+                                self.errors.push(CheckError::self_outside_agent(&ident.span));
+                            }
+                        } else {
+                            // Regular variable reference
+                            self.lookup_var(&ident.name, &ident.span);
+                        }
+                    }
+                }
+                Type::String
+            }
         }
     }
 
@@ -743,6 +772,18 @@ impl Checker {
                     }
                     Type::Error
                 }
+            }
+
+            "str" => {
+                // str() accepts any single value and returns String
+                if args.len() != 1 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("str", 1, args.len(), span));
+                    return Type::Error;
+                }
+                // Check the argument (any type is valid)
+                self.check_expr(&args[0]);
+                Type::String
             }
 
             _ => {

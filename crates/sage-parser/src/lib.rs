@@ -13,10 +13,10 @@
 //! let source = r#"
 //!     agent Main {
 //!         on start {
-//!             emit(42)
+//!             emit(42);
 //!         }
 //!     }
-//!     run Main
+//!     run Main;
 //! "#;
 //!
 //! let lex_result = lex(source).expect("lexing failed");

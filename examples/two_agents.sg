@@ -6,29 +6,29 @@ agent Worker {
     belief multiplier: Int
 
     on start {
-        let result = self.value * self.multiplier
-        emit(result)
+        let result = self.value * self.multiplier;
+        emit(result);
     }
 }
 
 agent Main {
     on start {
         // Spawn two workers with different beliefs
-        let w1 = spawn Worker { value: 10, multiplier: 2 }
-        let w2 = spawn Worker { value: 7, multiplier: 3 }
+        let w1 = spawn Worker { value: 10, multiplier: 2 };
+        let w2 = spawn Worker { value: 7, multiplier: 3 };
 
         // Await both results
-        let r1 = await w1
-        let r2 = await w2
+        let r1 = await w1;
+        let r2 = await w2;
 
         // Combine the results
-        let total = r1 + r2
-        print("Worker 1 result: " ++ int_to_str(r1))
-        print("Worker 2 result: " ++ int_to_str(r2))
-        print("Total: " ++ int_to_str(total))
+        let total = r1 + r2;
+        print("Worker 1 result: {r1}");
+        print("Worker 2 result: {r2}");
+        print("Total: {total}");
 
-        emit(total)
+        emit(total);
     }
 }
 
-run Main
+run Main;

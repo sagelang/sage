@@ -227,6 +227,12 @@ pub fn eval_expr<'a>(
                 // Return a special marker - actual emit is handled in statement eval
                 Ok(val)
             }
+
+            Expr::StringInterp { template, .. } => {
+                // Interpolate the template - same as infer but returns directly
+                let result = interpolate_template(template, env)?;
+                Ok(Value::String(result))
+            }
         }
     }
     .boxed()
