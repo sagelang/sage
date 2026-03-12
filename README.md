@@ -116,6 +116,10 @@ if x > 5 {
 for item in [1, 2, 3] {
     print(str(item));
 }
+
+while count < 10 {
+    count = count + 1;
+}
 ```
 
 ### Types

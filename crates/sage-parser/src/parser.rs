@@ -247,6 +247,7 @@ fn stmt_parser(
     let src4 = source.clone();
     let src5 = source.clone();
     let src6 = source.clone();
+    let src7 = source.clone();
 
     let let_stmt = just(Token::KwLet)
         .ignore_then(ident_token_parser(src.clone()))
@@ -311,6 +312,15 @@ fn stmt_parser(
             span: make_span(&src4, span),
         });
 
+    let while_stmt = just(Token::KwWhile)
+        .ignore_then(expr_parser(src7.clone()))
+        .then(block.clone())
+        .map_with_span(move |(condition, body), span: Range<usize>| Stmt::While {
+            condition,
+            body,
+            span: make_span(&src7, span),
+        });
+
     let assign_stmt = ident_token_parser(src5.clone())
         .then_ignore(just(Token::Eq))
         .then(expr_parser(src5.clone()))
@@ -332,6 +342,7 @@ fn stmt_parser(
         .or(return_stmt)
         .or(if_stmt)
         .or(for_stmt)
+        .or(while_stmt)
         .or(assign_stmt)
         .or(expr_stmt)
 }

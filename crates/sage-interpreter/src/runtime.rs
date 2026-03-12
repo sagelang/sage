@@ -282,6 +282,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_with_while_loop() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let count = 0;
+                    let sum = 0;
+                    while count < 5 {
+                        count = count + 1;
+                        sum = sum + count;
+                    }
+                    emit(sum);
+                }
+            }
+            run Main;
+        "#;
+
+        let result = run_source(source).await.expect("should run");
+        assert_eq!(result, Value::Int(15)); // 1+2+3+4+5
+    }
+
+    #[tokio::test]
     async fn run_with_string_concat() {
         let source = r#"
             agent Main {

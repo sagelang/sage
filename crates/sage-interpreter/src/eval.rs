@@ -560,6 +560,27 @@ pub fn eval_stmt<'a>(
                 Ok(ControlFlow::Continue)
             }
 
+            Stmt::While {
+                condition, body, ..
+            } => {
+                loop {
+                    let cond = eval_expr(condition, env, ctx).await?;
+                    if !cond.is_truthy() {
+                        break;
+                    }
+                    env.push_scope();
+                    match eval_block(body, env, ctx).await? {
+                        ControlFlow::Continue => {}
+                        cf => {
+                            env.pop_scope();
+                            return Ok(cf);
+                        }
+                    }
+                    env.pop_scope();
+                }
+                Ok(ControlFlow::Continue)
+            }
+
             Stmt::Expr { expr, span } => {
                 // Check for emit expression specially
                 if let Expr::Emit { value, .. } = expr {

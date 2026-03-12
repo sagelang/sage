@@ -317,6 +317,22 @@ impl Checker {
                 self.pop_scope();
             }
 
+            Stmt::While {
+                condition,
+                body,
+                span,
+            } => {
+                let cond_ty = self.check_expr(condition);
+                if !cond_ty.is_compatible_with(&Type::Bool) {
+                    self.errors
+                        .push(CheckError::non_bool_condition(cond_ty.to_string(), span));
+                }
+
+                self.push_scope();
+                self.check_block(body);
+                self.pop_scope();
+            }
+
             Stmt::Expr { expr, .. } => {
                 self.check_expr(expr);
             }

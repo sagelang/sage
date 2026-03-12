@@ -307,6 +307,47 @@ mod tests {
     }
 
     #[test]
+    fn check_while_loop() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let n = 5;
+                    while n > 0 {
+                        n = n - 1;
+                    }
+                    emit(n);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_while_non_bool_condition() {
+        let source = r#"
+            agent Main {
+                on start {
+                    while 42 {
+                        emit(1);
+                    }
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(
+            result.errors[0],
+            CheckError::NonBoolCondition { .. }
+        ));
+    }
+
+    #[test]
     fn check_self_outside_agent() {
         let source = r#"
             fn broken() -> Int {

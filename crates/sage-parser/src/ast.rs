@@ -193,6 +193,16 @@ pub enum Stmt {
         span: Span,
     },
 
+    /// While loop: `while cond { ... }`
+    While {
+        /// The condition (must be Bool).
+        condition: Expr,
+        /// The loop body.
+        body: Block,
+        /// Span covering the statement.
+        span: Span,
+    },
+
     /// Expression statement: `expr`
     Expr {
         /// The expression.
@@ -212,6 +222,7 @@ impl Stmt {
             | Stmt::Return { span, .. }
             | Stmt::If { span, .. }
             | Stmt::For { span, .. }
+            | Stmt::While { span, .. }
             | Stmt::Expr { span, .. } => span,
         }
     }

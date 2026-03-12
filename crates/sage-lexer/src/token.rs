@@ -64,6 +64,9 @@ pub enum Token {
     #[token("for")]
     KwFor,
 
+    #[token("while")]
+    KwWhile,
+
     #[token("in")]
     KwIn,
 
@@ -240,6 +243,7 @@ impl Token {
                 | Token::KwIf
                 | Token::KwElse
                 | Token::KwFor
+                | Token::KwWhile
                 | Token::KwIn
                 | Token::KwSelf
                 | Token::KwTrue
@@ -319,6 +323,7 @@ impl std::fmt::Display for Token {
             Token::KwIf => write!(f, "if"),
             Token::KwElse => write!(f, "else"),
             Token::KwFor => write!(f, "for"),
+            Token::KwWhile => write!(f, "while"),
             Token::KwIn => write!(f, "in"),
             Token::KwSelf => write!(f, "self"),
             Token::KwTrue => write!(f, "true"),
