@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-14  # ARM runner
+          - target: x86_64-apple-darwin
+            os: macos-13  # Intel runner
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build sage CLI
+        run: |
+          cargo build --release --target ${{ matrix.target }} -p sage-cli
+
+      - name: Build toolchain
+        run: |
+          bash scripts/build-toolchain.sh ${{ matrix.target }}
+
+      - name: Package distribution
+        run: |
+          DIST_NAME="sage-${{ github.ref_name }}-${{ matrix.target }}"
+          mkdir -p "$DIST_NAME/bin"
+          mkdir -p "$DIST_NAME/toolchain"
+
+          # Copy sage binary
+          cp "target/${{ matrix.target }}/release/sage" "$DIST_NAME/bin/"
+
+          # Copy toolchain
+          cp -r "dist/${{ matrix.target }}/"* "$DIST_NAME/toolchain/"
+
+          # Create tarball
+          tar -czvf "$DIST_NAME.tar.gz" "$DIST_NAME"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sage-${{ matrix.target }}
+          path: sage-*.tar.gz
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.tar.gz
+          generate_release_notes: true
+          body: |
+            ## Installation
+
+            ### macOS (Apple Silicon)
+            ```bash
+            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/sage-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz | tar xz
+            sudo mv sage-${{ github.ref_name }}-aarch64-apple-darwin /usr/local/sage
+            sudo ln -sf /usr/local/sage/bin/sage /usr/local/bin/sage
+            export SAGE_TOOLCHAIN=/usr/local/sage/toolchain
+            ```
+
+            ### macOS (Intel)
+            ```bash
+            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/sage-${{ github.ref_name }}-x86_64-apple-darwin.tar.gz | tar xz
+            sudo mv sage-${{ github.ref_name }}-x86_64-apple-darwin /usr/local/sage
+            sudo ln -sf /usr/local/sage/bin/sage /usr/local/bin/sage
+            export SAGE_TOOLCHAIN=/usr/local/sage/toolchain
+            ```
+
+            ### Linux (x86_64)
+            ```bash
+            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/sage-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz | tar xz
+            sudo mv sage-${{ github.ref_name }}-x86_64-unknown-linux-gnu /usr/local/sage
+            sudo ln -sf /usr/local/sage/bin/sage /usr/local/bin/sage
+            export SAGE_TOOLCHAIN=/usr/local/sage/toolchain
+            ```
+
+            Add `export SAGE_TOOLCHAIN=/usr/local/sage/toolchain` to your shell profile for fast builds.

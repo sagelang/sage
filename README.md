@@ -159,15 +159,26 @@ Following Rust conventions:
 - **Required** after: `let`, `return`, assignments, expression statements, `run`
 - **Not required** after block statements: `if`/`else`, `for`
 
-## Building
+## Installation
+
+### Quick Install (macOS/Linux)
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/cargopete/sage/main/scripts/install.sh | bash
+```
+
+### From Source
+
+```bash
+git clone https://github.com/cargopete/sage
+cd sage
 cargo build --release
+# Binary is at target/release/sage
 ```
 
 ### Pre-compiled Toolchain (Optional)
 
-For faster builds (~0.4s vs ~10s), you can build a pre-compiled toolchain:
+For faster builds (~0.4s vs ~10s), build the toolchain:
 
 ```bash
 ./scripts/build-toolchain.sh
