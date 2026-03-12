@@ -1,13 +1,30 @@
 //! Command-line interface for the Sage language.
 
 use clap::{Parser, Subcommand};
+use console::{style, Emoji};
+use indicatif::{ProgressBar, ProgressStyle};
 use miette::{Diagnostic, IntoDiagnostic, Result, Severity, WrapErr};
 use sage_checker::check;
-use sage_interpreter::{Runtime, RuntimeConfig};
+use sage_interpreter::{LlmConfig, Runtime, RuntimeConfig};
 use sage_lexer::lex;
 use sage_parser::parse;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
+
+// Emojis for different stages
+static SPARKLES: Emoji<'_, '_> = Emoji("✨ ", "* ");
+static GEAR: Emoji<'_, '_> = Emoji("⚙️  ", "> ");
+static CHECK: Emoji<'_, '_> = Emoji("✓ ", "v ");
+static BRAIN: Emoji<'_, '_> = Emoji("🧠 ", "@ ");
+
+/// Ward the owl - Sage's mascot
+const WARD_ASCII: &str = r#"
+       ___
+      (o,o)
+      {`"'}
+      -"-"-
+"#;
 
 /// Sage - A programming language where agents are first-class citizens.
 #[derive(Parser)]
@@ -28,6 +45,10 @@ enum Commands {
         /// Use mock LLM (for testing without API key)
         #[arg(long)]
         mock: bool,
+
+        /// Quiet mode - minimal output
+        #[arg(short, long)]
+        quiet: bool,
     },
 
     /// Check a Sage program for errors without running it
@@ -45,13 +66,31 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Run { file, mock } => run_file(&file, mock).await,
+        Commands::Run { file, mock, quiet } => run_file(&file, mock, quiet).await,
         Commands::Check { file } => check_file(&file),
     }
 }
 
+/// Print the Ward owl banner
+fn print_banner() {
+    let owl = style(WARD_ASCII).cyan().bold();
+    println!("{owl}");
+    println!(
+        "  {} {}",
+        style("SAGE").cyan().bold(),
+        style("- Where agents come alive").dim()
+    );
+    println!();
+}
+
 /// Run a Sage program file.
-async fn run_file(path: &PathBuf, mock: bool) -> Result<()> {
+async fn run_file(path: &PathBuf, mock: bool, quiet: bool) -> Result<()> {
+    let start_time = Instant::now();
+
+    if !quiet {
+        print_banner();
+    }
+
     let source = std::fs::read_to_string(path)
         .into_diagnostic()
         .wrap_err_with(|| format!("Failed to read file: {}", path.display()))?;
@@ -60,10 +99,67 @@ async fn run_file(path: &PathBuf, mock: bool) -> Result<()> {
         .file_name()
         .map_or_else(|| "unknown".to_string(), |s| s.to_string_lossy().into_owned());
 
+    // Get LLM info for display
+    let llm_config = if mock {
+        None
+    } else {
+        LlmConfig::from_env()
+    };
+
+    if !quiet {
+        println!(
+            "{}Running {}",
+            GEAR,
+            style(&filename).yellow().bold()
+        );
+        if let Some(ref cfg) = llm_config {
+            let model_display = style(&cfg.model).magenta();
+            let url_short = if cfg.api_url.contains("openai.com") {
+                "OpenAI".to_string()
+            } else {
+                // Extract host from URL
+                cfg.api_url
+                    .replace("http://", "")
+                    .replace("https://", "")
+                    .split('/')
+                    .next()
+                    .unwrap_or("local")
+                    .to_string()
+            };
+            println!(
+                "  {} {} @ {}",
+                BRAIN,
+                model_display,
+                style(url_short).dim()
+            );
+        } else if mock {
+            println!("  {} {}", BRAIN, style("mock mode").dim());
+        }
+        println!();
+    }
+
+    // Create a spinner for the compilation phase
+    let spinner = if !quiet {
+        let sp = ProgressBar::new_spinner();
+        sp.set_style(
+            ProgressStyle::with_template("{spinner:.cyan} {msg}")
+                .unwrap()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+        );
+        sp.set_message("Parsing...");
+        sp.enable_steady_tick(std::time::Duration::from_millis(80));
+        Some(sp)
+    } else {
+        None
+    };
+
     // Lex
     let lex_result = match lex(&source) {
         Ok(result) => result,
         Err(err) => {
+            if let Some(sp) = spinner {
+                sp.finish_and_clear();
+            }
             let report = miette::Report::new(err).with_source_code(source);
             return Err(report);
         }
@@ -74,6 +170,9 @@ async fn run_file(path: &PathBuf, mock: bool) -> Result<()> {
     let (program, parse_errors) = parse(lex_result.tokens(), Arc::clone(&source_arc));
 
     if !parse_errors.is_empty() {
+        if let Some(sp) = spinner {
+            sp.finish_and_clear();
+        }
         for err in &parse_errors {
             eprintln!("Parse error: {err}");
         }
@@ -82,10 +181,17 @@ async fn run_file(path: &PathBuf, mock: bool) -> Result<()> {
 
     let program = program.ok_or_else(|| miette::miette!("Failed to parse program"))?;
 
+    if let Some(ref sp) = spinner {
+        sp.set_message("Type checking...");
+    }
+
     // Type check
     let check_result = check(&program);
     let mut has_errors = false;
     for err in &check_result.errors {
+        if let Some(ref sp) = spinner {
+            sp.finish_and_clear();
+        }
         let report = miette::Report::new(err.clone()).with_source_code(source.clone());
         eprintln!("{report:?}");
         // Only count actual errors, not warnings
@@ -96,6 +202,12 @@ async fn run_file(path: &PathBuf, mock: bool) -> Result<()> {
     if has_errors {
         miette::bail!("Type errors in {filename}");
     }
+
+    if let Some(ref sp) = spinner {
+        sp.set_message(format!("{}Running agents...", BRAIN));
+    }
+
+    let run_start = Instant::now();
 
     // Run
     let runtime = if mock {
@@ -109,9 +221,27 @@ async fn run_file(path: &PathBuf, mock: bool) -> Result<()> {
         .await
         .map_err(|e| miette::Report::new(e).with_source_code(source))?;
 
+    let run_duration = run_start.elapsed();
+    let total_duration = start_time.elapsed();
+
+    if let Some(sp) = spinner {
+        sp.finish_and_clear();
+    }
+
     // Print result if it's not Unit
     if !result.is_unit() {
         println!("{result}");
+    }
+
+    if !quiet {
+        println!();
+        println!(
+            "{}{} Done in {:.2}s (LLM: {:.2}s)",
+            CHECK,
+            style("Sage").green().bold(),
+            total_duration.as_secs_f64(),
+            run_duration.as_secs_f64(),
+        );
     }
 
     Ok(())
@@ -166,6 +296,12 @@ fn check_file(path: &PathBuf) -> Result<()> {
         miette::bail!("Errors found in {filename}");
     }
 
-    println!("No errors found in {filename}");
+    println!(
+        "{}{} {} {}",
+        SPARKLES,
+        style("No errors").green().bold(),
+        style("in").dim(),
+        style(&filename).yellow()
+    );
     Ok(())
 }

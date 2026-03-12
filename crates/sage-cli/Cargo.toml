@@ -18,6 +18,8 @@ tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
 miette = { version = "7", features = ["fancy"] }
 dotenvy = "0.15"
+console = "0.15"
+indicatif = "0.17"
 
 [lints]
 workspace = true

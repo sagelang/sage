@@ -28,17 +28,34 @@ impl LlmConfig {
     ///
     /// Uses:
     /// - `SAGE_LLM_URL` (default: `https://api.openai.com/v1`)
-    /// - `SAGE_API_KEY` (required)
+    /// - `SAGE_API_KEY` (required for OpenAI, optional for local LLMs like Ollama)
     /// - `SAGE_MODEL` (default: `gpt-4o-mini`)
+    ///
+    /// For local LLMs (Ollama, etc.), set `SAGE_LLM_URL` to the local endpoint
+    /// (e.g., `http://192.168.0.11:11434/v1`) and optionally set `SAGE_MODEL`
+    /// to the model name (e.g., `llama3`).
     #[must_use]
     pub fn from_env() -> Option<Self> {
-        let api_key = env::var("SAGE_API_KEY").ok()?;
+        let api_url = env::var("SAGE_LLM_URL")
+            .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+
+        // API key is required for OpenAI, but optional for local LLMs
+        let api_key = env::var("SAGE_API_KEY").unwrap_or_default();
+        let is_local = !api_url.contains("openai.com");
+
+        // If using OpenAI and no API key, return None
+        if !is_local && api_key.is_empty() {
+            return None;
+        }
+
+        // Default model: gpt-4o-mini for OpenAI, llama3.2 for local
+        let default_model = if is_local { "llama3.2" } else { "gpt-4o-mini" };
+        let model = env::var("SAGE_MODEL").unwrap_or_else(|_| default_model.to_string());
 
         Some(Self {
-            api_url: env::var("SAGE_LLM_URL")
-                .unwrap_or_else(|_| "https://api.openai.com/v1".to_string()),
+            api_url,
             api_key,
-            model: env::var("SAGE_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string()),
+            model,
             max_tokens: 1024,
             temperature: 0.7,
         })
@@ -110,11 +127,17 @@ impl LlmClient {
 
         let url = format!("{}/chat/completions", self.config.api_url);
 
-        let response = self
+        let mut req = self
             .client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("Content-Type", "application/json")
+            .header("Content-Type", "application/json");
+
+        // Only add Authorization header if API key is present
+        if !self.config.api_key.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", self.config.api_key));
+        }
+
+        let response = req
             .json(&request)
             .send()
             .await

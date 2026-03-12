@@ -45,6 +45,7 @@ mod env;
 mod error;
 mod eval;
 mod llm;
+mod observer;
 mod runtime;
 mod value;
 
@@ -52,5 +53,6 @@ pub use env::Environment;
 pub use error::{RuntimeError, RuntimeResult};
 pub use eval::{eval_block, eval_expr, eval_stmt, ControlFlow, EvalContext};
 pub use llm::{LlmClient, LlmConfig};
+pub use observer::{NoOpObserver, RuntimeEvent, RuntimeObserver, SharedObserver};
 pub use runtime::{run, run_mock, Runtime, RuntimeConfig};
 pub use value::{AgentHandle, AwaitError, SendError, Value};

@@ -4,6 +4,7 @@ use crate::env::Environment;
 use crate::error::{RuntimeError, RuntimeResult};
 use crate::eval::{eval_block, ControlFlow, EvalContext};
 use crate::llm::{LlmClient, LlmConfig};
+use crate::observer::{NoOpObserver, SharedObserver};
 use crate::value::Value;
 use sage_parser::{EventKind, Program};
 use std::collections::HashMap;
@@ -11,10 +12,30 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
 /// Configuration for the Sage runtime.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone)]
 pub struct RuntimeConfig {
     /// LLM configuration.
     pub llm: LlmConfig,
+    /// Observer for runtime events.
+    pub observer: SharedObserver,
+}
+
+impl Default for RuntimeConfig {
+    fn default() -> Self {
+        Self {
+            llm: LlmConfig::default(),
+            observer: Arc::new(NoOpObserver),
+        }
+    }
+}
+
+impl std::fmt::Debug for RuntimeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RuntimeConfig")
+            .field("llm", &self.llm)
+            .field("observer", &"<observer>")
+            .finish()
+    }
 }
 
 /// The Sage runtime for executing programs.
@@ -22,6 +43,8 @@ pub struct Runtime {
     #[allow(dead_code)]
     config: RuntimeConfig,
     llm: Arc<LlmClient>,
+    #[allow(dead_code)] // Will be used for event callbacks
+    observer: SharedObserver,
 }
 
 impl Runtime {
@@ -29,7 +52,12 @@ impl Runtime {
     #[must_use]
     pub fn new(config: RuntimeConfig) -> Self {
         let llm = Arc::new(LlmClient::new(config.llm.clone()));
-        Self { config, llm }
+        let observer = Arc::clone(&config.observer);
+        Self {
+            config,
+            llm,
+            observer,
+        }
     }
 
     /// Create a runtime with mock LLM for testing.
@@ -37,6 +65,16 @@ impl Runtime {
     pub fn mock() -> Self {
         Self::new(RuntimeConfig {
             llm: LlmConfig::mock(),
+            observer: Arc::new(NoOpObserver),
+        })
+    }
+
+    /// Create a runtime with an observer for tracking events.
+    #[must_use]
+    pub fn with_observer(observer: SharedObserver) -> Self {
+        Self::new(RuntimeConfig {
+            llm: LlmConfig::default(),
+            observer,
         })
     }
 
