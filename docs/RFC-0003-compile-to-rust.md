@@ -1,6 +1,6 @@
 # RFC-0003: Compile Sage to Rust
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Created:** 2026-03-12
 - **Author:** Sage Team
 

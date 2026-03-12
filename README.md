@@ -165,13 +165,21 @@ Following Rust conventions:
 cargo build --release
 ```
 
+### Pre-compiled Toolchain (Optional)
+
+For faster builds (~0.4s vs ~10s), you can build a pre-compiled toolchain:
+
+```bash
+./scripts/build-toolchain.sh
+export SAGE_TOOLCHAIN=dist/$(rustc -vV | grep host | cut -d' ' -f2)
+```
+
 ## Usage
 
 Run a Sage program:
 
 ```bash
-# With mock LLM (for testing)
-sage run examples/hello.sg --mock
+sage run examples/hello.sg
 
 # With real LLM (requires SAGE_API_KEY)
 export SAGE_API_KEY="your-openai-api-key"
@@ -191,6 +199,7 @@ sage check examples/hello.sg
 | `SAGE_API_KEY` | OpenAI API key for LLM inference | Required for `infer` |
 | `SAGE_LLM_URL` | Base URL for OpenAI-compatible API | `https://api.openai.com/v1` |
 | `SAGE_MODEL` | Model to use | `gpt-4o-mini` |
+| `SAGE_TOOLCHAIN` | Path to pre-compiled toolchain | Auto-detected |
 
 ## Implementation Progress
 
@@ -224,18 +233,12 @@ sage check examples/hello.sg
 - [x] **TASK-021** — Entry agent validation
 - [x] **TASK-022** — Type checker tests
 
-### Milestone 5: Interpreter & Runtime
-- [x] **TASK-023** — Value enum and runtime environment
-- [x] **TASK-024** — Prelude built-in functions
-- [x] **TASK-025** — Expression evaluator
-- [x] **TASK-026** — Statement evaluator
-- [x] **TASK-027** — Agent task spawning
-- [x] **TASK-028** — Await and send implementation
-- [x] **TASK-029** — LLM backend
-- [x] **TASK-030** — Wire infer expression to LLM backend
-- [x] **TASK-031** — Runtime entry point
-- [x] **TASK-032** — Minimal supervision (fail-fast)
-- [x] **TASK-033** — Interpreter tests
+### Milestone 5: Compiler & Runtime
+- [x] **TASK-023** — Rust code generator (sage-codegen)
+- [x] **TASK-024** — Runtime library (sage-runtime)
+- [x] **TASK-025** — Agent spawning and async execution
+- [x] **TASK-026** — LLM backend integration
+- [x] **TASK-027** — Pre-compiled toolchain support
 
 ### Milestone 6: CLI
 - [x] **TASK-034** — CLI binary with clap
@@ -261,8 +264,11 @@ sage/
 │   ├── sage-lexer/        # Tokenizer (logos-based)
 │   ├── sage-parser/       # Parser (chumsky-based)
 │   ├── sage-checker/      # Name resolution + type checker
-│   ├── sage-interpreter/  # Tree-walking interpreter + runtime
+│   ├── sage-codegen/      # Rust code generator
+│   ├── sage-runtime/      # Runtime library (agents, LLM, etc.)
 │   └── sage-cli/          # CLI entry point
+├── scripts/
+│   └── build-toolchain.sh # Build pre-compiled runtime
 ├── docs/
 │   └── RFC-0001-poc.md    # Full language specification
 ├── assets/
