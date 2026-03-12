@@ -13,9 +13,7 @@ path = "src/main.rs"
 sage-lexer = { path = "../sage-lexer" }
 sage-parser = { path = "../sage-parser" }
 sage-checker = { path = "../sage-checker" }
-sage-interpreter = { path = "../sage-interpreter" }
 sage-codegen = { path = "../sage-codegen" }
-tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
 miette = { version = "7", features = ["fancy"] }
 dotenvy = "0.15"

@@ -6,7 +6,6 @@ use indicatif::{ProgressBar, ProgressStyle};
 use miette::{Diagnostic, IntoDiagnostic, Result, Severity, WrapErr};
 use sage_checker::check;
 use sage_codegen::generate;
-use sage_interpreter::{LlmConfig, Runtime, RuntimeConfig};
 use sage_lexer::lex;
 use sage_parser::parse;
 use std::path::PathBuf;
@@ -18,7 +17,7 @@ use std::time::Instant;
 static SPARKLES: Emoji<'_, '_> = Emoji("✨ ", "* ");
 static GEAR: Emoji<'_, '_> = Emoji("⚙️  ", "> ");
 static CHECK: Emoji<'_, '_> = Emoji("✓ ", "v ");
-static BRAIN: Emoji<'_, '_> = Emoji("🧠 ", "@ ");
+static ROCKET: Emoji<'_, '_> = Emoji("🚀 ", ">> ");
 
 /// Ward the owl - Sage's mascot
 const WARD_ASCII: &str = r#"
@@ -39,14 +38,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run a Sage program (interpreted)
+    /// Compile and run a Sage program
     Run {
         /// Path to the .sg file to run
         file: PathBuf,
 
-        /// Use mock LLM (for testing without API key)
+        /// Build in release mode
         #[arg(long)]
-        mock: bool,
+        release: bool,
 
         /// Quiet mode - minimal output
         #[arg(short, long)]
@@ -78,21 +77,27 @@ enum Commands {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     // Load .env file if present (ignore errors if not found)
     let _ = dotenvy::dotenv();
 
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Run { file, mock, quiet } => run_file(&file, mock, quiet).await,
+        Commands::Run {
+            file,
+            release,
+            quiet,
+        } => run_file(&file, release, quiet),
         Commands::Build {
             file,
             release,
             output,
             emit_rust,
-        } => build_file(&file, release, &output, emit_rust),
+        } => {
+            build_file(&file, release, &output, emit_rust, false)?;
+            Ok(())
+        }
         Commands::Check { file } => check_file(&file),
     }
 }
@@ -109,165 +114,31 @@ fn print_banner() {
     println!();
 }
 
-/// Run a Sage program file.
-async fn run_file(path: &PathBuf, mock: bool, quiet: bool) -> Result<()> {
-    let start_time = Instant::now();
+/// Run a Sage program (compile + execute).
+fn run_file(path: &PathBuf, release: bool, quiet: bool) -> Result<()> {
+    // Build the program
+    let output_dir = PathBuf::from("target/sage");
+    let binary_path = build_file(path, release, &output_dir, false, quiet)?;
 
+    let binary_path = binary_path.ok_or_else(|| miette::miette!("Build did not produce binary"))?;
+
+    // Run the compiled binary
     if !quiet {
-        print_banner();
+        println!();
+        println!("{}Running...", ROCKET);
+        println!();
     }
 
-    let source = std::fs::read_to_string(path)
+    let status = Command::new(&binary_path)
+        .status()
         .into_diagnostic()
-        .wrap_err_with(|| format!("Failed to read file: {}", path.display()))?;
+        .wrap_err("Failed to run compiled program")?;
 
-    let filename = path
-        .file_name()
-        .map_or_else(|| "unknown".to_string(), |s| s.to_string_lossy().into_owned());
-
-    // Get LLM info for display
-    let llm_config = if mock {
-        None
-    } else {
-        LlmConfig::from_env()
-    };
-
-    if !quiet {
-        println!(
-            "{}Running {}",
-            GEAR,
-            style(&filename).yellow().bold()
-        );
-        if let Some(ref cfg) = llm_config {
-            let model_display = style(&cfg.model).magenta();
-            let url_short = if cfg.api_url.contains("openai.com") {
-                "OpenAI".to_string()
-            } else {
-                // Extract host from URL
-                cfg.api_url
-                    .replace("http://", "")
-                    .replace("https://", "")
-                    .split('/')
-                    .next()
-                    .unwrap_or("local")
-                    .to_string()
-            };
-            println!(
-                "  {} {} @ {}",
-                BRAIN,
-                model_display,
-                style(url_short).dim()
-            );
-        } else if mock {
-            println!("  {} {}", BRAIN, style("mock mode").dim());
+    if !status.success() {
+        if let Some(code) = status.code() {
+            std::process::exit(code);
         }
-        println!();
-    }
-
-    // Create a spinner for the compilation phase
-    let spinner = if !quiet {
-        let sp = ProgressBar::new_spinner();
-        sp.set_style(
-            ProgressStyle::with_template("{spinner:.cyan} {msg}")
-                .unwrap()
-                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
-        );
-        sp.set_message("Parsing...");
-        sp.enable_steady_tick(std::time::Duration::from_millis(80));
-        Some(sp)
-    } else {
-        None
-    };
-
-    // Lex
-    let lex_result = match lex(&source) {
-        Ok(result) => result,
-        Err(err) => {
-            if let Some(sp) = spinner {
-                sp.finish_and_clear();
-            }
-            let report = miette::Report::new(err).with_source_code(source);
-            return Err(report);
-        }
-    };
-
-    // Parse
-    let source_arc: Arc<str> = Arc::from(source.as_str());
-    let (program, parse_errors) = parse(lex_result.tokens(), Arc::clone(&source_arc));
-
-    if !parse_errors.is_empty() {
-        if let Some(sp) = spinner {
-            sp.finish_and_clear();
-        }
-        for err in &parse_errors {
-            eprintln!("Parse error: {err}");
-        }
-        miette::bail!("Parse errors in {filename}");
-    }
-
-    let program = program.ok_or_else(|| miette::miette!("Failed to parse program"))?;
-
-    if let Some(ref sp) = spinner {
-        sp.set_message("Type checking...");
-    }
-
-    // Type check
-    let check_result = check(&program);
-    let mut has_errors = false;
-    for err in &check_result.errors {
-        if let Some(ref sp) = spinner {
-            sp.finish_and_clear();
-        }
-        let report = miette::Report::new(err.clone()).with_source_code(source.clone());
-        eprintln!("{report:?}");
-        // Only count actual errors, not warnings
-        if err.severity().unwrap_or(Severity::Error) == Severity::Error {
-            has_errors = true;
-        }
-    }
-    if has_errors {
-        miette::bail!("Type errors in {filename}");
-    }
-
-    if let Some(ref sp) = spinner {
-        sp.set_message(format!("{}Running agents...", BRAIN));
-    }
-
-    let run_start = Instant::now();
-
-    // Run
-    let runtime = if mock {
-        Runtime::mock()
-    } else {
-        Runtime::new(RuntimeConfig::default())
-    };
-
-    let result = runtime
-        .run(program)
-        .await
-        .map_err(|e| miette::Report::new(e).with_source_code(source))?;
-
-    let run_duration = run_start.elapsed();
-    let total_duration = start_time.elapsed();
-
-    if let Some(sp) = spinner {
-        sp.finish_and_clear();
-    }
-
-    // Print result if it's not Unit
-    if !result.is_unit() {
-        println!("{result}");
-    }
-
-    if !quiet {
-        println!();
-        println!(
-            "{}{} Done in {:.2}s (LLM: {:.2}s)",
-            CHECK,
-            style("Sage").green().bold(),
-            total_duration.as_secs_f64(),
-            run_duration.as_secs_f64(),
-        );
+        miette::bail!("Program exited with error");
     }
 
     Ok(())
@@ -333,10 +204,19 @@ fn check_file(path: &PathBuf) -> Result<()> {
 }
 
 /// Build a Sage program to a native binary.
-fn build_file(path: &PathBuf, release: bool, output_dir: &PathBuf, emit_rust_only: bool) -> Result<()> {
+/// Returns the path to the binary if compilation succeeded.
+fn build_file(
+    path: &PathBuf,
+    release: bool,
+    output_dir: &PathBuf,
+    emit_rust_only: bool,
+    quiet: bool,
+) -> Result<Option<PathBuf>> {
     let start_time = Instant::now();
 
-    print_banner();
+    if !quiet {
+        print_banner();
+    }
 
     let source = std::fs::read_to_string(path)
         .into_diagnostic()
@@ -351,17 +231,37 @@ fn build_file(path: &PathBuf, release: bool, output_dir: &PathBuf, emit_rust_onl
         .map_or_else(|| "sage_program".to_string(), |s| s.to_string_lossy().into_owned())
         .replace('-', "_");
 
-    println!(
-        "{}Compiling {}",
-        GEAR,
-        style(&filename).yellow().bold()
-    );
-    println!();
+    if !quiet {
+        println!(
+            "{}Compiling {}",
+            GEAR,
+            style(&filename).yellow().bold()
+        );
+        println!();
+    }
+
+    // Create a spinner
+    let spinner = if !quiet {
+        let sp = ProgressBar::new_spinner();
+        sp.set_style(
+            ProgressStyle::with_template("{spinner:.cyan} {msg}")
+                .unwrap()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+        );
+        sp.set_message("Parsing...");
+        sp.enable_steady_tick(std::time::Duration::from_millis(80));
+        Some(sp)
+    } else {
+        None
+    };
 
     // Lex
     let lex_result = match lex(&source) {
         Ok(result) => result,
         Err(err) => {
+            if let Some(sp) = spinner {
+                sp.finish_and_clear();
+            }
             let report = miette::Report::new(err).with_source_code(source);
             return Err(report);
         }
@@ -372,6 +272,9 @@ fn build_file(path: &PathBuf, release: bool, output_dir: &PathBuf, emit_rust_onl
     let (program, parse_errors) = parse(lex_result.tokens(), Arc::clone(&source_arc));
 
     if !parse_errors.is_empty() {
+        if let Some(sp) = spinner {
+            sp.finish_and_clear();
+        }
         for err in &parse_errors {
             eprintln!("Parse error: {err}");
         }
@@ -380,10 +283,17 @@ fn build_file(path: &PathBuf, release: bool, output_dir: &PathBuf, emit_rust_onl
 
     let program = program.ok_or_else(|| miette::miette!("Failed to parse program"))?;
 
+    if let Some(ref sp) = spinner {
+        sp.set_message("Type checking...");
+    }
+
     // Type check
     let check_result = check(&program);
     let mut has_errors = false;
     for err in &check_result.errors {
+        if let Some(ref sp) = spinner {
+            sp.finish_and_clear();
+        }
         let report = miette::Report::new(err.clone()).with_source_code(source.clone());
         eprintln!("{report:?}");
         if err.severity().unwrap_or(Severity::Error) == Severity::Error {
@@ -392,6 +302,10 @@ fn build_file(path: &PathBuf, release: bool, output_dir: &PathBuf, emit_rust_onl
     }
     if has_errors {
         miette::bail!("Type errors in {filename}");
+    }
+
+    if let Some(ref sp) = spinner {
+        sp.set_message("Generating Rust...");
     }
 
     // Generate Rust code
@@ -416,18 +330,20 @@ fn build_file(path: &PathBuf, release: bool, output_dir: &PathBuf, emit_rust_onl
         .into_diagnostic()
         .wrap_err("Failed to write Cargo.toml")?;
 
-    println!(
-        "  {} Generated {}",
-        CHECK,
-        style(main_rs_path.display()).dim()
-    );
-    println!(
-        "  {} Generated {}",
-        CHECK,
-        style(cargo_toml_path.display()).dim()
-    );
-
     if emit_rust_only {
+        if let Some(sp) = spinner {
+            sp.finish_and_clear();
+        }
+        println!(
+            "  {} Generated {}",
+            CHECK,
+            style(main_rs_path.display()).dim()
+        );
+        println!(
+            "  {} Generated {}",
+            CHECK,
+            style(cargo_toml_path.display()).dim()
+        );
         println!();
         println!(
             "{}{} Rust code generated in {}",
@@ -435,14 +351,15 @@ fn build_file(path: &PathBuf, release: bool, output_dir: &PathBuf, emit_rust_onl
             style("Done").green().bold(),
             style(project_dir.display()).yellow()
         );
-        return Ok(());
+        return Ok(None);
+    }
+
+    if let Some(ref sp) = spinner {
+        sp.set_message("Building with cargo...");
     }
 
     // Compile with cargo
-    println!();
-    println!("  {} Building with cargo...", GEAR);
-
-    let mut cargo_args = vec!["build"];
+    let mut cargo_args = vec!["build", "--quiet"];
     if release {
         cargo_args.push("--release");
     }
@@ -454,6 +371,10 @@ fn build_file(path: &PathBuf, release: bool, output_dir: &PathBuf, emit_rust_onl
         .into_diagnostic()
         .wrap_err("Failed to run cargo build")?;
 
+    if let Some(sp) = spinner {
+        sp.finish_and_clear();
+    }
+
     if !cargo_status.success() {
         miette::bail!("Cargo build failed");
     }
@@ -463,14 +384,15 @@ fn build_file(path: &PathBuf, release: bool, output_dir: &PathBuf, emit_rust_onl
 
     let total_duration = start_time.elapsed();
 
-    println!();
-    println!(
-        "{}{} Built {} in {:.2}s",
-        SPARKLES,
-        style("Done").green().bold(),
-        style(binary_path.display()).yellow(),
-        total_duration.as_secs_f64()
-    );
+    if !quiet {
+        println!(
+            "{}{} Compiled {} in {:.2}s",
+            SPARKLES,
+            style("Done").green().bold(),
+            style(&filename).yellow(),
+            total_duration.as_secs_f64()
+        );
+    }
 
-    Ok(())
+    Ok(Some(binary_path))
 }
