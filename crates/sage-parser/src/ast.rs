@@ -135,13 +135,15 @@ pub struct ConstDecl {
 // Agent declarations
 // =============================================================================
 
-/// An agent declaration: `agent Name { ... }` or `pub agent Name { ... }`
+/// An agent declaration: `agent Name { ... }` or `pub agent Name receives MsgType { ... }`
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentDecl {
     /// Whether this agent is public (can be imported by other modules).
     pub is_pub: bool,
     /// The agent's name.
     pub name: Ident,
+    /// The message type this agent receives (for message passing).
+    pub receives: Option<TypeExpr>,
     /// Belief declarations (agent state).
     pub beliefs: Vec<BeliefDecl>,
     /// Event handlers.
@@ -315,6 +317,20 @@ pub enum Stmt {
         span: Span,
     },
 
+    /// Infinite loop: `loop { ... }`
+    Loop {
+        /// The loop body.
+        body: Block,
+        /// Span covering the statement.
+        span: Span,
+    },
+
+    /// Break statement: `break`
+    Break {
+        /// Span covering the statement.
+        span: Span,
+    },
+
     /// Expression statement: `expr`
     Expr {
         /// The expression.
@@ -335,6 +351,8 @@ impl Stmt {
             | Stmt::If { span, .. }
             | Stmt::For { span, .. }
             | Stmt::While { span, .. }
+            | Stmt::Loop { span, .. }
+            | Stmt::Break { span, .. }
             | Stmt::Expr { span, .. } => span,
         }
     }
@@ -521,6 +539,12 @@ pub enum Expr {
         /// Span covering the expression.
         span: Span,
     },
+
+    /// Receive message from mailbox: `receive()`
+    Receive {
+        /// Span covering the expression.
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -545,7 +569,8 @@ impl Expr {
             | Expr::StringInterp { span, .. }
             | Expr::Match { span, .. }
             | Expr::RecordConstruct { span, .. }
-            | Expr::FieldAccess { span, .. } => span,
+            | Expr::FieldAccess { span, .. }
+            | Expr::Receive { span, .. } => span,
         }
     }
 }

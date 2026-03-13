@@ -958,4 +958,95 @@ run Main;
         let (_, result) = check_source(source);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
     }
+
+    // =========================================================================
+    // RFC-0006: Message passing tests
+    // =========================================================================
+
+    #[test]
+    fn check_loop_break() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let count = 0;
+                    loop {
+                        count = count + 1;
+                        if count > 5 {
+                            break;
+                        }
+                    }
+                    emit(count);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_break_outside_loop() {
+        let source = r#"
+            agent Main {
+                on start {
+                    break;
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(
+            result.errors[0],
+            CheckError::BreakOutsideLoop { .. }
+        ));
+    }
+
+    #[test]
+    fn check_receive_with_receives() {
+        let source = r#"
+            enum WorkerMsg {
+                Task,
+                Shutdown,
+            }
+
+            agent Worker receives WorkerMsg {
+                on start {
+                    let msg = receive();
+                    emit(0);
+                }
+            }
+
+            agent Main {
+                on start { emit(0); }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_receive_without_receives() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let msg = receive();
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(
+            result.errors[0],
+            CheckError::ReceiveWithoutReceives { .. }
+        ));
+    }
 }

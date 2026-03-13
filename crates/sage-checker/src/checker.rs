@@ -40,6 +40,10 @@ pub struct Checker {
     used_beliefs: HashSet<String>,
     /// The current module path being checked.
     current_module: ModulePath,
+    /// Whether we're inside a loop (for break validation).
+    in_loop: bool,
+    /// The receives type of the current agent (for receive validation).
+    receives_type: Option<Type>,
 }
 
 impl Checker {
@@ -55,6 +59,8 @@ impl Checker {
             expected_return: None,
             used_beliefs: HashSet::new(),
             current_module: vec![],
+            in_loop: false,
+            receives_type: None,
         }
     }
 
@@ -70,6 +76,8 @@ impl Checker {
             expected_return: None,
             used_beliefs: HashSet::new(),
             current_module: module_path,
+            in_loop: false,
+            receives_type: None,
         }
     }
 
@@ -254,6 +262,9 @@ impl Checker {
         self.current_agent = Some(agent.name.name.clone());
         self.used_beliefs.clear();
 
+        // Set receives type from the agent's receives clause
+        self.receives_type = agent.receives.as_ref().map(resolve_type);
+
         for handler in &agent.handlers {
             self.push_scope();
 
@@ -280,6 +291,7 @@ impl Checker {
         }
 
         self.current_agent = None;
+        self.receives_type = None;
     }
 
     fn check_function(&mut self, func: &FnDecl) {
@@ -447,10 +459,13 @@ impl Checker {
                     Type::Error
                 };
 
+                let was_in_loop = self.in_loop;
+                self.in_loop = true;
                 self.push_scope();
                 self.define_var(&var.name, elem_ty);
                 self.check_block(body);
                 self.pop_scope();
+                self.in_loop = was_in_loop;
             }
 
             Stmt::While {
@@ -464,9 +479,28 @@ impl Checker {
                         .push(CheckError::non_bool_condition(cond_ty.to_string(), span));
                 }
 
+                let was_in_loop = self.in_loop;
+                self.in_loop = true;
                 self.push_scope();
                 self.check_block(body);
                 self.pop_scope();
+                self.in_loop = was_in_loop;
+            }
+
+            Stmt::Loop { body, .. } => {
+                let was_in_loop = self.in_loop;
+                self.in_loop = true;
+                self.push_scope();
+                self.check_block(body);
+                self.pop_scope();
+                self.in_loop = was_in_loop;
+            }
+
+            Stmt::Break { span } => {
+                if !self.in_loop {
+                    self.errors
+                        .push(CheckError::break_outside_loop(span));
+                }
             }
 
             Stmt::Expr { expr, .. } => {
@@ -858,6 +892,26 @@ impl Checker {
                         span,
                     ));
                     Type::Error
+                }
+            }
+
+            Expr::Receive { span } => {
+                // Must be inside an agent
+                if self.current_agent.is_none() {
+                    self.errors.push(CheckError::receive_outside_agent(span));
+                    return Type::Error;
+                }
+
+                // Must have a receives type
+                match &self.receives_type {
+                    Some(ty) => ty.clone(),
+                    None => {
+                        self.errors.push(CheckError::receive_without_receives(
+                            self.current_agent.as_ref().unwrap(),
+                            span,
+                        ));
+                        Type::Error
+                    }
                 }
             }
         }
@@ -1797,6 +1851,10 @@ struct ModuleChecker<'a> {
     used_beliefs: HashSet<String>,
     /// Emit types inferred during checking.
     inferred_emit_types: HashMap<String, Type>,
+    /// Whether we're inside a loop (for break validation).
+    in_loop: bool,
+    /// The receives type of the current agent (for receive validation).
+    receives_type: Option<Type>,
 }
 
 impl<'a> ModuleChecker<'a> {
@@ -1816,6 +1874,8 @@ impl<'a> ModuleChecker<'a> {
             expected_return: None,
             used_beliefs: HashSet::new(),
             inferred_emit_types: HashMap::new(),
+            in_loop: false,
+            receives_type: None,
         }
     }
 
@@ -1832,6 +1892,9 @@ impl<'a> ModuleChecker<'a> {
     fn check_agent(&mut self, agent: &AgentDecl) {
         self.current_agent = Some(agent.name.name.clone());
         self.used_beliefs.clear();
+
+        // Set receives type from the agent's receives clause
+        self.receives_type = agent.receives.as_ref().map(resolve_type);
 
         for handler in &agent.handlers {
             self.push_scope();
@@ -1853,6 +1916,7 @@ impl<'a> ModuleChecker<'a> {
         }
 
         self.current_agent = None;
+        self.receives_type = None;
     }
 
     fn check_function(&mut self, func: &FnDecl) {
@@ -1971,10 +2035,13 @@ impl<'a> ModuleChecker<'a> {
                     Type::Error
                 };
 
+                let was_in_loop = self.in_loop;
+                self.in_loop = true;
                 self.push_scope();
                 self.define_var(&var.name, elem_ty);
                 self.check_block(body);
                 self.pop_scope();
+                self.in_loop = was_in_loop;
             }
 
             Stmt::While { condition, body, span } => {
@@ -1983,9 +2050,27 @@ impl<'a> ModuleChecker<'a> {
                     self.errors.push(CheckError::non_bool_condition(cond_ty.to_string(), span));
                 }
 
+                let was_in_loop = self.in_loop;
+                self.in_loop = true;
                 self.push_scope();
                 self.check_block(body);
                 self.pop_scope();
+                self.in_loop = was_in_loop;
+            }
+
+            Stmt::Loop { body, .. } => {
+                let was_in_loop = self.in_loop;
+                self.in_loop = true;
+                self.push_scope();
+                self.check_block(body);
+                self.pop_scope();
+                self.in_loop = was_in_loop;
+            }
+
+            Stmt::Break { span } => {
+                if !self.in_loop {
+                    self.errors.push(CheckError::break_outside_loop(span));
+                }
             }
 
             Stmt::Expr { expr, .. } => {
@@ -2340,6 +2425,26 @@ impl<'a> ModuleChecker<'a> {
                         span,
                     ));
                     Type::Error
+                }
+            }
+
+            Expr::Receive { span } => {
+                // Must be inside an agent
+                if self.current_agent.is_none() {
+                    self.errors.push(CheckError::receive_outside_agent(span));
+                    return Type::Error;
+                }
+
+                // Must have a receives type
+                match &self.receives_type {
+                    Some(ty) => ty.clone(),
+                    None => {
+                        self.errors.push(CheckError::receive_without_receives(
+                            self.current_agent.as_ref().unwrap(),
+                            span,
+                        ));
+                        Type::Error
+                    }
                 }
             }
         }

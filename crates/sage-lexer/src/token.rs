@@ -67,6 +67,12 @@ pub enum Token {
     #[token("while")]
     KwWhile,
 
+    #[token("loop")]
+    KwLoop,
+
+    #[token("break")]
+    KwBreak,
+
     #[token("in")]
     KwIn,
 
@@ -105,6 +111,12 @@ pub enum Token {
 
     #[token("const")]
     KwConst,
+
+    #[token("receives")]
+    KwReceives,
+
+    #[token("receive")]
+    KwReceive,
 
     // =========================================================================
     // Type keywords
@@ -277,6 +289,8 @@ impl Token {
                 | Token::KwElse
                 | Token::KwFor
                 | Token::KwWhile
+                | Token::KwLoop
+                | Token::KwBreak
                 | Token::KwIn
                 | Token::KwSelf
                 | Token::KwTrue
@@ -290,6 +304,8 @@ impl Token {
                 | Token::KwEnum
                 | Token::KwMatch
                 | Token::KwConst
+                | Token::KwReceives
+                | Token::KwReceive
         )
     }
 
@@ -366,6 +382,8 @@ impl std::fmt::Display for Token {
             Token::KwElse => write!(f, "else"),
             Token::KwFor => write!(f, "for"),
             Token::KwWhile => write!(f, "while"),
+            Token::KwLoop => write!(f, "loop"),
+            Token::KwBreak => write!(f, "break"),
             Token::KwIn => write!(f, "in"),
             Token::KwSelf => write!(f, "self"),
             Token::KwTrue => write!(f, "true"),
@@ -379,6 +397,8 @@ impl std::fmt::Display for Token {
             Token::KwEnum => write!(f, "enum"),
             Token::KwMatch => write!(f, "match"),
             Token::KwConst => write!(f, "const"),
+            Token::KwReceives => write!(f, "receives"),
+            Token::KwReceive => write!(f, "receive"),
 
             // Type keywords
             Token::TyInt => write!(f, "Int"),
@@ -837,5 +857,36 @@ mod tests {
         assert!(Token::KwEnum.is_keyword());
         assert!(Token::KwMatch.is_keyword());
         assert!(Token::KwConst.is_keyword());
+    }
+
+    #[test]
+    fn lex_loop_break() {
+        let mut lexer = Token::lexer("loop { break }");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwLoop)));
+        assert_eq!(lexer.next(), Some(Ok(Token::LBrace)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwBreak)));
+        assert_eq!(lexer.next(), Some(Ok(Token::RBrace)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn lex_receives_receive() {
+        let mut lexer = Token::lexer("agent Worker receives WorkerMsg { receive }");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwAgent)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // Worker
+        assert_eq!(lexer.next(), Some(Ok(Token::KwReceives)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // WorkerMsg
+        assert_eq!(lexer.next(), Some(Ok(Token::LBrace)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwReceive)));
+        assert_eq!(lexer.next(), Some(Ok(Token::RBrace)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn rfc6_keywords_are_keywords() {
+        assert!(Token::KwLoop.is_keyword());
+        assert!(Token::KwBreak.is_keyword());
+        assert!(Token::KwReceives.is_keyword());
+        assert!(Token::KwReceive.is_keyword());
     }
 }

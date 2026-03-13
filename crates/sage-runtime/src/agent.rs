@@ -11,7 +11,6 @@ use tokio::task::JoinHandle;
 /// This is returned by `spawn()` and can be awaited to get the agent's result.
 pub struct AgentHandle<T> {
     join: JoinHandle<SageResult<T>>,
-    #[allow(dead_code)]
     message_tx: mpsc::Sender<Message>,
 }
 
@@ -22,10 +21,15 @@ impl<T> AgentHandle<T> {
     }
 
     /// Send a message to the agent.
-    #[allow(dead_code)]
-    pub async fn send(&self, msg: Message) -> SageResult<()> {
+    ///
+    /// The message will be serialized to JSON and placed in the agent's mailbox.
+    pub async fn send<M>(&self, msg: M) -> SageResult<()>
+    where
+        M: serde::Serialize,
+    {
+        let message = Message::new(msg)?;
         self.message_tx
-            .send(msg)
+            .send(message)
             .await
             .map_err(|e| SageError::Agent(format!("Failed to send message: {e}")))
     }
@@ -55,8 +59,7 @@ pub struct AgentContext<T> {
     pub llm: LlmClient,
     /// Channel to send the result to the awaiter.
     result_tx: Option<oneshot::Sender<T>>,
-    /// Channel to receive messages.
-    #[allow(dead_code)]
+    /// Channel to receive messages from other agents.
     message_rx: mpsc::Receiver<Message>,
 }
 
@@ -100,6 +103,42 @@ impl<T> AgentContext<T> {
     pub async fn infer_string(&self, prompt: &str) -> SageResult<String> {
         self.llm.infer_string(prompt).await
     }
+
+    /// Receive a message from the agent's mailbox.
+    ///
+    /// This blocks until a message is available. The message is deserialized
+    /// into the specified type.
+    pub async fn receive<M>(&mut self) -> SageResult<M>
+    where
+        M: serde::de::DeserializeOwned,
+    {
+        let msg = self
+            .message_rx
+            .recv()
+            .await
+            .ok_or_else(|| SageError::Agent("Message channel closed".to_string()))?;
+
+        serde_json::from_value(msg.payload)
+            .map_err(|e| SageError::Agent(format!("Failed to deserialize message: {e}")))
+    }
+
+    /// Receive a message with a timeout.
+    ///
+    /// Returns `None` if the timeout expires before a message arrives.
+    pub async fn receive_timeout<M>(&mut self, timeout: std::time::Duration) -> SageResult<Option<M>>
+    where
+        M: serde::de::DeserializeOwned,
+    {
+        match tokio::time::timeout(timeout, self.message_rx.recv()).await {
+            Ok(Some(msg)) => {
+                let value = serde_json::from_value(msg.payload)
+                    .map_err(|e| SageError::Agent(format!("Failed to deserialize message: {e}")))?;
+                Ok(Some(value))
+            }
+            Ok(None) => Err(SageError::Agent("Message channel closed".to_string())),
+            Err(_) => Ok(None), // Timeout
+        }
+    }
 }
 
 /// Spawn an agent and return a handle to it.
@@ -129,6 +168,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::{Deserialize, Serialize};
 
     #[tokio::test]
     async fn spawn_simple_agent() {
@@ -147,5 +187,66 @@ mod tests {
 
         let result = handle.result().await.expect("agent should succeed");
         assert_eq!(result, 55);
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    struct TaskMessage {
+        id: u32,
+        content: String,
+    }
+
+    #[tokio::test]
+    async fn agent_receives_message() {
+        let handle = spawn(|mut ctx: AgentContext<String>| async move {
+            let msg: TaskMessage = ctx.receive().await?;
+            ctx.emit(format!("Got task {}: {}", msg.id, msg.content))
+        });
+
+        handle
+            .send(TaskMessage {
+                id: 42,
+                content: "Hello".to_string(),
+            })
+            .await
+            .expect("send should succeed");
+
+        let result = handle.result().await.expect("agent should succeed");
+        assert_eq!(result, "Got task 42: Hello");
+    }
+
+    #[tokio::test]
+    async fn agent_receives_multiple_messages() {
+        let handle = spawn(|mut ctx: AgentContext<i32>| async move {
+            let mut sum = 0;
+            for _ in 0..3 {
+                let n: i32 = ctx.receive().await?;
+                sum += n;
+            }
+            ctx.emit(sum)
+        });
+
+        for n in [10, 20, 30] {
+            handle.send(n).await.expect("send should succeed");
+        }
+
+        let result = handle.result().await.expect("agent should succeed");
+        assert_eq!(result, 60);
+    }
+
+    #[tokio::test]
+    async fn agent_receive_timeout() {
+        let handle = spawn(|mut ctx: AgentContext<String>| async move {
+            let result: Option<i32> = ctx
+                .receive_timeout(std::time::Duration::from_millis(10))
+                .await?;
+            match result {
+                Some(n) => ctx.emit(format!("Got {n}")),
+                None => ctx.emit("Timeout".to_string()),
+            }
+        });
+
+        // Don't send anything, let it timeout
+        let result = handle.result().await.expect("agent should succeed");
+        assert_eq!(result, "Timeout");
     }
 }

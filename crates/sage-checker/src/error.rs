@@ -295,6 +295,31 @@ pub enum CheckError {
         #[label("expected Bool")]
         span: SourceSpan,
     },
+
+    #[error("`break` outside of loop")]
+    #[diagnostic(code(sage::break_outside_loop))]
+    BreakOutsideLoop {
+        #[label("not inside a loop")]
+        span: SourceSpan,
+    },
+
+    #[error("`receive()` called in agent `{name}` which has no `receives` declaration")]
+    #[diagnostic(
+        code(sage::receive_without_receives),
+        help("add `receives MsgType` to agent `{name}`")
+    )]
+    ReceiveWithoutReceives {
+        name: String,
+        #[label("no receives clause")]
+        span: SourceSpan,
+    },
+
+    #[error("`receive()` called outside of agent")]
+    #[diagnostic(code(sage::receive_outside_agent))]
+    ReceiveOutsideAgent {
+        #[label("not inside an agent handler")]
+        span: SourceSpan,
+    },
 }
 
 impl CheckError {
@@ -575,6 +600,30 @@ impl CheckError {
     #[must_use]
     pub fn non_exhaustive_match(span: &Span) -> Self {
         Self::NonExhaustiveMatch {
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a break-outside-loop error.
+    #[must_use]
+    pub fn break_outside_loop(span: &Span) -> Self {
+        Self::BreakOutsideLoop {
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a receive-without-receives error.
+    pub fn receive_without_receives(name: impl Into<String>, span: &Span) -> Self {
+        Self::ReceiveWithoutReceives {
+            name: name.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a receive-outside-agent error.
+    #[must_use]
+    pub fn receive_outside_agent(span: &Span) -> Self {
+        Self::ReceiveOutsideAgent {
             span: to_source_span(span),
         }
     }

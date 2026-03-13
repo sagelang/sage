@@ -432,6 +432,15 @@ serde_json = "1"
                 self.generate_block(body);
             }
 
+            Stmt::Loop { body, .. } => {
+                self.emit.write("loop ");
+                self.generate_block(body);
+            }
+
+            Stmt::Break { .. } => {
+                self.emit.writeln("break;");
+            }
+
             Stmt::Expr { expr, .. } => {
                 // Handle emit specially
                 if let Expr::Emit { value, .. } = expr {
@@ -634,6 +643,10 @@ serde_json = "1"
                 self.generate_expr(object);
                 self.emit.write(".");
                 self.emit.write(&field.name);
+            }
+
+            Expr::Receive { .. } => {
+                self.emit.write("ctx.receive().await?");
             }
         }
     }

@@ -361,23 +361,32 @@ fn agent_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseE
             span: make_span(&src2, span),
         });
 
+    // Optional `receives MsgType` clause
+    let receives_clause = just(Token::KwReceives)
+        .ignore_then(type_parser(src3.clone()))
+        .or_not();
+
     just(Token::KwPub)
         .or_not()
         .then_ignore(just(Token::KwAgent))
         .then(ident_token_parser(src3.clone()))
+        .then(receives_clause)
         .then_ignore(just(Token::LBrace))
         .then(belief.repeated())
         .then(handler.repeated())
         .then_ignore(just(Token::RBrace))
-        .map_with_span(move |(((is_pub, name), beliefs), handlers), span: Range<usize>| {
-            TopLevel::Agent(AgentDecl {
-                is_pub: is_pub.is_some(),
-                name,
-                beliefs,
-                handlers,
-                span: make_span(&src4, span),
-            })
-        })
+        .map_with_span(
+            move |((((is_pub, name), receives), beliefs), handlers), span: Range<usize>| {
+                TopLevel::Agent(AgentDecl {
+                    is_pub: is_pub.is_some(),
+                    name,
+                    receives,
+                    beliefs,
+                    handlers,
+                    span: make_span(&src4, span),
+                })
+            },
+        )
 }
 
 /// Parser for event kinds.
@@ -567,6 +576,21 @@ fn stmt_parser(
             span: make_span(&src7, span),
         });
 
+    let src8 = source.clone();
+    let loop_stmt = just(Token::KwLoop)
+        .ignore_then(block.clone())
+        .map_with_span(move |body, span: Range<usize>| Stmt::Loop {
+            body,
+            span: make_span(&src8, span),
+        });
+
+    let src9 = source.clone();
+    let break_stmt = just(Token::KwBreak)
+        .then_ignore(just(Token::Semicolon))
+        .map_with_span(move |_, span: Range<usize>| Stmt::Break {
+            span: make_span(&src9, span),
+        });
+
     let assign_stmt = ident_token_parser(src5.clone())
         .then_ignore(just(Token::Eq))
         .then(expr_parser(src5.clone()))
@@ -589,6 +613,8 @@ fn stmt_parser(
         .or(if_stmt)
         .or(for_stmt)
         .or(while_stmt)
+        .or(loop_stmt)
+        .or(break_stmt)
         .or(assign_stmt)
         .or(expr_stmt)
 }
@@ -803,6 +829,17 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
                 }
             });
 
+        // receive() - receive message from mailbox
+        let receive_expr = just(Token::KwReceive)
+            .ignore_then(just(Token::LParen))
+            .ignore_then(just(Token::RParen))
+            .map_with_span({
+                let src = src.clone();
+                move |_, span: Range<usize>| Expr::Receive {
+                    span: make_span(&src, span),
+                }
+            });
+
         // Record construction: RecordName { field: value, ... }
         // This is similar to spawn but without the spawn keyword
         // Must come before var to avoid conflict
@@ -838,11 +875,13 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
         // Atom: the base expression without binary ops
         // Box early to cut type complexity
         // Note: record_construct must come before call_expr and var to parse `Name { ... }` correctly
+        // Note: receive_expr must come before call_expr to avoid being parsed as function call
         let atom = infer_expr
             .or(spawn_expr)
             .or(await_expr)
             .or(send_expr)
             .or(emit_expr)
+            .or(receive_expr)
             .or(match_expr)
             .or(self_access)
             .or(record_construct)
@@ -2261,5 +2300,172 @@ mod tests {
         } else {
             panic!("expected let statement");
         }
+    }
+
+    // =========================================================================
+    // RFC-0006: Message passing tests
+    // =========================================================================
+
+    #[test]
+    fn parse_loop_break() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let count = 0;
+                    loop {
+                        count = count + 1;
+                        if count > 5 {
+                            break;
+                        }
+                    }
+                    emit(count);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.agents.len(), 1);
+        let handler = &prog.agents[0].handlers[0];
+        // Check loop statement exists
+        let loop_stmt = &handler.body.stmts[1];
+        assert!(matches!(loop_stmt, Stmt::Loop { .. }));
+        // Check break is inside the loop
+        if let Stmt::Loop { body, .. } = loop_stmt {
+            let if_stmt = &body.stmts[1];
+            if let Stmt::If { then_block, .. } = if_stmt {
+                assert!(matches!(then_block.stmts[0], Stmt::Break { .. }));
+            } else {
+                panic!("expected if statement");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_agent_receives() {
+        let source = r#"
+            enum WorkerMsg {
+                Task,
+                Shutdown,
+            }
+
+            agent Worker receives WorkerMsg {
+                id: Int
+
+                on start {
+                    emit(0);
+                }
+            }
+
+            agent Main {
+                on start {
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.agents.len(), 2);
+
+        // Worker should have receives clause
+        let worker = &prog.agents[0];
+        assert_eq!(worker.name.name, "Worker");
+        assert!(worker.receives.is_some());
+        if let Some(TypeExpr::Named(name)) = &worker.receives {
+            assert_eq!(name.name, "WorkerMsg");
+        } else {
+            panic!("expected named type for receives");
+        }
+
+        // Main should not have receives
+        let main = &prog.agents[1];
+        assert_eq!(main.name.name, "Main");
+        assert!(main.receives.is_none());
+    }
+
+    #[test]
+    fn parse_receive_expression() {
+        let source = r#"
+            enum Msg { Ping }
+
+            agent Worker receives Msg {
+                on start {
+                    let msg = receive();
+                    emit(0);
+                }
+            }
+
+            agent Main {
+                on start { emit(0); }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        // Find Worker agent
+        let worker = prog.agents.iter().find(|a| a.name.name == "Worker").unwrap();
+        let handler = &worker.handlers[0];
+        let stmt = &handler.body.stmts[0];
+
+        if let Stmt::Let { value, .. } = stmt {
+            assert!(matches!(value, Expr::Receive { .. }));
+        } else {
+            panic!("expected let with receive");
+        }
+    }
+
+    #[test]
+    fn parse_message_passing_full() {
+        let source = r#"
+            enum WorkerMsg {
+                Task,
+                Shutdown,
+            }
+
+            agent Worker receives WorkerMsg {
+                id: Int
+
+                on start {
+                    let msg = receive();
+                    let result = match msg {
+                        Task => 1,
+                        Shutdown => 0,
+                    };
+                    emit(result);
+                }
+            }
+
+            agent Main {
+                on start {
+                    let w = spawn Worker { id: 1 };
+                    send(w, Task);
+                    send(w, Shutdown);
+                    await w;
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.enums.len(), 1);
+        assert_eq!(prog.agents.len(), 2);
+
+        // Check Worker has receives
+        let worker = prog.agents.iter().find(|a| a.name.name == "Worker").unwrap();
+        assert!(worker.receives.is_some());
     }
 }
