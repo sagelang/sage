@@ -103,7 +103,18 @@ pub struct RecordField {
     pub span: Span,
 }
 
-/// An enum declaration: `enum Status { Active, Pending, Done }`
+/// An enum variant with optional payload: `Ok(T)` or `None`
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumVariant {
+    /// The variant's name.
+    pub name: Ident,
+    /// Optional payload type (e.g., `T` in `Ok(T)`).
+    pub payload: Option<TypeExpr>,
+    /// Span covering the variant.
+    pub span: Span,
+}
+
+/// An enum declaration: `enum Status { Active, Pending, Done }` or `enum Result { Ok(T), Err(E) }`
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDecl {
     /// Whether this enum is public.
@@ -111,7 +122,7 @@ pub struct EnumDecl {
     /// The enum's name.
     pub name: Ident,
     /// The enum's variants.
-    pub variants: Vec<Ident>,
+    pub variants: Vec<EnumVariant>,
     /// Span covering the declaration.
     pub span: Span,
 }
@@ -316,11 +327,11 @@ pub enum Stmt {
         span: Span,
     },
 
-    /// For loop: `for x in iter { ... }`
+    /// For loop: `for x in iter { ... }` or `for (k, v) in map { ... }`
     For {
-        /// The loop variable.
-        var: Ident,
-        /// The iterable expression (must be List<T>).
+        /// The loop pattern (can be a simple binding or tuple destructuring).
+        pattern: Pattern,
+        /// The iterable expression (List<T> or Map<K, V>).
         iter: Expr,
         /// The loop body.
         body: Block,
@@ -359,6 +370,18 @@ pub enum Stmt {
         /// Span covering the statement.
         span: Span,
     },
+
+    /// Tuple destructuring: `let (a, b) = expr;`
+    LetTuple {
+        /// The variable names.
+        names: Vec<Ident>,
+        /// Optional type annotation.
+        ty: Option<TypeExpr>,
+        /// The value expression.
+        value: Expr,
+        /// Span covering the statement.
+        span: Span,
+    },
 }
 
 impl Stmt {
@@ -374,7 +397,8 @@ impl Stmt {
             | Stmt::While { span, .. }
             | Stmt::Loop { span, .. }
             | Stmt::Break { span, .. }
-            | Stmt::Expr { span, .. } => span,
+            | Stmt::Expr { span, .. }
+            | Stmt::LetTuple { span, .. } => span,
         }
     }
 }
@@ -596,6 +620,55 @@ pub enum Expr {
         /// Span covering the expression.
         span: Span,
     },
+
+    /// Tuple literal: `(a, b, c)`
+    Tuple {
+        /// The tuple elements (at least 2).
+        elements: Vec<Expr>,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Tuple index access: `tuple.0`
+    TupleIndex {
+        /// The tuple expression.
+        tuple: Box<Expr>,
+        /// The index (0-based).
+        index: usize,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Map literal: `{ key: value, ... }` or `{}`
+    Map {
+        /// The map entries.
+        entries: Vec<MapEntry>,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Enum variant construction: `MyEnum.Variant` or `MyEnum.Variant(payload)`
+    VariantConstruct {
+        /// The enum type name.
+        enum_name: Ident,
+        /// The variant name.
+        variant: Ident,
+        /// The optional payload expression.
+        payload: Option<Box<Expr>>,
+        /// Span covering the expression.
+        span: Span,
+    },
+}
+
+/// A map entry: `key: value`
+#[derive(Debug, Clone, PartialEq)]
+pub struct MapEntry {
+    /// The key expression.
+    pub key: Expr,
+    /// The value expression.
+    pub value: Expr,
+    /// Span covering the entry.
+    pub span: Span,
 }
 
 impl Expr {
@@ -624,7 +697,11 @@ impl Expr {
             | Expr::Receive { span, .. }
             | Expr::Try { span, .. }
             | Expr::Catch { span, .. }
-            | Expr::Closure { span, .. } => span,
+            | Expr::Closure { span, .. }
+            | Expr::Tuple { span, .. }
+            | Expr::TupleIndex { span, .. }
+            | Expr::Map { span, .. }
+            | Expr::VariantConstruct { span, .. } => span,
         }
     }
 }
@@ -659,12 +736,14 @@ pub enum Pattern {
         /// Span covering the pattern.
         span: Span,
     },
-    /// Enum variant pattern: `Status::Active` or just `Active`
+    /// Enum variant pattern: `Status::Active`, `Ok(x)`, or just `Active`
     Variant {
         /// Optional enum type name (for qualified patterns).
         enum_name: Option<Ident>,
         /// The variant name.
         variant: Ident,
+        /// Optional payload binding pattern (e.g., `x` in `Ok(x)`).
+        payload: Option<Box<Pattern>>,
         /// Span covering the pattern.
         span: Span,
     },
@@ -682,6 +761,13 @@ pub enum Pattern {
         /// Span covering the pattern.
         span: Span,
     },
+    /// Tuple pattern: `(a, b, c)`
+    Tuple {
+        /// The element patterns.
+        elements: Vec<Pattern>,
+        /// Span covering the pattern.
+        span: Span,
+    },
 }
 
 impl Pattern {
@@ -692,7 +778,8 @@ impl Pattern {
             Pattern::Wildcard { span }
             | Pattern::Variant { span, .. }
             | Pattern::Literal { span, .. }
-            | Pattern::Binding { span, .. } => span,
+            | Pattern::Binding { span, .. }
+            | Pattern::Tuple { span, .. } => span,
         }
     }
 }

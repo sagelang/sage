@@ -4,8 +4,8 @@
 
 use crate::ast::{
     AgentDecl, BeliefDecl, BinOp, Block, ClosureParam, ConstDecl, ElseBranch, EnumDecl, EventKind,
-    Expr, FieldInit, FnDecl, HandlerDecl, Literal, MatchArm, ModDecl, Param, Pattern, Program,
-    RecordDecl, RecordField, Stmt, StringPart, StringTemplate, UnaryOp, UseDecl, UseKind,
+    Expr, FieldInit, FnDecl, HandlerDecl, Literal, MapEntry, MatchArm, ModDecl, Param, Pattern,
+    Program, RecordDecl, RecordField, Stmt, StringPart, StringTemplate, UnaryOp, UseDecl, UseKind,
 };
 use chumsky::prelude::*;
 use chumsky::BoxedParser;
@@ -276,18 +276,35 @@ fn record_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = Parse
         })
 }
 
-/// Parser for an enum declaration: `enum Status { Active, Pending, Done }`
+/// Parser for an enum declaration: `enum Status { Active, Pending, Done }` or `enum Result { Ok(T), Err(E) }`
 #[allow(clippy::needless_pass_by_value)]
 fn enum_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseError> {
     let src = source.clone();
     let src2 = source.clone();
+    let src3 = source.clone();
+
+    // Enum variant with optional payload: `Ok(T)` or `None`
+    let variant = ident_token_parser(src.clone())
+        .then(
+            type_parser(src.clone())
+                .delimited_by(just(Token::LParen), just(Token::RParen))
+                .or_not(),
+        )
+        .map_with_span({
+            let src = src.clone();
+            move |(name, payload), span: Range<usize>| crate::ast::EnumVariant {
+                name,
+                payload,
+                span: make_span(&src, span),
+            }
+        });
 
     just(Token::KwPub)
         .or_not()
         .then_ignore(just(Token::KwEnum))
-        .then(ident_token_parser(src.clone()))
+        .then(ident_token_parser(src3.clone()))
         .then(
-            ident_token_parser(src.clone())
+            variant
                 .separated_by(just(Token::Comma))
                 .allow_trailing()
                 .delimited_by(just(Token::LBrace), just(Token::RBrace)),
@@ -513,6 +530,31 @@ fn stmt_parser(
     let src6 = source.clone();
     let src7 = source.clone();
 
+    // Let tuple destructuring: let (a, b) = expr;
+    let src10 = source.clone();
+    let let_tuple_stmt = just(Token::KwLet)
+        .ignore_then(
+            ident_token_parser(src10.clone())
+                .separated_by(just(Token::Comma))
+                .at_least(2)
+                .allow_trailing()
+                .delimited_by(just(Token::LParen), just(Token::RParen)),
+        )
+        .then(
+            just(Token::Colon)
+                .ignore_then(type_parser(src10.clone()))
+                .or_not(),
+        )
+        .then_ignore(just(Token::Eq))
+        .then(expr_parser(src10.clone()))
+        .then_ignore(just(Token::Semicolon))
+        .map_with_span(move |((names, ty), value), span: Range<usize>| Stmt::LetTuple {
+            names,
+            ty,
+            value,
+            span: make_span(&src10, span),
+        });
+
     let let_stmt = just(Token::KwLet)
         .ignore_then(ident_token_parser(src.clone()))
         .then(
@@ -565,12 +607,12 @@ fn stmt_parser(
     });
 
     let for_stmt = just(Token::KwFor)
-        .ignore_then(ident_token_parser(src4.clone()))
+        .ignore_then(for_pattern_parser(src4.clone()))
         .then_ignore(just(Token::KwIn))
         .then(expr_parser(src4.clone()))
         .then(block.clone())
-        .map_with_span(move |((var, iter), body), span: Range<usize>| Stmt::For {
-            var,
+        .map_with_span(move |((pattern, iter), body), span: Range<usize>| Stmt::For {
+            pattern,
             iter,
             body,
             span: make_span(&src4, span),
@@ -617,7 +659,8 @@ fn stmt_parser(
             span: make_span(&src6, span),
         });
 
-    let_stmt
+    let_tuple_stmt
+        .or(let_stmt)
         .or(return_stmt)
         .or(if_stmt)
         .or(for_stmt)
@@ -642,14 +685,31 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
         let literal = literal_parser(src.clone());
         let var = var_parser(src.clone());
 
-        let paren = expr
-            .clone()
-            .delimited_by(just(Token::LParen), just(Token::RParen))
+        // Parenthesized expression or tuple literal
+        // (expr) is a paren, (expr, expr, ...) is a tuple
+        let paren_or_tuple = just(Token::LParen)
+            .ignore_then(
+                expr.clone()
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing(),
+            )
+            .then_ignore(just(Token::RParen))
             .map_with_span({
                 let src = src.clone();
-                move |inner, span: Range<usize>| Expr::Paren {
-                    inner: Box::new(inner),
-                    span: make_span(&src, span),
+                move |elements, span: Range<usize>| {
+                    if elements.len() == 1 {
+                        // Single element without trailing comma = parenthesized expression
+                        Expr::Paren {
+                            inner: Box::new(elements.into_iter().next().unwrap()),
+                            span: make_span(&src, span),
+                        }
+                    } else {
+                        // Multiple elements or empty = tuple
+                        Expr::Tuple {
+                            elements,
+                            span: make_span(&src, span),
+                        }
+                    }
                 }
             });
 
@@ -925,11 +985,59 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
 
         let closure = closure_with_params.or(closure_empty);
 
+        // Map literal: { key: value, ... } or {}
+        // This must be distinguished from record construction which has an identifier before the brace
+        let map_entry = expr
+            .clone()
+            .then_ignore(just(Token::Colon))
+            .then(expr.clone())
+            .map_with_span({
+                let src = src.clone();
+                move |(key, value), span: Range<usize>| MapEntry {
+                    key,
+                    value,
+                    span: make_span(&src, span),
+                }
+            });
+
+        let map_literal = map_entry
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .delimited_by(just(Token::LBrace), just(Token::RBrace))
+            .map_with_span({
+                let src = src.clone();
+                move |entries, span: Range<usize>| Expr::Map {
+                    entries,
+                    span: make_span(&src, span),
+                }
+            });
+
+        // Enum variant construction: EnumName::Variant or EnumName::Variant(payload)
+        let variant_construct = ident_token_parser(src.clone())
+            .then_ignore(just(Token::ColonColon))
+            .then(ident_token_parser(src.clone()))
+            .then(
+                expr.clone()
+                    .delimited_by(just(Token::LParen), just(Token::RParen))
+                    .or_not(),
+            )
+            .map_with_span({
+                let src = src.clone();
+                move |((enum_name, variant), payload), span: Range<usize>| Expr::VariantConstruct {
+                    enum_name,
+                    variant,
+                    payload: payload.map(Box::new),
+                    span: make_span(&src, span),
+                }
+            });
+
         // Atom: the base expression without binary ops
         // Box early to cut type complexity
         // Note: record_construct must come before call_expr and var to parse `Name { ... }` correctly
         // Note: receive_expr must come before call_expr to avoid being parsed as function call
         // Note: closure must come before other expressions to handle `|` tokens correctly
+        // Note: map_literal must come after record_construct (record has name before brace)
+        // Note: variant_construct must come before call_expr to parse `EnumName::Variant(...)` correctly
         let atom = closure
             .or(infer_expr)
             .or(spawn_expr)
@@ -940,28 +1048,63 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
             .or(match_expr)
             .or(self_access)
             .or(record_construct)
+            .or(variant_construct)
             .or(call_expr)
+            .or(map_literal)
             .or(list)
-            .or(paren)
+            .or(paren_or_tuple)
             .or(literal)
             .or(var)
             .boxed();
 
-        // Postfix field access: expr.field
+        // Postfix access: expr.field or expr.0 (tuple index)
+        // We need to distinguish between field access and tuple index
+        enum PostfixOp {
+            Field(Ident),
+            TupleIndex(usize, Range<usize>),
+        }
+
+        let postfix_op = just(Token::Dot).ignore_then(
+            // Try to parse a tuple index (integer literal)
+            filter_map({
+                let src = src.clone();
+                move |span: Range<usize>, token| match token {
+                    Token::IntLit => {
+                        let text = &src[span.start..span.end];
+                        text.parse::<usize>()
+                            .map(|idx| PostfixOp::TupleIndex(idx, span.clone()))
+                            .map_err(|_| Simple::custom(span, "invalid tuple index"))
+                    }
+                    _ => Err(Simple::expected_input_found(
+                        span,
+                        vec![Some(Token::IntLit)],
+                        Some(token),
+                    )),
+                }
+            })
+            .or(ident_token_parser(src.clone()).map(PostfixOp::Field)),
+        );
+
         let postfix = atom
-            .then(
-                just(Token::Dot)
-                    .ignore_then(ident_token_parser(src.clone()))
-                    .repeated(),
-            )
+            .then(postfix_op.repeated())
             .foldl({
                 let src = src.clone();
-                move |object, field| {
-                    let span = make_span(&src, object.span().start..field.span.end);
-                    Expr::FieldAccess {
-                        object: Box::new(object),
-                        field,
-                        span,
+                move |object, op| match op {
+                    PostfixOp::Field(field) => {
+                        let span = make_span(&src, object.span().start..field.span.end);
+                        Expr::FieldAccess {
+                            object: Box::new(object),
+                            field,
+                            span,
+                        }
+                    }
+                    PostfixOp::TupleIndex(index, idx_span) => {
+                        let span = make_span(&src, object.span().start..idx_span.end);
+                        Expr::TupleIndex {
+                            tuple: Box::new(object),
+                            index,
+                            span,
+                        }
                     }
                 }
             })
@@ -1256,8 +1399,35 @@ fn type_parser(source: Arc<str>) -> impl Parser<Token, TypeExpr, Error = ParseEr
                     .delimited_by(just(Token::LParen), just(Token::RParen)),
             )
             .then_ignore(just(Token::Arrow))
-            .then(ty)
+            .then(ty.clone())
             .map(|(params, ret)| TypeExpr::Fn(params, Box::new(ret)));
+
+        // Map type: Map<K, V>
+        let map_ty = just(Token::TyMap)
+            .ignore_then(just(Token::Lt))
+            .ignore_then(ty.clone())
+            .then_ignore(just(Token::Comma))
+            .then(ty.clone())
+            .then_ignore(just(Token::Gt))
+            .map(|(k, v)| TypeExpr::Map(Box::new(k), Box::new(v)));
+
+        // Result type: Result<T, E>
+        let result_ty = just(Token::TyResult)
+            .ignore_then(just(Token::Lt))
+            .ignore_then(ty.clone())
+            .then_ignore(just(Token::Comma))
+            .then(ty.clone())
+            .then_ignore(just(Token::Gt))
+            .map(|(ok, err)| TypeExpr::Result(Box::new(ok), Box::new(err)));
+
+        // Tuple type: (A, B, C) - at least 2 elements
+        let tuple_ty = ty
+            .clone()
+            .separated_by(just(Token::Comma))
+            .at_least(2)
+            .allow_trailing()
+            .delimited_by(just(Token::LParen), just(Token::RParen))
+            .map(TypeExpr::Tuple);
 
         primitive
             .or(list_ty)
@@ -1265,54 +1435,86 @@ fn type_parser(source: Arc<str>) -> impl Parser<Token, TypeExpr, Error = ParseEr
             .or(inferred_ty)
             .or(agent_ty)
             .or(fn_ty)
+            .or(map_ty)
+            .or(result_ty)
+            .or(tuple_ty)
             .or(named_ty)
+    })
+}
+
+/// Parser for patterns in for loops.
+/// Only supports simple bindings (`x`) and tuple patterns (`(k, v)`).
+fn for_pattern_parser(source: Arc<str>) -> impl Parser<Token, Pattern, Error = ParseError> + Clone {
+    recursive(move |pattern| {
+        let src = source.clone();
+        let src2 = source.clone();
+
+        // Simple binding pattern: `x`
+        let binding = ident_token_parser(src.clone()).map_with_span({
+            let src = src.clone();
+            move |name, span: Range<usize>| Pattern::Binding {
+                name,
+                span: make_span(&src, span),
+            }
+        });
+
+        // Tuple pattern: `(a, b)` - at least 2 elements
+        let tuple_pattern = pattern
+            .clone()
+            .separated_by(just(Token::Comma))
+            .at_least(2)
+            .allow_trailing()
+            .delimited_by(just(Token::LParen), just(Token::RParen))
+            .map_with_span({
+                let src = src2.clone();
+                move |elements, span: Range<usize>| Pattern::Tuple {
+                    elements,
+                    span: make_span(&src, span),
+                }
+            });
+
+        tuple_pattern.or(binding)
     })
 }
 
 /// Parser for patterns in match expressions.
 fn pattern_parser(source: Arc<str>) -> impl Parser<Token, Pattern, Error = ParseError> + Clone {
-    let src = source.clone();
-    let src2 = source.clone();
-    let src3 = source.clone();
-    let src4 = source.clone();
+    recursive(move |pattern| {
+        let src = source.clone();
+        let src2 = source.clone();
+        let src3 = source.clone();
+        let src4 = source.clone();
+        let src5 = source.clone();
 
-    // Wildcard pattern: `_`
-    let wildcard = filter_map(move |span: Range<usize>, token| match &token {
-        Token::Ident if src[span.start..span.end].eq("_") => Ok(()),
-        _ => Err(Simple::expected_input_found(span, vec![], Some(token))),
-    })
-    .map_with_span(move |_, span: Range<usize>| Pattern::Wildcard {
-        span: make_span(&src2, span),
-    });
-
-    // Literal patterns: 42, "hello", true, false
-    let lit_int = filter_map({
-        let src = src3.clone();
-        move |span: Range<usize>, token| match token {
-            Token::IntLit => {
-                let text = &src[span.start..span.end];
-                text.parse::<i64>()
-                    .map(Literal::Int)
-                    .map_err(|_| Simple::custom(span, "invalid integer literal"))
+        // Wildcard pattern: `_`
+        let wildcard = filter_map({
+            let src = src.clone();
+            move |span: Range<usize>, token| match &token {
+                Token::Ident if src[span.start..span.end].eq("_") => Ok(()),
+                _ => Err(Simple::expected_input_found(span, vec![], Some(token))),
             }
-            _ => Err(Simple::expected_input_found(
-                span,
-                vec![Some(Token::IntLit)],
-                Some(token),
-            )),
-        }
-    })
-    .map_with_span({
-        let src = src3.clone();
-        move |value, span: Range<usize>| Pattern::Literal {
-            value,
-            span: make_span(&src, span),
-        }
-    });
+        })
+        .map_with_span(move |_, span: Range<usize>| Pattern::Wildcard {
+            span: make_span(&src2, span),
+        });
 
-    let lit_bool = just(Token::KwTrue)
-        .to(Literal::Bool(true))
-        .or(just(Token::KwFalse).to(Literal::Bool(false)))
+        // Literal patterns: 42, "hello", true, false
+        let lit_int = filter_map({
+            let src = src3.clone();
+            move |span: Range<usize>, token| match token {
+                Token::IntLit => {
+                    let text = &src[span.start..span.end];
+                    text.parse::<i64>()
+                        .map(Literal::Int)
+                        .map_err(|_| Simple::custom(span, "invalid integer literal"))
+                }
+                _ => Err(Simple::expected_input_found(
+                    span,
+                    vec![Some(Token::IntLit)],
+                    Some(token),
+                )),
+            }
+        })
         .map_with_span({
             let src = src3.clone();
             move |value, span: Range<usize>| Pattern::Literal {
@@ -1321,49 +1523,90 @@ fn pattern_parser(source: Arc<str>) -> impl Parser<Token, Pattern, Error = Parse
             }
         });
 
-    // Enum variant: `EnumName::Variant` or just `Variant`
-    // Qualified: EnumName::Variant
-    let qualified_variant = ident_token_parser(src4.clone())
-        .then_ignore(just(Token::ColonColon))
-        .then(ident_token_parser(src4.clone()))
-        .map_with_span({
-            let src = src4.clone();
-            move |(enum_name, variant), span: Range<usize>| Pattern::Variant {
-                enum_name: Some(enum_name),
-                variant,
-                span: make_span(&src, span),
-            }
-        });
-
-    // Unqualified variant or binding: just an identifier
-    // We'll treat PascalCase as variant, snake_case as binding
-    // For now, let's just parse it as a binding (the checker will resolve)
-    let unqualified = ident_token_parser(src4.clone()).map_with_span({
-        let src = src4.clone();
-        move |name, span: Range<usize>| {
-            // If it looks like a variant (starts with uppercase), treat as variant
-            // Otherwise treat as binding
-            if name.name.chars().next().is_some_and(|c| c.is_uppercase()) {
-                Pattern::Variant {
-                    enum_name: None,
-                    variant: name,
+        let lit_bool = just(Token::KwTrue)
+            .to(Literal::Bool(true))
+            .or(just(Token::KwFalse).to(Literal::Bool(false)))
+            .map_with_span({
+                let src = src3.clone();
+                move |value, span: Range<usize>| Pattern::Literal {
+                    value,
                     span: make_span(&src, span),
                 }
-            } else {
-                Pattern::Binding {
-                    name,
+            });
+
+        // Tuple pattern: (a, b, c) - at least 2 elements
+        let tuple_pattern = pattern
+            .clone()
+            .separated_by(just(Token::Comma))
+            .at_least(2)
+            .allow_trailing()
+            .delimited_by(just(Token::LParen), just(Token::RParen))
+            .map_with_span({
+                let src = src5.clone();
+                move |elements, span: Range<usize>| Pattern::Tuple {
+                    elements,
                     span: make_span(&src, span),
                 }
-            }
-        }
-    });
+            });
 
-    // Order matters: try wildcard first, then qualified variant, then literals, then unqualified
-    wildcard
-        .or(qualified_variant)
-        .or(lit_int)
-        .or(lit_bool)
-        .or(unqualified)
+        // Enum variant with optional payload: `Ok(x)` or `Status::Active`
+        // Qualified with payload: EnumName::Variant(pattern)
+        let qualified_variant_with_payload = ident_token_parser(src4.clone())
+            .then_ignore(just(Token::ColonColon))
+            .then(ident_token_parser(src4.clone()))
+            .then(
+                pattern
+                    .clone()
+                    .delimited_by(just(Token::LParen), just(Token::RParen))
+                    .or_not(),
+            )
+            .map_with_span({
+                let src = src4.clone();
+                move |((enum_name, variant), payload), span: Range<usize>| Pattern::Variant {
+                    enum_name: Some(enum_name),
+                    variant,
+                    payload: payload.map(Box::new),
+                    span: make_span(&src, span),
+                }
+            });
+
+        // Unqualified variant with payload: `Ok(x)` or just `x`
+        let unqualified_with_payload = ident_token_parser(src4.clone())
+            .then(
+                pattern
+                    .clone()
+                    .delimited_by(just(Token::LParen), just(Token::RParen))
+                    .or_not(),
+            )
+            .map_with_span({
+                let src = src4.clone();
+                move |(name, payload), span: Range<usize>| {
+                    // If it looks like a variant (starts with uppercase), treat as variant
+                    // Otherwise treat as binding (only if no payload)
+                    if name.name.chars().next().is_some_and(|c| c.is_uppercase()) || payload.is_some() {
+                        Pattern::Variant {
+                            enum_name: None,
+                            variant: name,
+                            payload: payload.map(Box::new),
+                            span: make_span(&src, span),
+                        }
+                    } else {
+                        Pattern::Binding {
+                            name,
+                            span: make_span(&src, span),
+                        }
+                    }
+                }
+            });
+
+        // Order matters: try wildcard first, then tuple pattern, then qualified variant, then literals, then unqualified
+        wildcard
+            .or(tuple_pattern)
+            .or(qualified_variant_with_payload)
+            .or(lit_int)
+            .or(lit_bool)
+            .or(unqualified_with_payload)
+    })
 }
 
 /// Parser for literals.
@@ -2112,9 +2355,9 @@ mod tests {
         assert!(!prog.enums[0].is_pub);
         assert_eq!(prog.enums[0].name.name, "Status");
         assert_eq!(prog.enums[0].variants.len(), 3);
-        assert_eq!(prog.enums[0].variants[0].name, "Active");
-        assert_eq!(prog.enums[0].variants[1].name, "Pending");
-        assert_eq!(prog.enums[0].variants[2].name, "Done");
+        assert_eq!(prog.enums[0].variants[0].name.name, "Active");
+        assert_eq!(prog.enums[0].variants[1].name.name, "Pending");
+        assert_eq!(prog.enums[0].variants[2].name.name, "Done");
     }
 
     #[test]
@@ -2899,6 +3142,34 @@ mod tests {
             assert!(matches!(ret.as_ref(), TypeExpr::Int));
         } else {
             panic!("expected Fn type");
+        }
+    }
+
+    #[test]
+    fn parse_tuple_literal() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let t = (1, 2);
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Let { value, .. } = &handler.body.stmts[0] {
+            if let Expr::Tuple { elements, .. } = value {
+                assert_eq!(elements.len(), 2);
+            } else {
+                panic!("expected tuple expression, got {:?}", value);
+            }
+        } else {
+            panic!("expected let statement");
         }
     }
 }

@@ -31,6 +31,12 @@ pub enum TypeExpr {
     /// Function type: `Fn(A, B) -> C`.
     /// The Vec holds parameter types; the Box holds the return type.
     Fn(Vec<TypeExpr>, Box<TypeExpr>),
+    /// Map type: `Map<K, V>`.
+    Map(Box<TypeExpr>, Box<TypeExpr>),
+    /// Tuple type: `(A, B, C)`.
+    Tuple(Vec<TypeExpr>),
+    /// Result type: `Result<T, E>`.
+    Result(Box<TypeExpr>, Box<TypeExpr>),
 }
 
 impl TypeExpr {
@@ -58,6 +64,9 @@ impl TypeExpr {
                 | TypeExpr::Inferred(_)
                 | TypeExpr::Agent(_)
                 | TypeExpr::Fn(_, _)
+                | TypeExpr::Map(_, _)
+                | TypeExpr::Tuple(_)
+                | TypeExpr::Result(_, _)
         )
     }
 
@@ -97,6 +106,18 @@ impl fmt::Display for TypeExpr {
                 }
                 write!(f, ") -> {ret}")
             }
+            TypeExpr::Map(key, value) => write!(f, "Map<{key}, {value}>"),
+            TypeExpr::Tuple(elems) => {
+                write!(f, "(")?;
+                for (i, elem) in elems.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{elem}")?;
+                }
+                write!(f, ")")
+            }
+            TypeExpr::Result(ok, err) => write!(f, "Result<{ok}, {err}>"),
         }
     }
 }

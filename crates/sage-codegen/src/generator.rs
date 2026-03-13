@@ -251,7 +251,12 @@ serde_json = "1"
         self.emit.writeln(" {");
         self.emit.indent();
         for variant in &enum_decl.variants {
-            self.emit.write(&variant.name);
+            self.emit.write(&variant.name.name);
+            if let Some(payload_ty) = &variant.payload {
+                self.emit.write("(");
+                self.emit_type(payload_ty);
+                self.emit.write(")");
+            }
             self.emit.writeln(",");
         }
         self.emit.dedent();
@@ -498,10 +503,13 @@ serde_json = "1"
             }
 
             Stmt::For {
-                var, iter, body, ..
+                pattern,
+                iter,
+                body,
+                ..
             } => {
                 self.emit.write("for ");
-                self.emit.write(&var.name);
+                self.emit_pattern(pattern);
                 self.emit.write(" in ");
                 self.generate_expr(iter);
                 self.emit.write(" ");
@@ -536,6 +544,19 @@ serde_json = "1"
                     self.generate_expr(expr);
                     self.emit.writeln(";");
                 }
+            }
+
+            Stmt::LetTuple { names, value, .. } => {
+                self.emit.write("let (");
+                for (i, name) in names.iter().enumerate() {
+                    if i > 0 {
+                        self.emit.write(", ");
+                    }
+                    self.emit.write(&name.name);
+                }
+                self.emit.write(") = ");
+                self.generate_expr(value);
+                self.emit.writeln(";");
             }
         }
     }
@@ -791,6 +812,58 @@ serde_json = "1"
                 self.generate_expr(body);
                 self.emit.write(")");
             }
+
+            // RFC-0010: Tuples and Maps
+            Expr::Tuple { elements, .. } => {
+                self.emit.write("(");
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        self.emit.write(", ");
+                    }
+                    self.generate_expr(elem);
+                }
+                self.emit.write(")");
+            }
+
+            Expr::TupleIndex { tuple, index, .. } => {
+                self.generate_expr(tuple);
+                self.emit.write(&format!(".{index}"));
+            }
+
+            Expr::Map { entries, .. } => {
+                if entries.is_empty() {
+                    self.emit.write("std::collections::HashMap::new()");
+                } else {
+                    self.emit.write("std::collections::HashMap::from([");
+                    for (i, entry) in entries.iter().enumerate() {
+                        if i > 0 {
+                            self.emit.write(", ");
+                        }
+                        self.emit.write("(");
+                        self.generate_expr(&entry.key);
+                        self.emit.write(", ");
+                        self.generate_expr(&entry.value);
+                        self.emit.write(")");
+                    }
+                    self.emit.write("])");
+                }
+            }
+
+            Expr::VariantConstruct {
+                enum_name,
+                variant,
+                payload,
+                ..
+            } => {
+                self.emit.write(&enum_name.name);
+                self.emit.write("::");
+                self.emit.write(&variant.name);
+                if let Some(payload_expr) = payload {
+                    self.emit.write("(");
+                    self.generate_expr(payload_expr);
+                    self.emit.write(")");
+                }
+            }
         }
     }
 
@@ -801,19 +874,37 @@ serde_json = "1"
                 self.emit.write("_");
             }
             Pattern::Variant {
-                enum_name, variant, ..
+                enum_name,
+                variant,
+                payload,
+                ..
             } => {
                 if let Some(enum_name) = enum_name {
                     self.emit.write(&enum_name.name);
                     self.emit.write("::");
                 }
                 self.emit.write(&variant.name);
+                if let Some(inner_pattern) = payload {
+                    self.emit.write("(");
+                    self.emit_pattern(inner_pattern);
+                    self.emit.write(")");
+                }
             }
             Pattern::Literal { value, .. } => {
                 self.emit_literal(value);
             }
             Pattern::Binding { name, .. } => {
                 self.emit.write(&name.name);
+            }
+            Pattern::Tuple { elements, .. } => {
+                self.emit.write("(");
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        self.emit.write(", ");
+                    }
+                    self.emit_pattern(elem);
+                }
+                self.emit.write(")");
             }
         }
     }
@@ -933,6 +1024,32 @@ serde_json = "1"
                 self.emit.write(") -> ");
                 self.emit_type(ret);
                 self.emit.write(" + Send + 'static>");
+            }
+
+            // RFC-0010: Maps, tuples, Result
+            TypeExpr::Map(key, value) => {
+                self.emit.write("std::collections::HashMap<");
+                self.emit_type(key);
+                self.emit.write(", ");
+                self.emit_type(value);
+                self.emit.write(">");
+            }
+            TypeExpr::Tuple(elems) => {
+                self.emit.write("(");
+                for (i, elem) in elems.iter().enumerate() {
+                    if i > 0 {
+                        self.emit.write(", ");
+                    }
+                    self.emit_type(elem);
+                }
+                self.emit.write(")");
+            }
+            TypeExpr::Result(ok, err) => {
+                self.emit.write("Result<");
+                self.emit_type(ok);
+                self.emit.write(", ");
+                self.emit_type(err);
+                self.emit.write(">");
             }
         }
     }

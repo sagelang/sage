@@ -30,6 +30,12 @@ pub enum Type {
     Named(String),
     /// Function type: parameter types and return type.
     Fn(Vec<Type>, Box<Type>),
+    /// Map type: `Map<K, V>`.
+    Map(Box<Type>, Box<Type>),
+    /// Tuple type: `(A, B, C)`.
+    Tuple(Vec<Type>),
+    /// Result type: `Result<T, E>`.
+    Result(Box<Type>, Box<Type>),
     /// An error type used when type checking fails.
     /// Propagates through expressions to avoid cascading errors.
     Error,
@@ -63,6 +69,15 @@ impl Type {
     pub fn list_element(&self) -> Option<&Type> {
         match self {
             Type::List(elem) => Some(elem),
+            _ => None,
+        }
+    }
+
+    /// Get the key and value types if this is a Map, otherwise None.
+    #[must_use]
+    pub fn map_key_value(&self) -> Option<(&Type, &Type)> {
+        match self {
+            Type::Map(key, value) => Some((key, value)),
             _ => None,
         }
     }
@@ -102,6 +117,24 @@ impl Type {
                     .zip(params2.iter())
                     .all(|(p1, p2)| p1.is_compatible_with(p2))
                     && ret1.is_compatible_with(ret2)
+            }
+            // Map types are compatible if key and value types are compatible
+            (Type::Map(k1, v1), Type::Map(k2, v2)) => {
+                k1.is_compatible_with(k2) && v1.is_compatible_with(v2)
+            }
+            // Tuple types are compatible if they have the same arity and element types are compatible
+            (Type::Tuple(elems1), Type::Tuple(elems2)) => {
+                if elems1.len() != elems2.len() {
+                    return false;
+                }
+                elems1
+                    .iter()
+                    .zip(elems2.iter())
+                    .all(|(e1, e2)| e1.is_compatible_with(e2))
+            }
+            // Result types are compatible if ok and err types are compatible
+            (Type::Result(ok1, err1), Type::Result(ok2, err2)) => {
+                ok1.is_compatible_with(ok2) && err1.is_compatible_with(err2)
             }
             _ => false,
         }
@@ -155,6 +188,18 @@ impl fmt::Display for Type {
                 }
                 write!(f, ") -> {ret}")
             }
+            Type::Map(key, value) => write!(f, "Map<{key}, {value}>"),
+            Type::Tuple(elems) => {
+                write!(f, "(")?;
+                for (i, elem) in elems.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{elem}")?;
+                }
+                write!(f, ")")
+            }
+            Type::Result(ok, err) => write!(f, "Result<{ok}, {err}>"),
             Type::Error => write!(f, "<error>"),
         }
     }

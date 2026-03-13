@@ -228,7 +228,14 @@ impl Checker {
                 continue;
             }
 
-            let variants: Vec<String> = enum_decl.variants.iter().map(|v| v.name.clone()).collect();
+            let variants: Vec<(String, Option<Type>)> = enum_decl
+                .variants
+                .iter()
+                .map(|v| {
+                    let payload = v.payload.as_ref().map(resolve_type);
+                    (v.name.name.clone(), payload)
+                })
+                .collect();
 
             self.symbols.define_enum(EnumInfo {
                 name: enum_decl.name.name.clone(),
@@ -463,15 +470,19 @@ impl Checker {
             }
 
             Stmt::For {
-                var,
+                pattern,
                 iter,
                 body,
                 span,
             } => {
                 let iter_ty = self.check_expr(iter);
 
+                // Determine the element type based on the iterable type
                 let elem_ty = if let Some(elem) = iter_ty.list_element() {
                     elem.clone()
+                } else if let Some((key_ty, value_ty)) = iter_ty.map_key_value() {
+                    // Map iteration yields (K, V) tuples
+                    Type::Tuple(vec![key_ty.clone(), value_ty.clone()])
                 } else {
                     if !iter_ty.is_error() {
                         self.errors
@@ -483,7 +494,7 @@ impl Checker {
                 let was_in_loop = self.in_loop;
                 self.in_loop = true;
                 self.push_scope();
-                self.define_var(&var.name, elem_ty);
+                self.check_pattern(pattern, &elem_ty);
                 self.check_block(body);
                 self.pop_scope();
                 self.in_loop = was_in_loop;
@@ -525,6 +536,62 @@ impl Checker {
 
             Stmt::Expr { expr, .. } => {
                 self.check_expr(expr);
+            }
+
+            Stmt::LetTuple {
+                names,
+                ty,
+                value,
+                span,
+            } => {
+                let value_ty = self.check_expr(value);
+
+                // Value must be a tuple type
+                match &value_ty {
+                    Type::Tuple(elems) => {
+                        if names.len() != elems.len() {
+                            self.errors.push(CheckError::tuple_arity_mismatch(
+                                names.len(),
+                                elems.len(),
+                                span,
+                            ));
+                        } else {
+                            // Bind each name to its corresponding element type
+                            for (name, elem_ty) in names.iter().zip(elems.iter()) {
+                                self.define_var(&name.name, elem_ty.clone());
+                            }
+                        }
+                    }
+                    Type::Error => {
+                        // Don't cascade errors; bind all to Error
+                        for name in names {
+                            self.define_var(&name.name, Type::Error);
+                        }
+                    }
+                    _ => {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("tuple with {} elements", names.len()),
+                            value_ty.to_string(),
+                            span,
+                        ));
+                        // Bind all names to Error to avoid cascading
+                        for name in names {
+                            self.define_var(&name.name, Type::Error);
+                        }
+                    }
+                }
+
+                // If there's an explicit type annotation, check it matches
+                if let Some(type_expr) = ty {
+                    let declared_ty = resolve_type(type_expr);
+                    if !value_ty.is_compatible_with(&declared_ty) {
+                        self.errors.push(CheckError::type_mismatch(
+                            declared_ty.to_string(),
+                            value_ty.to_string(),
+                            span,
+                        ));
+                    }
+                }
             }
         }
     }
@@ -821,6 +888,9 @@ impl Checker {
                         Pattern::Literal { .. } => {
                             // Literal patterns don't guarantee coverage
                         }
+                        Pattern::Tuple { .. } => {
+                            // Tuple patterns don't guarantee exhaustive coverage
+                        }
                     }
 
                     // Check body expression
@@ -841,7 +911,7 @@ impl Checker {
                                 enum_info
                                     .variants
                                     .iter()
-                                    .all(|v| covered_variants.contains(v))
+                                    .all(|(v, _)| covered_variants.contains(v))
                             } else {
                                 // Not an enum - needs wildcard
                                 false
@@ -1052,6 +1122,135 @@ impl Checker {
                 // Return Fn type
                 Type::Fn(param_types, Box::new(body_ty))
             }
+
+            Expr::Tuple { elements, .. } => {
+                let elem_types: Vec<Type> =
+                    elements.iter().map(|e| self.check_expr(e)).collect();
+                Type::Tuple(elem_types)
+            }
+
+            Expr::TupleIndex { tuple, index, span } => {
+                let tuple_ty = self.check_expr(tuple);
+                match &tuple_ty {
+                    Type::Tuple(elems) => {
+                        if *index < elems.len() {
+                            elems[*index].clone()
+                        } else {
+                            self.errors.push(CheckError::tuple_index_out_of_bounds(
+                                *index,
+                                elems.len(),
+                                span,
+                            ));
+                            Type::Error
+                        }
+                    }
+                    Type::Error => Type::Error,
+                    _ => {
+                        self.errors.push(CheckError::type_mismatch(
+                            "tuple",
+                            tuple_ty.to_string(),
+                            span,
+                        ));
+                        Type::Error
+                    }
+                }
+            }
+
+            Expr::Map { entries, span } => {
+                if entries.is_empty() {
+                    // Empty map - we can't infer the types, report an error
+                    // or use a placeholder. For now, require at least one entry.
+                    self.errors.push(CheckError::empty_map_literal(span));
+                    Type::Error
+                } else {
+                    // Check all keys have the same type and all values have the same type
+                    let first_key_ty = self.check_expr(&entries[0].key);
+                    let first_val_ty = self.check_expr(&entries[0].value);
+
+                    for entry in entries.iter().skip(1) {
+                        let key_ty = self.check_expr(&entry.key);
+                        let val_ty = self.check_expr(&entry.value);
+
+                        if !key_ty.is_compatible_with(&first_key_ty) {
+                            self.errors.push(CheckError::type_mismatch(
+                                first_key_ty.to_string(),
+                                key_ty.to_string(),
+                                &entry.span,
+                            ));
+                        }
+                        if !val_ty.is_compatible_with(&first_val_ty) {
+                            self.errors.push(CheckError::type_mismatch(
+                                first_val_ty.to_string(),
+                                val_ty.to_string(),
+                                &entry.span,
+                            ));
+                        }
+                    }
+
+                    Type::Map(Box::new(first_key_ty), Box::new(first_val_ty))
+                }
+            }
+
+            Expr::VariantConstruct {
+                enum_name,
+                variant,
+                payload,
+                span,
+            } => {
+                // Look up the enum
+                let Some(enum_info) = self.symbols.get_enum(&enum_name.name).cloned() else {
+                    self.errors
+                        .push(CheckError::undefined_type(&enum_name.name, span));
+                    return Type::Error;
+                };
+
+                // Check if the variant exists and get its expected payload type
+                let Some(expected_payload) = enum_info.get_variant_payload(&variant.name) else {
+                    self.errors.push(CheckError::undefined_enum_variant(
+                        &variant.name,
+                        &enum_name.name,
+                        span,
+                    ));
+                    return Type::Error;
+                };
+
+                // Check payload matches expectation
+                match (payload, expected_payload) {
+                    (Some(payload_expr), Some(expected_ty)) => {
+                        // Variant expects payload and we have one
+                        let payload_ty = self.check_expr(payload_expr);
+                        if !payload_ty.is_compatible_with(expected_ty) {
+                            self.errors.push(CheckError::type_mismatch(
+                                expected_ty.to_string(),
+                                payload_ty.to_string(),
+                                span,
+                            ));
+                        }
+                    }
+                    (None, Some(expected_ty)) => {
+                        // Variant expects payload but we don't have one
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("{}({})", variant.name, expected_ty),
+                            variant.name.clone(),
+                            span,
+                        ));
+                    }
+                    (Some(_), None) => {
+                        // Variant doesn't expect payload but we have one
+                        self.errors.push(CheckError::type_mismatch(
+                            variant.name.clone(),
+                            format!("{}(...)", variant.name),
+                            span,
+                        ));
+                    }
+                    (None, None) => {
+                        // Unit variant - all good
+                    }
+                }
+
+                // Return the enum type
+                Type::Named(enum_name.name.clone())
+            }
         }
     }
 
@@ -1190,6 +1389,7 @@ impl Checker {
             Pattern::Variant {
                 enum_name,
                 variant,
+                payload,
                 span,
             } => {
                 // Check that the scrutinee is the correct enum type
@@ -1198,6 +1398,12 @@ impl Checker {
                     Type::Error => return, // Don't cascade errors
                     _ => None,
                 };
+
+                // Determine the enum name to use for lookup
+                let enum_name_for_lookup = enum_name
+                    .as_ref()
+                    .map(|e| e.name.clone())
+                    .or_else(|| expected_enum.clone());
 
                 if let Some(enum_name_str) = &enum_name {
                     // Qualified variant: Status::Active
@@ -1214,7 +1420,7 @@ impl Checker {
 
                     // Check that the variant exists in the enum
                     if let Some(enum_info) = self.symbols.get_enum(&enum_name_str.name) {
-                        if !enum_info.variants.contains(&variant.name) {
+                        if !enum_info.has_variant(&variant.name) {
                             self.errors.push(CheckError::undefined_enum_variant(
                                 &variant.name,
                                 &enum_name_str.name,
@@ -1230,7 +1436,7 @@ impl Checker {
                     // Need to check against the scrutinee's enum type
                     if let Some(ref enum_name_str) = expected_enum {
                         if let Some(enum_info) = self.symbols.get_enum(enum_name_str) {
-                            if !enum_info.variants.contains(&variant.name) {
+                            if !enum_info.has_variant(&variant.name) {
                                 self.errors.push(CheckError::undefined_enum_variant(
                                     &variant.name,
                                     enum_name_str,
@@ -1244,6 +1450,35 @@ impl Checker {
                             scrutinee_ty.to_string(),
                             span,
                         ));
+                    }
+                }
+
+                // Handle payload binding
+                if let Some(enum_name_str) = enum_name_for_lookup {
+                    if let Some(enum_info) = self.symbols.get_enum(&enum_name_str).cloned() {
+                        if let Some(expected_payload_ty) = enum_info.get_variant_payload(&variant.name) {
+                            match (payload, expected_payload_ty) {
+                                (Some(inner_pattern), Some(payload_ty)) => {
+                                    // Recursively check the inner pattern
+                                    self.check_pattern(inner_pattern, payload_ty);
+                                }
+                                (None, Some(_)) => {
+                                    // Variant has payload but pattern doesn't bind it
+                                    // This is OK - we just ignore the payload value
+                                }
+                                (Some(_), None) => {
+                                    // Pattern tries to bind but variant has no payload
+                                    self.errors.push(CheckError::type_mismatch(
+                                        variant.name.clone(),
+                                        format!("{}(...)", variant.name),
+                                        span,
+                                    ));
+                                }
+                                (None, None) => {
+                                    // Unit variant, no payload - all good
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1262,6 +1497,36 @@ impl Checker {
                         lit_ty.to_string(),
                         span,
                     ));
+                }
+            }
+
+            Pattern::Tuple { elements, span } => {
+                // Scrutinee must be a tuple with matching arity
+                match scrutinee_ty {
+                    Type::Tuple(elem_types) => {
+                        if elements.len() != elem_types.len() {
+                            self.errors.push(CheckError::tuple_arity_mismatch(
+                                elements.len(),
+                                elem_types.len(),
+                                span,
+                            ));
+                        } else {
+                            // Recursively check each element pattern
+                            for (pattern, elem_ty) in elements.iter().zip(elem_types.iter()) {
+                                self.check_pattern(pattern, elem_ty);
+                            }
+                        }
+                    }
+                    Type::Error => {
+                        // Don't cascade errors
+                    }
+                    _ => {
+                        self.errors.push(CheckError::type_mismatch(
+                            "tuple",
+                            scrutinee_ty.to_string(),
+                            span,
+                        ));
+                    }
                 }
             }
         }
@@ -1317,9 +1582,13 @@ impl Checker {
                     return Type::Error;
                 }
                 let arg_ty = self.check_expr(&args[0]);
-                if arg_ty.list_element().is_none() && !arg_ty.is_error() {
+                // len() accepts List<T> or Map<K, V>
+                if arg_ty.list_element().is_none()
+                    && arg_ty.map_key_value().is_none()
+                    && !arg_ty.is_error()
+                {
                     self.errors.push(CheckError::type_mismatch(
-                        "List<T>",
+                        "List<T> or Map<K, V>",
                         arg_ty.to_string(),
                         args[0].span(),
                     ));
@@ -1367,6 +1636,175 @@ impl Checker {
                 // Check the argument (any type is valid)
                 self.check_expr(&args[0]);
                 Type::String
+            }
+
+            "map_get" => {
+                // map_get(Map<K, V>, K) -> Option<V>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("map_get", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let map_ty = self.check_expr(&args[0]);
+                let key_ty = self.check_expr(&args[1]);
+
+                if let Some((expected_key, value_ty)) = map_ty.map_key_value() {
+                    if !key_ty.is_compatible_with(expected_key) {
+                        self.errors.push(CheckError::type_mismatch(
+                            expected_key.to_string(),
+                            key_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                    Type::Option(Box::new(value_ty.clone()))
+                } else {
+                    if !map_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            "Map<K, V>",
+                            map_ty.to_string(),
+                            args[0].span(),
+                        ));
+                    }
+                    Type::Error
+                }
+            }
+
+            "map_set" => {
+                // map_set(Map<K, V>, K, V) -> Unit
+                if args.len() != 3 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("map_set", 3, args.len(), span));
+                    return Type::Error;
+                }
+                let map_ty = self.check_expr(&args[0]);
+                let key_ty = self.check_expr(&args[1]);
+                let value_ty = self.check_expr(&args[2]);
+
+                if let Some((expected_key, expected_value)) = map_ty.map_key_value() {
+                    if !key_ty.is_compatible_with(expected_key) {
+                        self.errors.push(CheckError::type_mismatch(
+                            expected_key.to_string(),
+                            key_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                    if !value_ty.is_compatible_with(expected_value) {
+                        self.errors.push(CheckError::type_mismatch(
+                            expected_value.to_string(),
+                            value_ty.to_string(),
+                            args[2].span(),
+                        ));
+                    }
+                } else if !map_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Map<K, V>",
+                        map_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Unit
+            }
+
+            "map_delete" => {
+                // map_delete(Map<K, V>, K) -> Unit
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("map_delete", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let map_ty = self.check_expr(&args[0]);
+                let key_ty = self.check_expr(&args[1]);
+
+                if let Some((expected_key, _)) = map_ty.map_key_value() {
+                    if !key_ty.is_compatible_with(expected_key) {
+                        self.errors.push(CheckError::type_mismatch(
+                            expected_key.to_string(),
+                            key_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !map_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Map<K, V>",
+                        map_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Unit
+            }
+
+            "map_has" => {
+                // map_has(Map<K, V>, K) -> Bool
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("map_has", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let map_ty = self.check_expr(&args[0]);
+                let key_ty = self.check_expr(&args[1]);
+
+                if let Some((expected_key, _)) = map_ty.map_key_value() {
+                    if !key_ty.is_compatible_with(expected_key) {
+                        self.errors.push(CheckError::type_mismatch(
+                            expected_key.to_string(),
+                            key_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !map_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Map<K, V>",
+                        map_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Bool
+            }
+
+            "map_keys" => {
+                // map_keys(Map<K, V>) -> List<K>
+                if args.len() != 1 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("map_keys", 1, args.len(), span));
+                    return Type::Error;
+                }
+                let map_ty = self.check_expr(&args[0]);
+
+                if let Some((key_ty, _)) = map_ty.map_key_value() {
+                    Type::List(Box::new(key_ty.clone()))
+                } else {
+                    if !map_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            "Map<K, V>",
+                            map_ty.to_string(),
+                            args[0].span(),
+                        ));
+                    }
+                    Type::Error
+                }
+            }
+
+            "map_values" => {
+                // map_values(Map<K, V>) -> List<V>
+                if args.len() != 1 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("map_values", 1, args.len(), span));
+                    return Type::Error;
+                }
+                let map_ty = self.check_expr(&args[0]);
+
+                if let Some((_, value_ty)) = map_ty.map_key_value() {
+                    Type::List(Box::new(value_ty.clone()))
+                } else {
+                    if !map_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            "Map<K, V>",
+                            map_ty.to_string(),
+                            args[0].span(),
+                        ));
+                    }
+                    Type::Error
+                }
             }
 
             _ => {
@@ -1668,7 +2106,14 @@ impl MultiModuleChecker {
                 continue;
             }
 
-            let variants: Vec<String> = enum_decl.variants.iter().map(|v| v.name.clone()).collect();
+            let variants: Vec<(String, Option<Type>)> = enum_decl
+                .variants
+                .iter()
+                .map(|v| {
+                    let payload = v.payload.as_ref().map(resolve_type);
+                    (v.name.name.clone(), payload)
+                })
+                .collect();
 
             self.symbols.define_enum(EnumInfo {
                 name: enum_decl.name.name.clone(),
@@ -2195,15 +2640,19 @@ impl<'a> ModuleChecker<'a> {
             }
 
             Stmt::For {
-                var,
+                pattern,
                 iter,
                 body,
                 span,
             } => {
                 let iter_ty = self.check_expr(iter);
 
+                // Determine the element type based on the iterable type
                 let elem_ty = if let Some(elem) = iter_ty.list_element() {
                     elem.clone()
+                } else if let Some((key_ty, value_ty)) = iter_ty.map_key_value() {
+                    // Map iteration yields (K, V) tuples
+                    Type::Tuple(vec![key_ty.clone(), value_ty.clone()])
                 } else {
                     if !iter_ty.is_error() {
                         self.errors
@@ -2215,7 +2664,7 @@ impl<'a> ModuleChecker<'a> {
                 let was_in_loop = self.in_loop;
                 self.in_loop = true;
                 self.push_scope();
-                self.define_var(&var.name, elem_ty);
+                self.check_pattern(pattern, &elem_ty);
                 self.check_block(body);
                 self.pop_scope();
                 self.in_loop = was_in_loop;
@@ -2257,6 +2706,62 @@ impl<'a> ModuleChecker<'a> {
 
             Stmt::Expr { expr, .. } => {
                 self.check_expr(expr);
+            }
+
+            Stmt::LetTuple {
+                names,
+                ty,
+                value,
+                span,
+            } => {
+                let value_ty = self.check_expr(value);
+
+                // Value must be a tuple type
+                match &value_ty {
+                    Type::Tuple(elems) => {
+                        if names.len() != elems.len() {
+                            self.errors.push(CheckError::tuple_arity_mismatch(
+                                names.len(),
+                                elems.len(),
+                                span,
+                            ));
+                        } else {
+                            // Bind each name to its corresponding element type
+                            for (name, elem_ty) in names.iter().zip(elems.iter()) {
+                                self.define_var(&name.name, elem_ty.clone());
+                            }
+                        }
+                    }
+                    Type::Error => {
+                        // Don't cascade errors; bind all to Error
+                        for name in names {
+                            self.define_var(&name.name, Type::Error);
+                        }
+                    }
+                    _ => {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("tuple with {} elements", names.len()),
+                            value_ty.to_string(),
+                            span,
+                        ));
+                        // Bind all names to Error to avoid cascading
+                        for name in names {
+                            self.define_var(&name.name, Type::Error);
+                        }
+                    }
+                }
+
+                // If there's an explicit type annotation, check it matches
+                if let Some(type_expr) = ty {
+                    let declared_ty = resolve_type(type_expr);
+                    if !value_ty.is_compatible_with(&declared_ty) {
+                        self.errors.push(CheckError::type_mismatch(
+                            declared_ty.to_string(),
+                            value_ty.to_string(),
+                            span,
+                        ));
+                    }
+                }
             }
         }
     }
@@ -2543,6 +3048,9 @@ impl<'a> ModuleChecker<'a> {
                         Pattern::Literal { .. } => {
                             // Literal patterns don't guarantee coverage
                         }
+                        Pattern::Tuple { .. } => {
+                            // Tuple patterns don't guarantee exhaustive coverage
+                        }
                     }
 
                     // Check body expression
@@ -2563,7 +3071,7 @@ impl<'a> ModuleChecker<'a> {
                                 enum_info
                                     .variants
                                     .iter()
-                                    .all(|v| covered_variants.contains(v))
+                                    .all(|(v, _)| covered_variants.contains(v))
                             } else {
                                 // Not an enum - needs wildcard
                                 false
@@ -2776,6 +3284,135 @@ impl<'a> ModuleChecker<'a> {
                 // Return Fn type
                 Type::Fn(param_types, Box::new(body_ty))
             }
+
+            Expr::Tuple { elements, .. } => {
+                let elem_types: Vec<Type> =
+                    elements.iter().map(|e| self.check_expr(e)).collect();
+                Type::Tuple(elem_types)
+            }
+
+            Expr::TupleIndex { tuple, index, span } => {
+                let tuple_ty = self.check_expr(tuple);
+                match &tuple_ty {
+                    Type::Tuple(elems) => {
+                        if *index < elems.len() {
+                            elems[*index].clone()
+                        } else {
+                            self.errors.push(CheckError::tuple_index_out_of_bounds(
+                                *index,
+                                elems.len(),
+                                span,
+                            ));
+                            Type::Error
+                        }
+                    }
+                    Type::Error => Type::Error,
+                    _ => {
+                        self.errors.push(CheckError::type_mismatch(
+                            "tuple",
+                            tuple_ty.to_string(),
+                            span,
+                        ));
+                        Type::Error
+                    }
+                }
+            }
+
+            Expr::Map { entries, span } => {
+                if entries.is_empty() {
+                    // Empty map - we can't infer the types, report an error
+                    // or use a placeholder. For now, require at least one entry.
+                    self.errors.push(CheckError::empty_map_literal(span));
+                    Type::Error
+                } else {
+                    // Check all keys have the same type and all values have the same type
+                    let first_key_ty = self.check_expr(&entries[0].key);
+                    let first_val_ty = self.check_expr(&entries[0].value);
+
+                    for entry in entries.iter().skip(1) {
+                        let key_ty = self.check_expr(&entry.key);
+                        let val_ty = self.check_expr(&entry.value);
+
+                        if !key_ty.is_compatible_with(&first_key_ty) {
+                            self.errors.push(CheckError::type_mismatch(
+                                first_key_ty.to_string(),
+                                key_ty.to_string(),
+                                &entry.span,
+                            ));
+                        }
+                        if !val_ty.is_compatible_with(&first_val_ty) {
+                            self.errors.push(CheckError::type_mismatch(
+                                first_val_ty.to_string(),
+                                val_ty.to_string(),
+                                &entry.span,
+                            ));
+                        }
+                    }
+
+                    Type::Map(Box::new(first_key_ty), Box::new(first_val_ty))
+                }
+            }
+
+            Expr::VariantConstruct {
+                enum_name,
+                variant,
+                payload,
+                span,
+            } => {
+                // Look up the enum
+                let Some(enum_info) = self.symbols.get_enum(&enum_name.name).cloned() else {
+                    self.errors
+                        .push(CheckError::undefined_type(&enum_name.name, span));
+                    return Type::Error;
+                };
+
+                // Check if the variant exists and get its expected payload type
+                let Some(expected_payload) = enum_info.get_variant_payload(&variant.name) else {
+                    self.errors.push(CheckError::undefined_enum_variant(
+                        &variant.name,
+                        &enum_name.name,
+                        span,
+                    ));
+                    return Type::Error;
+                };
+
+                // Check payload matches expectation
+                match (payload, expected_payload) {
+                    (Some(payload_expr), Some(expected_ty)) => {
+                        // Variant expects payload and we have one
+                        let payload_ty = self.check_expr(payload_expr);
+                        if !payload_ty.is_compatible_with(expected_ty) {
+                            self.errors.push(CheckError::type_mismatch(
+                                expected_ty.to_string(),
+                                payload_ty.to_string(),
+                                span,
+                            ));
+                        }
+                    }
+                    (None, Some(expected_ty)) => {
+                        // Variant expects payload but we don't have one
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("{}({})", variant.name, expected_ty),
+                            variant.name.clone(),
+                            span,
+                        ));
+                    }
+                    (Some(_), None) => {
+                        // Variant doesn't expect payload but we have one
+                        self.errors.push(CheckError::type_mismatch(
+                            variant.name.clone(),
+                            format!("{}(...)", variant.name),
+                            span,
+                        ));
+                    }
+                    (None, None) => {
+                        // Unit variant - all good
+                    }
+                }
+
+                // Return the enum type
+                Type::Named(enum_name.name.clone())
+            }
         }
     }
 
@@ -2907,6 +3544,7 @@ impl<'a> ModuleChecker<'a> {
             Pattern::Variant {
                 enum_name,
                 variant,
+                payload,
                 span,
             } => {
                 // Check that the scrutinee is the correct enum type
@@ -2915,6 +3553,12 @@ impl<'a> ModuleChecker<'a> {
                     Type::Error => return, // Don't cascade errors
                     _ => None,
                 };
+
+                // Determine the enum name to use for lookup
+                let enum_name_for_lookup = enum_name
+                    .as_ref()
+                    .map(|e| e.name.clone())
+                    .or_else(|| expected_enum.clone());
 
                 if let Some(enum_name_str) = &enum_name {
                     // Qualified variant: Status::Active
@@ -2931,7 +3575,7 @@ impl<'a> ModuleChecker<'a> {
 
                     // Check that the variant exists in the enum
                     if let Some(enum_info) = self.lookup_enum(&enum_name_str.name) {
-                        if !enum_info.variants.contains(&variant.name) {
+                        if !enum_info.has_variant(&variant.name) {
                             self.errors.push(CheckError::undefined_enum_variant(
                                 &variant.name,
                                 &enum_name_str.name,
@@ -2947,7 +3591,7 @@ impl<'a> ModuleChecker<'a> {
                     // Need to check against the scrutinee's enum type
                     if let Some(ref enum_name_str) = expected_enum {
                         if let Some(enum_info) = self.lookup_enum(enum_name_str) {
-                            if !enum_info.variants.contains(&variant.name) {
+                            if !enum_info.has_variant(&variant.name) {
                                 self.errors.push(CheckError::undefined_enum_variant(
                                     &variant.name,
                                     enum_name_str,
@@ -2961,6 +3605,35 @@ impl<'a> ModuleChecker<'a> {
                             scrutinee_ty.to_string(),
                             span,
                         ));
+                    }
+                }
+
+                // Handle payload binding
+                if let Some(enum_name_str) = enum_name_for_lookup {
+                    if let Some(enum_info) = self.lookup_enum(&enum_name_str).cloned() {
+                        if let Some(expected_payload_ty) = enum_info.get_variant_payload(&variant.name) {
+                            match (payload, expected_payload_ty) {
+                                (Some(inner_pattern), Some(payload_ty)) => {
+                                    // Recursively check the inner pattern
+                                    self.check_pattern(inner_pattern, payload_ty);
+                                }
+                                (None, Some(_)) => {
+                                    // Variant has payload but pattern doesn't bind it
+                                    // This is OK - we just ignore the payload value
+                                }
+                                (Some(_), None) => {
+                                    // Pattern tries to bind but variant has no payload
+                                    self.errors.push(CheckError::type_mismatch(
+                                        variant.name.clone(),
+                                        format!("{}(...)", variant.name),
+                                        span,
+                                    ));
+                                }
+                                (None, None) => {
+                                    // Unit variant, no payload - all good
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -2979,6 +3652,36 @@ impl<'a> ModuleChecker<'a> {
                         lit_ty.to_string(),
                         span,
                     ));
+                }
+            }
+
+            Pattern::Tuple { elements, span } => {
+                // Scrutinee must be a tuple with matching arity
+                match scrutinee_ty {
+                    Type::Tuple(elem_types) => {
+                        if elements.len() != elem_types.len() {
+                            self.errors.push(CheckError::tuple_arity_mismatch(
+                                elements.len(),
+                                elem_types.len(),
+                                span,
+                            ));
+                        } else {
+                            // Recursively check each element pattern
+                            for (pattern, elem_ty) in elements.iter().zip(elem_types.iter()) {
+                                self.check_pattern(pattern, elem_ty);
+                            }
+                        }
+                    }
+                    Type::Error => {
+                        // Don't cascade errors
+                    }
+                    _ => {
+                        self.errors.push(CheckError::type_mismatch(
+                            "tuple",
+                            scrutinee_ty.to_string(),
+                            span,
+                        ));
+                    }
                 }
             }
         }
@@ -3055,9 +3758,13 @@ impl<'a> ModuleChecker<'a> {
                     return Type::Error;
                 }
                 let arg_ty = self.check_expr(&args[0]);
-                if arg_ty.list_element().is_none() && !arg_ty.is_error() {
+                // len() accepts List<T> or Map<K, V>
+                if arg_ty.list_element().is_none()
+                    && arg_ty.map_key_value().is_none()
+                    && !arg_ty.is_error()
+                {
                     self.errors.push(CheckError::type_mismatch(
-                        "List<T>",
+                        "List<T> or Map<K, V>",
                         arg_ty.to_string(),
                         args[0].span(),
                     ));
@@ -3103,6 +3810,175 @@ impl<'a> ModuleChecker<'a> {
                 }
                 self.check_expr(&args[0]);
                 Type::String
+            }
+
+            "map_get" => {
+                // map_get(Map<K, V>, K) -> Option<V>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("map_get", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let map_ty = self.check_expr(&args[0]);
+                let key_ty = self.check_expr(&args[1]);
+
+                if let Some((expected_key, value_ty)) = map_ty.map_key_value() {
+                    if !key_ty.is_compatible_with(expected_key) {
+                        self.errors.push(CheckError::type_mismatch(
+                            expected_key.to_string(),
+                            key_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                    Type::Option(Box::new(value_ty.clone()))
+                } else {
+                    if !map_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            "Map<K, V>",
+                            map_ty.to_string(),
+                            args[0].span(),
+                        ));
+                    }
+                    Type::Error
+                }
+            }
+
+            "map_set" => {
+                // map_set(Map<K, V>, K, V) -> Unit
+                if args.len() != 3 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("map_set", 3, args.len(), span));
+                    return Type::Error;
+                }
+                let map_ty = self.check_expr(&args[0]);
+                let key_ty = self.check_expr(&args[1]);
+                let value_ty = self.check_expr(&args[2]);
+
+                if let Some((expected_key, expected_value)) = map_ty.map_key_value() {
+                    if !key_ty.is_compatible_with(expected_key) {
+                        self.errors.push(CheckError::type_mismatch(
+                            expected_key.to_string(),
+                            key_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                    if !value_ty.is_compatible_with(expected_value) {
+                        self.errors.push(CheckError::type_mismatch(
+                            expected_value.to_string(),
+                            value_ty.to_string(),
+                            args[2].span(),
+                        ));
+                    }
+                } else if !map_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Map<K, V>",
+                        map_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Unit
+            }
+
+            "map_delete" => {
+                // map_delete(Map<K, V>, K) -> Unit
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("map_delete", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let map_ty = self.check_expr(&args[0]);
+                let key_ty = self.check_expr(&args[1]);
+
+                if let Some((expected_key, _)) = map_ty.map_key_value() {
+                    if !key_ty.is_compatible_with(expected_key) {
+                        self.errors.push(CheckError::type_mismatch(
+                            expected_key.to_string(),
+                            key_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !map_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Map<K, V>",
+                        map_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Unit
+            }
+
+            "map_has" => {
+                // map_has(Map<K, V>, K) -> Bool
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("map_has", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let map_ty = self.check_expr(&args[0]);
+                let key_ty = self.check_expr(&args[1]);
+
+                if let Some((expected_key, _)) = map_ty.map_key_value() {
+                    if !key_ty.is_compatible_with(expected_key) {
+                        self.errors.push(CheckError::type_mismatch(
+                            expected_key.to_string(),
+                            key_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !map_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Map<K, V>",
+                        map_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Bool
+            }
+
+            "map_keys" => {
+                // map_keys(Map<K, V>) -> List<K>
+                if args.len() != 1 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("map_keys", 1, args.len(), span));
+                    return Type::Error;
+                }
+                let map_ty = self.check_expr(&args[0]);
+
+                if let Some((key_ty, _)) = map_ty.map_key_value() {
+                    Type::List(Box::new(key_ty.clone()))
+                } else {
+                    if !map_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            "Map<K, V>",
+                            map_ty.to_string(),
+                            args[0].span(),
+                        ));
+                    }
+                    Type::Error
+                }
+            }
+
+            "map_values" => {
+                // map_values(Map<K, V>) -> List<V>
+                if args.len() != 1 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("map_values", 1, args.len(), span));
+                    return Type::Error;
+                }
+                let map_ty = self.check_expr(&args[0]);
+
+                if let Some((_, value_ty)) = map_ty.map_key_value() {
+                    Type::List(Box::new(value_ty.clone()))
+                } else {
+                    if !map_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            "Map<K, V>",
+                            map_ty.to_string(),
+                            args[0].span(),
+                        ));
+                    }
+                    Type::Error
+                }
             }
 
             _ => {

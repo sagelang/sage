@@ -170,6 +170,14 @@ pub enum Token {
     #[token("Fn")]
     TyFn,
 
+    /// Map type keyword: `Map`
+    #[token("Map")]
+    TyMap,
+
+    /// Result type keyword: `Result`
+    #[token("Result")]
+    TyResult,
+
     // =========================================================================
     // Literals
     // =========================================================================
@@ -356,6 +364,8 @@ impl Token {
                 | Token::TyError
                 | Token::TyErrorKind
                 | Token::TyFn
+                | Token::TyMap
+                | Token::TyResult
         )
     }
 
@@ -450,6 +460,8 @@ impl std::fmt::Display for Token {
             Token::TyError => write!(f, "Error"),
             Token::TyErrorKind => write!(f, "ErrorKind"),
             Token::TyFn => write!(f, "Fn"),
+            Token::TyMap => write!(f, "Map"),
+            Token::TyResult => write!(f, "Result"),
 
             // Literals
             Token::IntLit => write!(f, "<int>"),

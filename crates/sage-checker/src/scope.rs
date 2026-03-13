@@ -74,12 +74,37 @@ pub struct RecordInfo {
 pub struct EnumInfo {
     /// The enum's name.
     pub name: String,
-    /// Variant names.
-    pub variants: Vec<String>,
+    /// Variants with optional payload types.
+    pub variants: Vec<(String, Option<Type>)>,
     /// Whether this enum is public.
     pub is_pub: bool,
     /// The module path where this enum is defined.
     pub module_path: ModulePath,
+}
+
+impl EnumInfo {
+    /// Check if all variants are unit variants (no payloads).
+    #[must_use]
+    pub fn all_variants_unit(&self) -> bool {
+        self.variants.iter().all(|(_, payload)| payload.is_none())
+    }
+
+    /// Get the payload type for a variant, if it exists.
+    /// Returns Some(None) if the variant exists but has no payload.
+    /// Returns None if the variant doesn't exist.
+    #[must_use]
+    pub fn get_variant_payload(&self, name: &str) -> Option<Option<&Type>> {
+        self.variants
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, payload)| payload.as_ref())
+    }
+
+    /// Check if a variant exists.
+    #[must_use]
+    pub fn has_variant(&self, name: &str) -> bool {
+        self.variants.iter().any(|(n, _)| n == name)
+    }
 }
 
 /// Information about a declared constant.
@@ -234,6 +259,67 @@ impl SymbolTable {
                 return_type: Type::Unit,
             },
         );
+
+        // Map builtins - all use special handling for generics
+        // map_get(Map<K, V>, K) -> Option<V>
+        self.builtins.insert(
+            "map_get",
+            BuiltinInfo {
+                name: "map_get",
+                params: None, // Special handling for generics
+                return_type: Type::Error, // Determined by first arg
+            },
+        );
+
+        // map_set(Map<K, V>, K, V) -> Unit
+        self.builtins.insert(
+            "map_set",
+            BuiltinInfo {
+                name: "map_set",
+                params: None,
+                return_type: Type::Unit,
+            },
+        );
+
+        // map_delete(Map<K, V>, K) -> Unit
+        self.builtins.insert(
+            "map_delete",
+            BuiltinInfo {
+                name: "map_delete",
+                params: None,
+                return_type: Type::Unit,
+            },
+        );
+
+        // map_has(Map<K, V>, K) -> Bool
+        self.builtins.insert(
+            "map_has",
+            BuiltinInfo {
+                name: "map_has",
+                params: None,
+                return_type: Type::Bool,
+            },
+        );
+
+        // map_keys(Map<K, V>) -> List<K>
+        self.builtins.insert(
+            "map_keys",
+            BuiltinInfo {
+                name: "map_keys",
+                params: None,
+                return_type: Type::Error, // Determined by first arg
+            },
+        );
+
+        // map_values(Map<K, V>) -> List<V>
+        self.builtins.insert(
+            "map_values",
+            BuiltinInfo {
+                name: "map_values",
+                params: None,
+                return_type: Type::Error, // Determined by first arg
+            },
+        );
     }
 
     /// Define an agent.
@@ -386,6 +472,13 @@ pub fn resolve_type(ty: &TypeExpr) -> Type {
             let param_types = params.iter().map(resolve_type).collect();
             let ret_type = Box::new(resolve_type(ret));
             Type::Fn(param_types, ret_type)
+        }
+        TypeExpr::Map(key, value) => {
+            Type::Map(Box::new(resolve_type(key)), Box::new(resolve_type(value)))
+        }
+        TypeExpr::Tuple(elems) => Type::Tuple(elems.iter().map(resolve_type).collect()),
+        TypeExpr::Result(ok, err) => {
+            Type::Result(Box::new(resolve_type(ok)), Box::new(resolve_type(err)))
         }
 
         // RFC-0007: Error type - TODO: proper error type in type checker

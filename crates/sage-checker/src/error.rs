@@ -97,7 +97,7 @@ pub enum CheckError {
     #[diagnostic(code(sage::not_iterable))]
     NotIterable {
         ty: String,
-        #[label("expected List<T>")]
+        #[label("expected List<T> or Map<K, V>")]
         span: SourceSpan,
     },
 
@@ -373,6 +373,37 @@ pub enum CheckError {
     ClosureParamNeedsType {
         name: String,
         #[label("type annotation required")]
+        span: SourceSpan,
+    },
+
+    // =========================================================================
+    // RFC-0010: Maps, tuples, and related errors
+    // =========================================================================
+    #[error("tuple arity mismatch: expected {expected} elements, found {found}")]
+    #[diagnostic(code(sage::E028))]
+    TupleArityMismatch {
+        expected: usize,
+        found: usize,
+        #[label("expected {expected} elements")]
+        span: SourceSpan,
+    },
+
+    #[error("tuple index {index} out of bounds for tuple with {len} elements")]
+    #[diagnostic(code(sage::E034))]
+    TupleIndexOutOfBounds {
+        index: usize,
+        len: usize,
+        #[label("index out of bounds")]
+        span: SourceSpan,
+    },
+
+    #[error("empty map literal requires type annotation")]
+    #[diagnostic(
+        code(sage::E025),
+        help("use `let m: Map<K, V> = {{}}` or provide at least one entry")
+    )]
+    EmptyMapLiteral {
+        #[label("cannot infer key/value types")]
         span: SourceSpan,
     },
 }
@@ -728,6 +759,38 @@ impl CheckError {
     pub fn closure_param_needs_type(name: impl Into<String>, span: &Span) -> Self {
         Self::ClosureParamNeedsType {
             name: name.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    // =========================================================================
+    // RFC-0010: Maps, tuples, and related helpers
+    // =========================================================================
+
+    /// Create a tuple arity mismatch error (E028).
+    #[must_use]
+    pub fn tuple_arity_mismatch(expected: usize, found: usize, span: &Span) -> Self {
+        Self::TupleArityMismatch {
+            expected,
+            found,
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a tuple index out of bounds error (E034).
+    #[must_use]
+    pub fn tuple_index_out_of_bounds(index: usize, len: usize, span: &Span) -> Self {
+        Self::TupleIndexOutOfBounds {
+            index,
+            len,
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create an empty map literal error (E025).
+    #[must_use]
+    pub fn empty_map_literal(span: &Span) -> Self {
+        Self::EmptyMapLiteral {
             span: to_source_span(span),
         }
     }
