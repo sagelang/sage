@@ -35,7 +35,7 @@ WORKDIR /home/tester
 
 # Install Sage from GitHub releases
 ENV SAGE_VERSION=${SAGE_VERSION}
-RUN curl -fsSL https://raw.githubusercontent.com/cargopete/sage/main/scripts/install.sh | bash
+RUN curl -fsSL https://raw.githubusercontent.com/sagelang/sage/main/scripts/install.sh | bash
 
 # Set up toolchain path
 ENV SAGE_TOOLCHAIN=/usr/local/sage/toolchain

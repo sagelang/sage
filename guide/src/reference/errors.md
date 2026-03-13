@@ -174,7 +174,7 @@ xcode-select --install
 
 If you encounter an error not listed here:
 
-1. Check the [GitHub issues](https://github.com/cargopete/sage/issues)
+1. Check the [GitHub issues](https://github.com/sagelang/sage/issues)
 2. Open a new issue with:
    - The error message
    - Your Sage code (minimal example)

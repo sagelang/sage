@@ -51,7 +51,7 @@
 
           meta = with pkgs.lib; {
             description = "A programming language where agents are first-class citizens";
-            homepage = "https://github.com/cargopete/sage";
+            homepage = "https://github.com/sagelang/sage";
             license = licenses.mit;
             maintainers = [ ];
           };

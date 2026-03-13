@@ -29,13 +29,13 @@ sudo pacman -S gcc openssl
 ### Homebrew (macOS)
 
 ```bash
-brew install cargopete/sage/sage
+brew install sagelang/sage/sage
 ```
 
 ### Quick Install (macOS/Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cargopete/sage/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/sagelang/sage/main/scripts/install.sh | bash
 ```
 
 ### Cargo (if you have Rust)
@@ -47,7 +47,7 @@ cargo install sage-lang
 ### Nix
 
 ```bash
-nix profile install github:cargopete/sage
+nix profile install github:sagelang/sage
 ```
 
 ## Verify Installation

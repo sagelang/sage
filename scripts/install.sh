@@ -1,10 +1,10 @@
 #!/bin/bash
 # Sage installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/cargopete/sage/main/scripts/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/sagelang/sage/main/scripts/install.sh | bash
 
 set -euo pipefail
 
-REPO="cargopete/sage"
+REPO="sagelang/sage"
 INSTALL_DIR="${SAGE_INSTALL_DIR:-/usr/local/sage}"
 TMPDIR_CLEANUP=""
 

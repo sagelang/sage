@@ -13,7 +13,7 @@
   <a href="#installation">Install</a> •
   <a href="#language-syntax">Syntax</a> •
   <a href="#usage">Usage</a> •
-  <a href="https://cargopete.github.io/sage">Guide</a> •
+  <a href="https://sagelang.github.io/sage">Guide</a> •
   <a href="docs/RFC-0001-poc.md">Specification</a> •
   <a href="docs/VISION.md">Roadmap</a>
 </p>
@@ -59,7 +59,7 @@ run Coordinator;
 
 | | |
 |---|---|
-| **Latest** | [v0.1.1](https://github.com/cargopete/sage/releases/tag/v0.1.1) |
+| **Latest** | [v0.1.1](https://github.com/sagelang/sage/releases/tag/v0.1.1) |
 | **Extension** | `.sg` |
 | **Platforms** | macOS (ARM), Linux (x86_64, ARM) |
 | **Build time** | ~0.5s |
@@ -189,7 +189,7 @@ sudo pacman -S gcc openssl
 ### Homebrew (macOS)
 
 ```bash
-brew install cargopete/sage/sage
+brew install sagelang/sage/sage
 ```
 
 ### Cargo (if you have Rust)
@@ -201,7 +201,7 @@ cargo install sage-lang
 ### Nix
 
 ```bash
-nix profile install github:cargopete/sage
+nix profile install github:sagelang/sage
 ```
 
 Or add to your flake inputs.
@@ -209,7 +209,7 @@ Or add to your flake inputs.
 ### Quick Install (macOS/Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cargopete/sage/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/sagelang/sage/main/scripts/install.sh | bash
 ```
 
 Homebrew and quick install download the pre-compiled toolchain (~100-230MB) — no Rust required.
@@ -217,7 +217,7 @@ Homebrew and quick install download the pre-compiled toolchain (~100-230MB) — 
 ### From Source
 
 ```bash
-git clone https://github.com/cargopete/sage
+git clone https://github.com/sagelang/sage
 cd sage
 cargo build --release
 ```

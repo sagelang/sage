@@ -1,12 +1,12 @@
 class Sage < Formula
   desc "A programming language where agents are first-class citizens"
-  homepage "https://github.com/cargopete/sage"
+  homepage "https://github.com/sagelang/sage"
   version "0.1.1"
   license "MIT"
 
   on_macos do
     on_arm do
-      url "https://github.com/cargopete/sage/releases/download/v0.1.1/sage-v0.1.1-aarch64-apple-darwin.tar.gz"
+      url "https://github.com/sagelang/sage/releases/download/v0.1.1/sage-v0.1.1-aarch64-apple-darwin.tar.gz"
       sha256 "577762c6171771d2d843ae15060575a82eac247b7af32aadaad3a6fdf36afe75"
     end
   end
