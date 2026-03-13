@@ -191,21 +191,34 @@ sudo pacman -S gcc openssl
 brew install cargopete/sage/sage
 ```
 
+### Cargo (if you have Rust)
+
+```bash
+cargo install sage-cli
+```
+
+### Nix
+
+```bash
+nix profile install github:cargopete/sage
+```
+
+Or add to your flake inputs.
+
 ### Quick Install (macOS/Linux)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/cargopete/sage/main/scripts/install.sh | bash
 ```
 
-Both methods download the pre-compiled toolchain (~100-230MB) — no Rust required.
+Homebrew and quick install download the pre-compiled toolchain (~100-230MB) — no Rust required.
 
-### From Source (for contributors)
+### From Source
 
 ```bash
 git clone https://github.com/cargopete/sage
 cd sage
 cargo build --release
-./scripts/build-toolchain.sh  # Optional: for fast builds
 ```
 
 ## Usage
