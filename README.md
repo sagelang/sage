@@ -13,6 +13,7 @@
   <a href="#installation">Install</a> •
   <a href="#language-syntax">Syntax</a> •
   <a href="#usage">Usage</a> •
+  <a href="https://cargopete.github.io/sage">Guide</a> •
   <a href="docs/RFC-0001-poc.md">Specification</a> •
   <a href="docs/VISION.md">Roadmap</a>
 </p>

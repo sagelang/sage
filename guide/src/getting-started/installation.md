@@ -38,12 +38,6 @@ brew install cargopete/sage/sage
 curl -fsSL https://raw.githubusercontent.com/cargopete/sage/main/scripts/install.sh | bash
 ```
 
-After installation, add the toolchain to your shell profile:
-
-```bash
-export SAGE_TOOLCHAIN=/usr/local/sage/toolchain
-```
-
 ### Cargo (if you have Rust)
 
 ```bash
@@ -65,7 +59,7 @@ sage --version
 You should see output like:
 
 ```
-sage 0.1.0
+sage 0.1.x
 ```
 
 ## Next Steps
