@@ -1,18 +1,12 @@
 #!/bin/bash
 # Build pre-compiled rlibs for Sage distribution
+# Always builds for the host target (no cross-compilation)
 set -euo pipefail
 
-HOST_TARGET=$(rustc -vV | grep host | cut -d' ' -f2)
-TARGET="${1:-$HOST_TARGET}"
+TARGET=$(rustc -vV | grep host | cut -d' ' -f2)
 DIST_DIR="dist/$TARGET"
-IS_CROSS_COMPILE=false
 
-if [[ "$TARGET" != "$HOST_TARGET" ]]; then
-    IS_CROSS_COMPILE=true
-    echo "Cross-compiling toolchain for $TARGET (host: $HOST_TARGET)"
-else
-    echo "Building toolchain for $TARGET..."
-fi
+echo "Building toolchain for $TARGET..."
 
 # Clean and create output directory
 rm -rf "$DIST_DIR"
@@ -21,14 +15,9 @@ mkdir -p "$DIST_DIR/libs"
 # Build sage-runtime and collect library paths
 echo "Compiling sage-runtime and dependencies..."
 
-CARGO_ARGS=(build --release -p sage-runtime --message-format=json)
-if $IS_CROSS_COMPILE; then
-    CARGO_ARGS+=(--target "$TARGET")
-fi
-
 # Capture cargo output to a file to avoid pipe issues
 CARGO_OUTPUT=$(mktemp)
-cargo "${CARGO_ARGS[@]}" 2>/dev/null > "$CARGO_OUTPUT" || true
+cargo build --release -p sage-runtime --message-format=json 2>/dev/null > "$CARGO_OUTPUT" || true
 
 # Extract and copy libraries
 jq -r 'select(.reason=="compiler-artifact") | .filenames[]' "$CARGO_OUTPUT" \
@@ -51,7 +40,7 @@ SYSROOT=$(rustc --print sysroot)
 SYSROOT_LIBS="$SYSROOT/lib/rustlib/$TARGET/lib"
 
 if [ -d "$SYSROOT_LIBS" ]; then
-    echo "Copying sysroot libraries for $TARGET..."
+    echo "Copying sysroot libraries..."
     for lib in "$SYSROOT_LIBS"/lib*.rlib "$SYSROOT_LIBS"/lib*.a; do
         if [ -f "$lib" ]; then
             cp "$lib" "$DIST_DIR/libs/"
@@ -60,7 +49,6 @@ if [ -d "$SYSROOT_LIBS" ]; then
     done
 else
     echo "Warning: Sysroot libraries not found at $SYSROOT_LIBS"
-    echo "Ensure target is installed: rustup target add $TARGET"
 fi
 
 # Copy rustc binary
