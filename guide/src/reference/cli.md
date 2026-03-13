@@ -1,0 +1,128 @@
+# CLI Commands
+
+The `sage` command-line tool compiles and runs Sage programs.
+
+## sage run
+
+Compile and execute a Sage program:
+
+```bash
+sage run program.sg
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--release` | Build with optimizations |
+| `-q, --quiet` | Minimal output |
+
+### Examples
+
+```bash
+# Run a program
+sage run hello.sg
+
+# Run with optimizations
+sage run hello.sg --release
+
+# Run quietly (only program output)
+sage run hello.sg -q
+```
+
+## sage build
+
+Compile a Sage program to a native binary without running it:
+
+```bash
+sage build program.sg
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--release` | Build with optimizations |
+| `-o, --output <dir>` | Output directory (default: `target/sage`) |
+| `--emit-rust` | Only generate Rust code, don't compile |
+
+### Examples
+
+```bash
+# Build a binary
+sage build hello.sg
+
+# Build with optimizations
+sage build hello.sg --release
+
+# Custom output directory
+sage build hello.sg -o ./out
+
+# Generate Rust code only (for inspection)
+sage build hello.sg --emit-rust
+```
+
+### Output Structure
+
+After building, you'll find:
+
+```
+target/sage/
+  hello/
+    main.rs      # Generated Rust code
+    hello        # Native binary (if not --emit-rust)
+```
+
+## sage check
+
+Type-check a Sage program without compiling or running:
+
+```bash
+sage check program.sg
+```
+
+This is useful for quick validation during development.
+
+### Examples
+
+```bash
+# Check for errors
+sage check hello.sg
+
+# Output on success:
+# ✨ No errors in hello.sg
+```
+
+## Global Options
+
+| Option | Description |
+|--------|-------------|
+| `-h, --help` | Show help information |
+| `-V, --version` | Show version |
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Compilation error (parse, type, or codegen) |
+| Other | Program exit code (when using `sage run`) |
+
+## Compilation Modes
+
+Sage automatically selects the fastest compilation mode:
+
+### Pre-compiled Toolchain (Default)
+
+When installed via the install script or release binaries, Sage includes a pre-compiled Rust toolchain. This provides fast compilation without requiring Rust to be installed.
+
+### Cargo Fallback
+
+If no pre-compiled toolchain is found, Sage falls back to using `cargo`. This requires Rust to be installed but allows compilation on any platform.
+
+The output will indicate which mode was used:
+
+```
+✨ Done Compiled hello.sg in 0.42s           # Pre-compiled toolchain
+✨ Done Compiled hello.sg (cargo) in 2.31s   # Cargo fallback
+```
