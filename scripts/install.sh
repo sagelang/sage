@@ -6,6 +6,14 @@ set -euo pipefail
 
 REPO="cargopete/sage"
 INSTALL_DIR="${SAGE_INSTALL_DIR:-/usr/local/sage}"
+TMPDIR_CLEANUP=""
+
+cleanup() {
+    if [ -n "$TMPDIR_CLEANUP" ] && [ -d "$TMPDIR_CLEANUP" ]; then
+        rm -rf "$TMPDIR_CLEANUP"
+    fi
+}
+trap cleanup EXIT INT TERM
 
 # Detect platform
 detect_platform() {
@@ -69,7 +77,7 @@ main() {
     echo "📦 Downloading..."
     local tmpdir
     tmpdir="$(mktemp -d)"
-    trap 'rm -rf "$tmpdir"' EXIT
+    TMPDIR_CLEANUP="$tmpdir"
 
     curl -fsSL "$url" | tar xz -C "$tmpdir"
 
