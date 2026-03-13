@@ -18,32 +18,33 @@ fi
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR/libs"
 
-# Build sage-runtime
+# Build sage-runtime and collect library paths
 echo "Compiling sage-runtime and dependencies..."
+
+CARGO_ARGS=(build --release -p sage-runtime --message-format=json)
 if $IS_CROSS_COMPILE; then
-    # For cross-compilation, we must use --target
-    cargo build --release \
-        -p sage-runtime \
-        --target "$TARGET" \
-        --message-format=json 2>/dev/null \
-        | jq -r 'select(.reason=="compiler-artifact") | .filenames[]' \
-        | grep -E '\.(rlib|dylib|so|a)$' \
-        | while read -r lib; do
-            cp "$lib" "$DIST_DIR/libs/"
-            echo "  Copied $(basename "$lib")"
-        done
-else
-    # Native build - don't use --target for hash compatibility
-    cargo build --release \
-        -p sage-runtime \
-        --message-format=json 2>/dev/null \
-        | jq -r 'select(.reason=="compiler-artifact") | .filenames[]' \
-        | grep -E '\.(rlib|dylib|so)$' \
-        | while read -r lib; do
-            cp "$lib" "$DIST_DIR/libs/"
-            echo "  Copied $(basename "$lib")"
-        done
+    CARGO_ARGS+=(--target "$TARGET")
 fi
+
+# Capture cargo output to a file to avoid pipe issues
+CARGO_OUTPUT=$(mktemp)
+cargo "${CARGO_ARGS[@]}" 2>/dev/null > "$CARGO_OUTPUT" || true
+
+# Extract and copy libraries
+jq -r 'select(.reason=="compiler-artifact") | .filenames[]' "$CARGO_OUTPUT" \
+    | grep -E '\.(rlib|dylib|so|a)$' \
+    | while read -r lib; do
+        if [[ -f "$lib" ]]; then
+            cp "$lib" "$DIST_DIR/libs/"
+            echo "  Copied $(basename "$lib")"
+        fi
+    done || true
+
+rm -f "$CARGO_OUTPUT"
+
+# Count copied libs
+LIB_COUNT=$(ls "$DIST_DIR/libs" 2>/dev/null | wc -l | tr -d ' ')
+echo "  Copied $LIB_COUNT libraries from cargo build"
 
 # Copy Rust sysroot libs (std, core, alloc, etc.)
 SYSROOT=$(rustc --print sysroot)
@@ -98,6 +99,3 @@ EOF
 SIZE=$(du -sh "$DIST_DIR" | cut -f1)
 echo ""
 echo "Done! Toolchain built in $DIST_DIR ($SIZE)"
-echo ""
-echo "Contents:"
-ls "$DIST_DIR/libs" | wc -l | xargs echo "  Libraries:"
