@@ -3,6 +3,7 @@ members = [
     "crates/sage-types",
     "crates/sage-lexer",
     "crates/sage-parser",
+    "crates/sage-loader",
     "crates/sage-checker",
     "crates/sage-codegen",
     "crates/sage-runtime",

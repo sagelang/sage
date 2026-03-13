@@ -833,12 +833,17 @@ impl Checker {
     }
 
     fn validate_entry_agent(&mut self, program: &Program) {
-        let entry_name = &program.run_agent.name;
+        // If there's no run statement, this is a library module - no entry validation needed
+        let Some(run_agent) = &program.run_agent else {
+            return;
+        };
+
+        let entry_name = &run_agent.name;
 
         let Some(agent) = self.symbols.get_agent(entry_name).cloned() else {
             self.errors.push(CheckError::undefined_agent(
                 entry_name,
-                &program.run_agent.span,
+                &run_agent.span,
             ));
             return;
         };
@@ -847,7 +852,7 @@ impl Checker {
         if !agent.beliefs.is_empty() {
             self.errors.push(CheckError::entry_agent_has_beliefs(
                 entry_name,
-                &program.run_agent.span,
+                &run_agent.span,
             ));
         }
 
@@ -855,7 +860,7 @@ impl Checker {
         if !agent.has_start_handler {
             self.errors.push(CheckError::entry_agent_no_start(
                 entry_name,
-                &program.run_agent.span,
+                &run_agent.span,
             ));
         }
     }

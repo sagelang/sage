@@ -53,8 +53,10 @@ impl Generator {
             self.emit.blank_line();
         }
 
-        // Entry point
-        self.generate_main(&program.run_agent.name);
+        // Entry point (required for executables)
+        if let Some(run_agent) = &program.run_agent {
+            self.generate_main(&run_agent.name);
+        }
 
         std::mem::take(&mut self.emit).finish()
     }

@@ -10,26 +10,74 @@ use std::fmt;
 // Program (top-level)
 // =============================================================================
 
-/// A complete Sage program.
+/// A complete Sage program (or module).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
+    /// Module declarations (`mod foo`).
+    pub mod_decls: Vec<ModDecl>,
+    /// Use declarations (`use foo::Bar`).
+    pub use_decls: Vec<UseDecl>,
     /// Agent declarations.
     pub agents: Vec<AgentDecl>,
     /// Function declarations.
     pub functions: Vec<FnDecl>,
     /// The entry-point agent (from `run AgentName`).
-    pub run_agent: Ident,
+    /// None for library modules that don't have an entry point.
+    pub run_agent: Option<Ident>,
     /// Span covering the entire program.
     pub span: Span,
+}
+
+// =============================================================================
+// Module declarations
+// =============================================================================
+
+/// A module declaration: `mod name` or `pub mod name`
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModDecl {
+    /// Whether this module is public.
+    pub is_pub: bool,
+    /// The module name.
+    pub name: Ident,
+    /// Span covering the declaration.
+    pub span: Span,
+}
+
+/// A use declaration: `use path::to::Item`
+#[derive(Debug, Clone, PartialEq)]
+pub struct UseDecl {
+    /// Whether this is a public re-export (`pub use`).
+    pub is_pub: bool,
+    /// The path segments (e.g., `["agents", "Researcher"]`).
+    pub path: Vec<Ident>,
+    /// The kind of import.
+    pub kind: UseKind,
+    /// Span covering the declaration.
+    pub span: Span,
+}
+
+/// The kind of use declaration.
+#[derive(Debug, Clone, PartialEq)]
+pub enum UseKind {
+    /// Simple import: `use a::B` or `use a::B as C`
+    /// The Option is the alias (e.g., `C` in `use a::B as C`).
+    Simple(Option<Ident>),
+    /// Glob import: `use a::*`
+    Glob,
+    /// Group import: `use a::{B, C as D}`
+    /// Each tuple is (name, optional alias).
+    Group(Vec<(Ident, Option<Ident>)>),
 }
 
 // =============================================================================
 // Agent declarations
 // =============================================================================
 
-/// An agent declaration: `agent Name { ... }`
+/// An agent declaration: `agent Name { ... }` or `pub agent Name { ... }`
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentDecl {
+    /// Whether this agent is public (can be imported by other modules).
+    pub is_pub: bool,
     /// The agent's name.
     pub name: Ident,
     /// Belief declarations (agent state).
@@ -100,6 +148,8 @@ impl fmt::Display for EventKind {
 /// A function declaration: `fn name(params) -> ReturnType { ... }`
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnDecl {
+    /// Whether this function is public (can be imported by other modules).
+    pub is_pub: bool,
     /// The function's name.
     pub name: Ident,
     /// The function's parameters.

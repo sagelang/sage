@@ -79,6 +79,21 @@ pub enum Token {
     #[token("false")]
     KwFalse,
 
+    #[token("mod")]
+    KwMod,
+
+    #[token("use")]
+    KwUse,
+
+    #[token("pub")]
+    KwPub,
+
+    #[token("as")]
+    KwAs,
+
+    #[token("super")]
+    KwSuper,
+
     // =========================================================================
     // Type keywords
     // =========================================================================
@@ -155,6 +170,9 @@ pub enum Token {
 
     #[token(",")]
     Comma,
+
+    #[token("::")]
+    ColonColon,
 
     #[token(":")]
     Colon,
@@ -248,6 +266,11 @@ impl Token {
                 | Token::KwSelf
                 | Token::KwTrue
                 | Token::KwFalse
+                | Token::KwMod
+                | Token::KwUse
+                | Token::KwPub
+                | Token::KwAs
+                | Token::KwSuper
         )
     }
 
@@ -328,6 +351,11 @@ impl std::fmt::Display for Token {
             Token::KwSelf => write!(f, "self"),
             Token::KwTrue => write!(f, "true"),
             Token::KwFalse => write!(f, "false"),
+            Token::KwMod => write!(f, "mod"),
+            Token::KwUse => write!(f, "use"),
+            Token::KwPub => write!(f, "pub"),
+            Token::KwAs => write!(f, "as"),
+            Token::KwSuper => write!(f, "super"),
 
             // Type keywords
             Token::TyInt => write!(f, "Int"),
@@ -356,6 +384,7 @@ impl std::fmt::Display for Token {
             Token::LBracket => write!(f, "["),
             Token::RBracket => write!(f, "]"),
             Token::Comma => write!(f, ","),
+            Token::ColonColon => write!(f, "::"),
             Token::Colon => write!(f, ":"),
             Token::Dot => write!(f, "."),
             Token::Arrow => write!(f, "->"),
@@ -639,6 +668,53 @@ mod tests {
         assert!(Token::PlusPlus.is_operator());
         assert!(!Token::LBrace.is_operator());
         assert!(!Token::Ident.is_operator());
+    }
+
+    #[test]
+    fn lex_module_keywords() {
+        let mut lexer = Token::lexer("mod use pub as super");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwMod)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwUse)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwPub)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwAs)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwSuper)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn lex_path_separator() {
+        let mut lexer = Token::lexer("agents::Researcher");
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident)));
+        assert_eq!(lexer.slice(), "agents");
+        assert_eq!(lexer.next(), Some(Ok(Token::ColonColon)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident)));
+        assert_eq!(lexer.slice(), "Researcher");
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn lex_use_statement() {
+        let mut lexer = Token::lexer("use agents::{Researcher, Coordinator as Coord}");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwUse)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // agents
+        assert_eq!(lexer.next(), Some(Ok(Token::ColonColon)));
+        assert_eq!(lexer.next(), Some(Ok(Token::LBrace)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // Researcher
+        assert_eq!(lexer.next(), Some(Ok(Token::Comma)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // Coordinator
+        assert_eq!(lexer.next(), Some(Ok(Token::KwAs)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // Coord
+        assert_eq!(lexer.next(), Some(Ok(Token::RBrace)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn lex_pub_agent() {
+        let mut lexer = Token::lexer("pub agent Researcher");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwPub)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwAgent)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident)));
+        assert_eq!(lexer.next(), None);
     }
 
     #[test]
