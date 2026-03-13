@@ -51,6 +51,37 @@ while count < 5 {
 }
 ```
 
+## Infinite Loops
+
+Use `loop` for indefinite iteration, and `break` to exit:
+
+```sage
+loop {
+    let input = get_input();
+    if input == "quit" {
+        break;
+    }
+    process(input);
+}
+```
+
+This is particularly useful for agents that process messages:
+
+```sage
+agent Worker receives WorkerMsg {
+    on start {
+        loop {
+            let msg: WorkerMsg = receive();
+            match msg {
+                Shutdown => break,
+                Task => process_task(),
+            }
+        }
+        emit(0);
+    }
+}
+```
+
 ## Early Return
 
 Use `return` to exit a function early:

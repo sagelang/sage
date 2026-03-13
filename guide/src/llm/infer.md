@@ -52,17 +52,37 @@ let response: Inferred<String> = infer("Hello!");
 print(response);  // Works - Inferred<String> coerces to String
 ```
 
-## Type Safety
+## Structured Output
 
-Currently, `Inferred<String>` is the primary supported type. The LLM returns text, and you work with it as a string.
+`infer` can return any type, including user-defined records:
 
 ```sage
-// This works
-let text: Inferred<String> = infer("Respond with a number");
+record Summary {
+    title: String,
+    key_points: List<String>,
+    sentiment: String,
+}
 
-// Future: structured output
-// let data: Inferred<MyStruct> = infer("...");
+agent Analyzer {
+    topic: String
+
+    on start {
+        let result: Inferred<Summary> = infer(
+            "Analyze this topic and provide a structured summary: {self.topic}"
+        );
+        print("Title: " ++ result.title);
+        print("Sentiment: " ++ result.sentiment);
+        emit(result);
+    }
+}
 ```
+
+The runtime automatically:
+1. Injects the expected schema into the prompt
+2. Parses the LLM's response as JSON
+3. Retries with error feedback if parsing fails (configurable via `SAGE_INFER_RETRIES`)
+
+This works with any OpenAI-compatible API, including Ollama.
 
 ## Error Handling
 

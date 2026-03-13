@@ -4,37 +4,39 @@ Beliefs are an agent's private state. They're initialized when the agent is spaw
 
 ## Declaring Beliefs
 
+Agent state uses record-style field declarations:
+
 ```sage
 agent Person {
-    belief name: String
-    belief age: Int
+    name: String
+    age: Int
 }
 ```
 
-Beliefs must have explicit type annotations.
+Fields must have explicit type annotations.
 
 ## Initializing Beliefs
 
-When spawning an agent, provide values for all beliefs:
+When spawning an agent, provide values for all fields:
 
 ```sage
 let p = spawn Person { name: "Alice", age: 30 };
 ```
 
-Missing beliefs cause a compile error:
+Missing fields cause a compile error:
 
 ```sage
-// Error: missing belief `age` in spawn
+// Error: missing field `age` in spawn
 let p = spawn Person { name: "Alice" };
 ```
 
 ## Accessing Beliefs
 
-Use `self.beliefName` inside the agent:
+Use `self.fieldName` inside the agent:
 
 ```sage
 agent Greeter {
-    belief name: String
+    name: String
 
     on start {
         print("Hello, " ++ self.name ++ "!");
@@ -49,7 +51,7 @@ Beliefs cannot be reassigned after initialization:
 
 ```sage
 agent Counter {
-    belief count: Int
+    count: Int
 
     on start {
         // This won't work — beliefs are immutable
@@ -70,7 +72,7 @@ The entry agent (the one in `run`) cannot have required beliefs:
 ```sage
 // Error: entry agent cannot have required beliefs
 agent Main {
-    belief config: String
+    config: String
 
     on start {
         emit(0);
@@ -86,8 +88,8 @@ Use beliefs to configure agent behavior:
 
 ```sage
 agent Fetcher {
-    belief url: String
-    belief timeout: Int
+    url: String
+    timeout: Int
 
     on start {
         // Use self.url and self.timeout
@@ -113,19 +115,4 @@ agent Main {
 }
 
 run Main;
-```
-
-## Unused Belief Warning
-
-The compiler warns about beliefs that are never accessed:
-
-```sage
-agent Example {
-    belief used: Int
-    belief unused: String  // Warning: unused belief `unused`
-
-    on start {
-        emit(self.used);
-    }
-}
 ```

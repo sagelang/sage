@@ -24,13 +24,95 @@ let names: List<String> = ["Alice", "Bob"];
 let empty: List<Int> = [];
 ```
 
-### Option\<T\>
+## User-Defined Types
 
-Represents an optional value (not yet fully implemented):
+### Records
+
+Define structured data with named fields:
 
 ```sage
-let some: Option<Int> = some(42);
-let none: Option<Int> = none;
+record Point {
+    x: Int,
+    y: Int,
+}
+
+record Person {
+    name: String,
+    age: Int,
+}
+```
+
+Construct records and access fields:
+
+```sage
+let p = Point { x: 10, y: 20 };
+let sum = p.x + p.y;
+
+let person = Person { name: "Alice", age: 30 };
+print(person.name);
+```
+
+### Enums
+
+Define types with a fixed set of variants:
+
+```sage
+enum Status {
+    Active,
+    Inactive,
+    Pending,
+}
+
+enum Direction {
+    North,
+    South,
+    East,
+    West,
+}
+```
+
+Use enum variants directly:
+
+```sage
+let s = Active;
+let d = North;
+```
+
+### Match Expressions
+
+Pattern match on enums and other values:
+
+```sage
+fn describe(s: Status) -> String {
+    return match s {
+        Active => "running",
+        Inactive => "stopped",
+        Pending => "waiting",
+    };
+}
+```
+
+Match on integers with a wildcard:
+
+```sage
+fn classify(n: Int) -> String {
+    return match n {
+        0 => "zero",
+        1 => "one",
+        _ => "many",
+    };
+}
+```
+
+The compiler checks that all variants are covered (exhaustiveness checking).
+
+### Constants
+
+Define compile-time constants:
+
+```sage
+const MAX_RETRIES: Int = 3;
+const DEFAULT_NAME: String = "anonymous";
 ```
 
 ## Agent Types

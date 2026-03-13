@@ -1,93 +1,170 @@
 # Messaging
 
-Agents can communicate by sending messages to each other.
+Agents can receive typed messages from other agents using the actor model pattern.
 
-## send
+## The `receives` Clause
 
-Sends a message to another agent:
-
-```sage
-send(agent_handle, message);
-```
-
-Example:
+An agent declares what type of messages it accepts using the `receives` clause:
 
 ```sage
-agent Receiver {
-    on start {
-        // Start and wait for messages
-    }
-
-    on message(text: String) {
-        print("Received: " ++ text);
-    }
+enum WorkerMsg {
+    Task,
+    Ping,
+    Shutdown,
 }
 
-agent Sender {
+agent Worker receives WorkerMsg {
+    id: Int
+
     on start {
-        let r = spawn Receiver {};
-        send(r, "Hello!");
-        send(r, "World!");
+        // This agent can now receive WorkerMsg messages
+        emit(0);
+    }
+}
+```
+
+Agents without a `receives` clause are pure spawn/await agents and cannot receive messages.
+
+## The `receive()` Expression
+
+Inside an agent with a `receives` clause, use `receive()` to wait for a message:
+
+```sage
+agent Worker receives WorkerMsg {
+    id: Int
+
+    on start {
+        let msg: WorkerMsg = receive();
+        match msg {
+            Task => print("Got a task"),
+            Ping => print("Pinged"),
+            Shutdown => print("Shutting down"),
+        }
+        emit(0);
+    }
+}
+```
+
+`receive()` blocks until a message arrives in the agent's mailbox.
+
+## The `send()` Function
+
+Send a message to a running agent using its handle:
+
+```sage
+agent Main {
+    on start {
+        let w = spawn Worker { id: 1 };
+        send(w, Task);
+        send(w, Shutdown);
+        await w;
+        emit(0);
+    }
+}
+```
+
+`send` is fire-and-forget — it queues the message and returns immediately.
+
+## Long-Running Agents with `loop`
+
+Combine `receive()` with `loop` for agents that process multiple messages:
+
+```sage
+agent Worker receives WorkerMsg {
+    id: Int
+
+    on start {
+        loop {
+            let msg: WorkerMsg = receive();
+            match msg {
+                Task => {
+                    let result: Inferred<String> = infer("Process a task");
+                    print("Worker {self.id}: {result}");
+                }
+                Ping => {
+                    print("Worker {self.id} is alive");
+                }
+                Shutdown => {
+                    break;
+                }
+            }
+        }
+        emit(0);
+    }
+}
+```
+
+## Complete Example: Worker Pool
+
+```sage
+enum WorkerMsg {
+    Task,
+    Shutdown,
+}
+
+agent Worker receives WorkerMsg {
+    id: Int
+
+    on start {
+        loop {
+            let msg: WorkerMsg = receive();
+            match msg {
+                Task => {
+                    let result: Inferred<String> = infer("Summarise something interesting");
+                    print("Worker {self.id}: {result}");
+                }
+                Shutdown => {
+                    break;
+                }
+            }
+        }
         emit(0);
     }
 }
 
-run Sender;
-```
+agent Coordinator {
+    on start {
+        let w1 = spawn Worker { id: 1 };
+        let w2 = spawn Worker { id: 2 };
 
-## Message Types
+        // Distribute tasks
+        send(w1, Task);
+        send(w2, Task);
+        send(w1, Task);
+        send(w2, Task);
 
-Messages can be any type:
+        // Shut down workers
+        send(w1, Shutdown);
+        send(w2, Shutdown);
 
-```sage
-agent NumberReceiver {
-    on message(n: Int) {
-        print("Got number: " ++ str(n));
+        // Wait for completion
+        await w1;
+        await w2;
+
+        emit(0);
     }
 }
 
-agent ListReceiver {
-    on message(items: List<String>) {
-        for item in items {
-            print(item);
-        }
-    }
-}
+run Coordinator;
 ```
 
 ## Type Safety
 
-The message type must match the handler's expected type:
+The compiler ensures type safety:
 
 ```sage
-agent Worker {
-    on message(n: Int) {
-        print(str(n));
-    }
-}
-
-agent Main {
+agent Worker receives WorkerMsg {
     on start {
-        let w = spawn Worker {};
-        send(w, 42);       // OK
-        send(w, "hello");  // Error: expected Int, got String
+        let msg: WorkerMsg = receive();
         emit(0);
     }
 }
-```
 
-## Fire and Forget
-
-`send` is asynchronous — it doesn't wait for the message to be processed:
-
-```sage
 agent Main {
     on start {
         let w = spawn Worker {};
-        send(w, "message 1");  // Returns immediately
-        send(w, "message 2");  // Returns immediately
-        send(w, "message 3");  // Returns immediately
-        // All three messages are queued
+        send(w, Task);       // OK - Task is a WorkerMsg variant
+        send(w, "hello");    // Error: expected WorkerMsg, got String
         emit(0);
     }
 }
@@ -95,49 +172,21 @@ agent Main {
 
 ## Messaging vs Awaiting
 
-| | `await` | `send` |
-|---|---------|--------|
-| Direction | Get result from agent | Send data to agent |
-| Blocking | Yes, waits for result | No, returns immediately |
-| Use case | Get final result | Ongoing communication |
+| | `await` | `send` / `receive` |
+|---|---------|---------------------|
+| Direction | Get final result from agent | Ongoing communication |
+| Blocking | Yes, waits for agent to complete | `send` returns immediately, `receive` blocks until message arrives |
+| Use case | One-shot tasks | Long-running workers, event loops |
 
-## Example: Accumulator
+## Mailbox Semantics
 
-```sage
-agent Accumulator {
-    belief initial: Int
-
-    on start {
-        // Just start - actual work in message handler
-    }
-
-    on message(n: Int) {
-        // Note: beliefs are immutable, so this pattern
-        // requires a different approach in practice
-        print("Adding: " ++ str(n));
-    }
-}
-
-agent Main {
-    on start {
-        let acc = spawn Accumulator { initial: 0 };
-
-        send(acc, 10);
-        send(acc, 20);
-        send(acc, 30);
-
-        sleep_ms(100);  // Give time for messages to process
-        emit(0);
-    }
-}
-
-run Main;
-```
+- Each agent has a **bounded mailbox** (128 messages by default)
+- When the mailbox is full, `send` blocks until space opens (backpressure)
+- Messages from a single sender arrive in order
+- Messages from multiple senders are interleaved (no global ordering)
 
 ## Current Limitations
 
-- No way to get a response to a message (use `spawn`/`await` instead)
-- No message ordering guarantees between different senders
-- No acknowledgment of message delivery
-
-For request-response patterns, spawn a new agent and await its result instead of using messaging.
+- No `receive_timeout` in the language yet (available in runtime)
+- No broadcast channels (one-to-many messaging)
+- Error handling for closed channels needs its own RFC

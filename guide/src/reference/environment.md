@@ -56,6 +56,14 @@ Request timeout in milliseconds. Default: `30000` (30 seconds)
 export SAGE_TIMEOUT_MS="60000"
 ```
 
+### SAGE_INFER_RETRIES
+
+Maximum retries for structured output parsing. When `infer` returns a type other than `String`, the runtime parses the LLM's response as JSON. If parsing fails, it retries with error feedback. Default: `3`
+
+```bash
+export SAGE_INFER_RETRIES="5"
+```
+
 ## Compiler Configuration
 
 ### SAGE_TOOLCHAIN
