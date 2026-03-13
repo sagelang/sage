@@ -163,14 +163,26 @@ Following Rust conventions:
 
 ### Prerequisites
 
-**macOS:** Xcode Command Line Tools (for linking)
+Sage requires a C linker and OpenSSL headers (Rust is **not** required).
+
+**macOS:**
 ```bash
 xcode-select --install
 ```
 
-**Linux (Debian/Ubuntu):**
+**Debian/Ubuntu:**
 ```bash
 sudo apt install gcc libssl-dev
+```
+
+**Fedora/RHEL:**
+```bash
+sudo dnf install gcc openssl-devel
+```
+
+**Arch:**
+```bash
+sudo pacman -S gcc openssl
 ```
 
 ### Quick Install
