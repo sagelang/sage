@@ -92,7 +92,17 @@ impl Generator {
 
         // Entry point (required for executables)
         if let Some(run_agent) = &program.run_agent {
-            self.generate_main(&run_agent.name);
+            // RFC-0007: Check if entry agent has an error handler
+            let has_error_handler = program
+                .agents
+                .iter()
+                .find(|a| a.name.name == run_agent.name)
+                .map_or(false, |a| {
+                    a.handlers
+                        .iter()
+                        .any(|h| matches!(h.event, EventKind::Error { .. }))
+                });
+            self.generate_main(&run_agent.name, has_error_handler);
         }
 
         std::mem::take(&mut self.emit).finish()
@@ -178,7 +188,18 @@ impl Generator {
 
             // Entry point (only in root module)
             if let Some(run_agent) = &root_module.program.run_agent {
-                self.generate_main(&run_agent.name);
+                // RFC-0007: Check if entry agent has an error handler
+                let has_error_handler = root_module
+                    .program
+                    .agents
+                    .iter()
+                    .find(|a| a.name.name == run_agent.name)
+                    .map_or(false, |a| {
+                        a.handlers
+                            .iter()
+                            .any(|h| matches!(h.event, EventKind::Error { .. }))
+                    });
+                self.generate_main(&run_agent.name, has_error_handler);
             }
         }
 
@@ -275,7 +296,16 @@ serde_json = "1"
         }
 
         self.emit.write(") -> ");
-        self.emit_type(&func.return_ty);
+
+        // RFC-0007: Wrap return type in SageResult if fallible
+        if func.is_fallible {
+            self.emit.write("SageResult<");
+            self.emit_type(&func.return_ty);
+            self.emit.write(">");
+        } else {
+            self.emit_type(&func.return_ty);
+        }
+
         self.emit.write(" ");
         self.generate_block(&func.body);
     }
@@ -316,17 +346,37 @@ serde_json = "1"
 
         // Generate handlers
         for handler in &agent.handlers {
-            if let EventKind::Start = &handler.event {
-                self.emit
-                    .write("async fn on_start(self, ctx: AgentContext<");
-                self.emit.write(&output_type);
-                self.emit.write(">) -> SageResult<");
-                self.emit.write(&output_type);
-                self.emit.writeln("> {");
-                self.emit.indent();
-                self.generate_block_contents(&handler.body);
-                self.emit.dedent();
-                self.emit.writeln("}");
+            match &handler.event {
+                EventKind::Start => {
+                    self.emit
+                        .write("async fn on_start(self, ctx: AgentContext<");
+                    self.emit.write(&output_type);
+                    self.emit.write(">) -> SageResult<");
+                    self.emit.write(&output_type);
+                    self.emit.writeln("> {");
+                    self.emit.indent();
+                    self.generate_block_contents(&handler.body);
+                    self.emit.dedent();
+                    self.emit.writeln("}");
+                }
+
+                // RFC-0007: Generate on_error handler
+                EventKind::Error { param_name } => {
+                    self.emit.write("async fn on_error(self, ");
+                    self.emit.write(&param_name.name);
+                    self.emit.write(": SageError, ctx: AgentContext<");
+                    self.emit.write(&output_type);
+                    self.emit.write(">) -> SageResult<");
+                    self.emit.write(&output_type);
+                    self.emit.writeln("> {");
+                    self.emit.indent();
+                    self.generate_block_contents(&handler.body);
+                    self.emit.dedent();
+                    self.emit.writeln("}");
+                }
+
+                // Other handlers (message, stop) - future work
+                _ => {}
             }
         }
 
@@ -334,15 +384,35 @@ serde_json = "1"
         self.emit.writeln("}");
     }
 
-    fn generate_main(&mut self, entry_agent: &str) {
+    fn generate_main(&mut self, entry_agent: &str, has_error_handler: bool) {
         self.emit.writeln("#[tokio::main]");
         self.emit
             .writeln("async fn main() -> Result<(), Box<dyn std::error::Error>> {");
         self.emit.indent();
 
-        self.emit.write("let handle = sage_runtime::spawn(|ctx| ");
-        self.emit.write(entry_agent);
-        self.emit.writeln(".on_start(ctx));");
+        if has_error_handler {
+            // RFC-0007: Generate error dispatch code
+            self.emit
+                .writeln("let handle = sage_runtime::spawn(|ctx| async move {");
+            self.emit.indent();
+            self.emit.write("match ");
+            self.emit.write(entry_agent);
+            self.emit.writeln(".on_start(ctx.clone()).await {");
+            self.emit.indent();
+            self.emit.writeln("Ok(result) => Ok(result),");
+            self.emit.write("Err(e) => ");
+            self.emit.write(entry_agent);
+            self.emit.writeln(".on_error(e, ctx).await,");
+            self.emit.dedent();
+            self.emit.writeln("}");
+            self.emit.dedent();
+            self.emit.writeln("});");
+        } else {
+            self.emit.write("let handle = sage_runtime::spawn(|ctx| ");
+            self.emit.write(entry_agent);
+            self.emit.writeln(".on_start(ctx));");
+        }
+
         self.emit.writeln("let result = handle.result().await?;");
         self.emit.writeln("println!(\"{:?}\", result);");
         self.emit.writeln("Ok(())");
@@ -665,6 +735,43 @@ serde_json = "1"
             Expr::Receive { .. } => {
                 self.emit.write("ctx.receive().await?");
             }
+
+            // RFC-0007: Error handling
+            Expr::Try { expr, .. } => {
+                // Generate the inner expression with ? for error propagation
+                self.generate_expr(expr);
+                self.emit.write("?");
+            }
+
+            Expr::Catch {
+                expr,
+                error_bind,
+                recovery,
+                ..
+            } => {
+                // Generate a match expression to handle the Result
+                self.emit.write("match ");
+                self.generate_expr(expr);
+                self.emit.writeln(" {");
+                self.emit.indent();
+
+                // Ok arm - unwrap the value
+                self.emit.writeln("Ok(__val) => __val,");
+
+                // Err arm - run recovery
+                if let Some(err_name) = error_bind {
+                    self.emit.write("Err(");
+                    self.emit.write(&err_name.name);
+                    self.emit.write(") => ");
+                } else {
+                    self.emit.write("Err(_) => ");
+                }
+                self.generate_expr(recovery);
+                self.emit.writeln(",");
+
+                self.emit.dedent();
+                self.emit.write("}");
+            }
         }
     }
 
@@ -788,6 +895,11 @@ serde_json = "1"
             }
             TypeExpr::Named(name) => {
                 self.emit.write(&name.name);
+            }
+
+            // RFC-0007: Error handling
+            TypeExpr::Error => {
+                self.emit.write("sage_runtime::SageError");
             }
         }
     }
@@ -1189,5 +1301,104 @@ run Main;
         assert!(output.contains("match s {"));
         assert!(output.contains("Active => 1_i64,"));
         assert!(output.contains("Inactive => 0_i64,"));
+    }
+
+    // =========================================================================
+    // RFC-0007: Error handling codegen tests
+    // =========================================================================
+
+    #[test]
+    fn generate_fallible_function() {
+        let source = r#"
+            fn get_data(url: String) -> String fails {
+                return url;
+            }
+            agent Main {
+                on start { emit(0); }
+            }
+            run Main;
+        "#;
+
+        let output = generate_source(source);
+        // Fallible function should return SageResult<T>
+        assert!(output.contains("fn get_data(url: String) -> SageResult<String>"));
+    }
+
+    #[test]
+    fn generate_try_expression() {
+        let source = r#"
+            fn fallible() -> Int fails { return 42; }
+            fn caller() -> Int fails {
+                let x = try fallible();
+                return x;
+            }
+            agent Main {
+                on start { emit(0); }
+            }
+            run Main;
+        "#;
+
+        let output = generate_source(source);
+        // try should generate ? operator
+        assert!(output.contains("fallible()?"));
+    }
+
+    #[test]
+    fn generate_catch_expression() {
+        let source = r#"
+            fn fallible() -> Int fails { return 42; }
+            agent Main {
+                on start {
+                    let x = fallible() catch { 0 };
+                    emit(x);
+                }
+            }
+            run Main;
+        "#;
+
+        let output = generate_source(source);
+        // catch should generate match expression
+        assert!(output.contains("match fallible()"));
+        assert!(output.contains("Ok(__val) => __val"));
+        assert!(output.contains("Err(_) => 0_i64"));
+    }
+
+    #[test]
+    fn generate_catch_with_binding() {
+        let source = r#"
+            fn fallible() -> Int fails { return 42; }
+            agent Main {
+                on start {
+                    let x = fallible() catch(e) { 0 };
+                    emit(x);
+                }
+            }
+            run Main;
+        "#;
+
+        let output = generate_source(source);
+        // catch with binding should capture the error
+        assert!(output.contains("Err(e) => 0_i64"));
+    }
+
+    #[test]
+    fn generate_on_error_handler() {
+        let source = r#"
+            agent Main {
+                on start {
+                    emit(0);
+                }
+                on error(e) {
+                    emit(1);
+                }
+            }
+            run Main;
+        "#;
+
+        let output = generate_source(source);
+        // Should generate on_error method
+        assert!(output.contains("async fn on_error(self, e: SageError"));
+        // Main should dispatch to on_error on failure
+        assert!(output.contains(".on_error(e, ctx)"));
     }
 }

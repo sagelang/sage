@@ -1,7 +1,9 @@
 //! Project manifest (sage.toml) parsing.
 
 use crate::error::LoadError;
+use sage_package::{parse_dependencies, DependencySpec};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// A Sage project manifest (sage.toml).
@@ -56,6 +58,16 @@ impl ProjectManifest {
                 return None;
             }
         }
+    }
+
+    /// Check if the project has any dependencies declared.
+    pub fn has_dependencies(&self) -> bool {
+        !self.dependencies.is_empty()
+    }
+
+    /// Parse the dependencies table into structured specs.
+    pub fn parse_dependencies(&self) -> Result<HashMap<String, DependencySpec>, LoadError> {
+        parse_dependencies(&self.dependencies).map_err(|e| LoadError::PackageError { source: e })
     }
 }
 

@@ -39,6 +39,8 @@ pub struct FunctionInfo {
     pub is_pub: bool,
     /// The module path where this function is defined.
     pub module_path: ModulePath,
+    /// RFC-0007: Whether this function can fail (has `fails` annotation).
+    pub is_fallible: bool,
 }
 
 /// Information about a built-in function.
@@ -380,6 +382,9 @@ pub fn resolve_type(ty: &TypeExpr) -> Type {
             // We return Type::Named and let the checker validate
             Type::Named(ident.name.clone())
         }
+
+        // RFC-0007: Error type - TODO: proper error type in type checker
+        TypeExpr::Error => Type::Named("Error".to_string()),
     }
 }
 

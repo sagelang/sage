@@ -6,7 +6,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use miette::{Diagnostic, IntoDiagnostic, Result, Severity, WrapErr};
 use sage_checker::check_module_tree;
 use sage_codegen::generate_module_tree;
-use sage_loader::{load_project, ModuleTree};
+use sage_loader::{load_project, load_project_with_packages, ModuleTree};
+use sage_package::{LockFile, PackageCache};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
@@ -16,6 +17,8 @@ static SPARKLES: Emoji<'_, '_> = Emoji("✨ ", "* ");
 static GEAR: Emoji<'_, '_> = Emoji("⚙️  ", "> ");
 static CHECK: Emoji<'_, '_> = Emoji("✓ ", "v ");
 static ROCKET: Emoji<'_, '_> = Emoji("🚀 ", ">> ");
+static PACKAGE: Emoji<'_, '_> = Emoji("📦 ", "+ ");
+static TRASH: Emoji<'_, '_> = Emoji("🗑️  ", "- ");
 
 /// Ward the owl - Sage's mascot
 const WARD_ASCII: &str = r#"
@@ -38,7 +41,7 @@ struct Cli {
 enum Commands {
     /// Compile and run a Sage program
     Run {
-        /// Path to the .sg file to run
+        /// Path to the .sg file or project directory
         file: PathBuf,
 
         /// Build in release mode
@@ -52,7 +55,7 @@ enum Commands {
 
     /// Compile a Sage program to a native binary
     Build {
-        /// Path to the .sg file to compile
+        /// Path to the .sg file or project directory
         file: PathBuf,
 
         /// Build in release mode
@@ -70,9 +73,67 @@ enum Commands {
 
     /// Check a Sage program for errors without running it
     Check {
-        /// Path to the .sg file to check
+        /// Path to the .sg file or project directory
         file: PathBuf,
     },
+
+    /// Add a package dependency
+    Add {
+        /// Package name
+        package: String,
+
+        /// Git repository URL
+        #[arg(long)]
+        git: String,
+
+        /// Git tag (e.g., v1.0.0)
+        #[arg(long, conflicts_with_all = ["branch", "rev"])]
+        tag: Option<String>,
+
+        /// Git branch (e.g., main)
+        #[arg(long, conflicts_with_all = ["tag", "rev"])]
+        branch: Option<String>,
+
+        /// Git revision (full or short SHA)
+        #[arg(long, conflicts_with_all = ["tag", "branch"])]
+        rev: Option<String>,
+    },
+
+    /// Remove a package dependency
+    Remove {
+        /// Package name to remove
+        package: String,
+    },
+
+    /// Install dependencies from sage.toml
+    Install,
+
+    /// Update dependencies
+    Update {
+        /// Specific package to update (updates all if not specified)
+        package: Option<String>,
+    },
+
+    /// Manage the package cache
+    Cache {
+        #[command(subcommand)]
+        action: CacheAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum CacheAction {
+    /// List cached packages
+    List,
+
+    /// Remove a package from the cache
+    Remove {
+        /// Package name to remove
+        package: String,
+    },
+
+    /// Clear the entire cache
+    Clean,
 }
 
 fn main() -> Result<()> {
@@ -97,6 +158,21 @@ fn main() -> Result<()> {
             Ok(())
         }
         Commands::Check { file } => check_file(&file),
+        Commands::Add {
+            package,
+            git,
+            tag,
+            branch,
+            rev,
+        } => cmd_add(&package, &git, tag, branch, rev),
+        Commands::Remove { package } => cmd_remove(&package),
+        Commands::Install => cmd_install(),
+        Commands::Update { package } => cmd_update(package.as_deref()),
+        Commands::Cache { action } => match action {
+            CacheAction::List => cmd_cache_list(),
+            CacheAction::Remove { package } => cmd_cache_remove(&package),
+            CacheAction::Clean => cmd_cache_clean(),
+        },
     }
 }
 
@@ -395,9 +471,13 @@ fn build_file(
         None
     };
 
-    // Load the project/file
-    let module_tree = match load_project(path) {
-        Ok(tree) => tree,
+    // Load the project/file with package resolution
+    if let Some(ref sp) = spinner {
+        sp.set_message("Resolving packages...");
+    }
+
+    let (module_tree, installed_packages) = match load_project_with_packages(path) {
+        Ok(result) => result,
         Err(errors) => {
             if let Some(sp) = spinner {
                 sp.finish_and_clear();
@@ -408,6 +488,12 @@ fn build_file(
             miette::bail!("Failed to load {}", display_name);
         }
     };
+
+    if installed_packages && !quiet {
+        if let Some(ref sp) = spinner {
+            sp.set_message("Packages installed, loading...");
+        }
+    }
 
     if let Some(ref sp) = spinner {
         sp.set_message("Type checking...");
@@ -532,4 +618,299 @@ fn build_file(
     }
 
     Ok(Some(binary_path))
+}
+
+// =============================================================================
+// Package management commands
+// =============================================================================
+
+/// Add a package dependency to sage.toml.
+fn cmd_add(
+    package: &str,
+    git: &str,
+    tag: Option<String>,
+    branch: Option<String>,
+    rev: Option<String>,
+) -> Result<()> {
+    // Validate exactly one ref type
+    let ref_count = [&tag, &branch, &rev].iter().filter(|x| x.is_some()).count();
+    if ref_count != 1 {
+        miette::bail!("Specify exactly one of --tag, --branch, or --rev");
+    }
+
+    // Find or create sage.toml
+    let manifest_path = PathBuf::from("sage.toml");
+    if !manifest_path.exists() {
+        miette::bail!("No sage.toml found. Run this command from a Sage project directory.");
+    }
+
+    // Read and parse the manifest
+    let contents = std::fs::read_to_string(&manifest_path)
+        .into_diagnostic()
+        .wrap_err("Failed to read sage.toml")?;
+
+    let mut doc = contents
+        .parse::<toml_edit::DocumentMut>()
+        .into_diagnostic()
+        .wrap_err("Failed to parse sage.toml")?;
+
+    // Ensure [dependencies] table exists
+    if doc.get("dependencies").is_none() {
+        doc["dependencies"] = toml_edit::Item::Table(toml_edit::Table::new());
+    }
+
+    // Build the dependency entry
+    let mut dep_table = toml_edit::InlineTable::new();
+    dep_table.insert("git", git.into());
+    if let Some(t) = &tag {
+        dep_table.insert("tag", t.as_str().into());
+    }
+    if let Some(b) = &branch {
+        dep_table.insert("branch", b.as_str().into());
+    }
+    if let Some(r) = &rev {
+        dep_table.insert("rev", r.as_str().into());
+    }
+
+    doc["dependencies"][package] = toml_edit::value(dep_table);
+
+    // Write back
+    std::fs::write(&manifest_path, doc.to_string())
+        .into_diagnostic()
+        .wrap_err("Failed to write sage.toml")?;
+
+    let ref_type = if tag.is_some() {
+        "tag"
+    } else if branch.is_some() {
+        "branch"
+    } else {
+        "rev"
+    };
+    let ref_val = tag.or(branch).or(rev).unwrap();
+
+    println!(
+        "{}Added {} ({} = {})",
+        PACKAGE,
+        style(package).green().bold(),
+        ref_type,
+        style(&ref_val).yellow()
+    );
+    println!();
+    println!(
+        "{}Run {} to install",
+        style("  hint: ").dim(),
+        style("sage install").cyan()
+    );
+
+    Ok(())
+}
+
+/// Remove a package dependency from sage.toml.
+fn cmd_remove(package: &str) -> Result<()> {
+    let manifest_path = PathBuf::from("sage.toml");
+    if !manifest_path.exists() {
+        miette::bail!("No sage.toml found.");
+    }
+
+    let contents = std::fs::read_to_string(&manifest_path)
+        .into_diagnostic()
+        .wrap_err("Failed to read sage.toml")?;
+
+    let mut doc = contents
+        .parse::<toml_edit::DocumentMut>()
+        .into_diagnostic()
+        .wrap_err("Failed to parse sage.toml")?;
+
+    // Check if package exists
+    let deps = doc.get_mut("dependencies").and_then(|d| d.as_table_mut());
+    if let Some(deps) = deps {
+        if deps.remove(package).is_some() {
+            std::fs::write(&manifest_path, doc.to_string())
+                .into_diagnostic()
+                .wrap_err("Failed to write sage.toml")?;
+
+            println!("{}Removed {}", TRASH, style(package).red().bold());
+            return Ok(());
+        }
+    }
+
+    miette::bail!("Package '{}' not found in dependencies", package);
+}
+
+/// Install dependencies from sage.toml.
+fn cmd_install() -> Result<()> {
+    use sage_loader::ProjectManifest;
+    use sage_package::{install_from_lock, resolve_dependencies};
+
+    let manifest_path = PathBuf::from("sage.toml");
+    if !manifest_path.exists() {
+        miette::bail!("No sage.toml found.");
+    }
+
+    let manifest = ProjectManifest::load(&manifest_path).map_err(|e| miette::miette!("{}", e))?;
+
+    let deps = manifest
+        .parse_dependencies()
+        .map_err(|e| miette::miette!("{}", e))?;
+
+    if deps.is_empty() {
+        println!("{}No dependencies to install", style("  ").dim());
+        return Ok(());
+    }
+
+    println!("{}Installing dependencies...", GEAR);
+
+    let project_root = PathBuf::from(".");
+    let lock_path = project_root.join("sage.lock");
+
+    let resolved = if lock_path.exists() {
+        let lock = LockFile::load(&lock_path).map_err(|e| miette::miette!("{}", e))?;
+        if sage_package::check_lock_freshness(&deps, &lock) {
+            // Use existing lock
+            println!("  Using existing sage.lock");
+            install_from_lock(&lock).map_err(|e| miette::miette!("{}", e))?;
+            lock.packages.len()
+        } else {
+            // Re-resolve
+            println!("  Lock file outdated, resolving...");
+            let result = resolve_dependencies(&project_root, &deps, Some(&lock))
+                .map_err(|e| miette::miette!("{}", e))?;
+            result.packages.len()
+        }
+    } else {
+        // Fresh resolve
+        println!("  Resolving dependencies...");
+        let result = resolve_dependencies(&project_root, &deps, None)
+            .map_err(|e| miette::miette!("{}", e))?;
+        result.packages.len()
+    };
+
+    println!();
+    println!(
+        "{}Installed {} package{}",
+        SPARKLES,
+        style(resolved).green().bold(),
+        if resolved == 1 { "" } else { "s" }
+    );
+
+    Ok(())
+}
+
+/// Update dependencies.
+fn cmd_update(package: Option<&str>) -> Result<()> {
+    use sage_loader::ProjectManifest;
+    use sage_package::resolve_dependencies;
+
+    let manifest_path = PathBuf::from("sage.toml");
+    if !manifest_path.exists() {
+        miette::bail!("No sage.toml found.");
+    }
+
+    let manifest = ProjectManifest::load(&manifest_path).map_err(|e| miette::miette!("{}", e))?;
+
+    let deps = manifest
+        .parse_dependencies()
+        .map_err(|e| miette::miette!("{}", e))?;
+
+    if deps.is_empty() {
+        println!("{}No dependencies to update", style("  ").dim());
+        return Ok(());
+    }
+
+    if let Some(pkg) = package {
+        if !deps.contains_key(pkg) {
+            miette::bail!("Package '{}' not found in dependencies", pkg);
+        }
+        println!("{}Updating {}...", GEAR, style(pkg).yellow());
+    } else {
+        println!("{}Updating all dependencies...", GEAR);
+    }
+
+    let project_root = PathBuf::from(".");
+
+    // Always resolve fresh for updates (ignore existing lock)
+    let result =
+        resolve_dependencies(&project_root, &deps, None).map_err(|e| miette::miette!("{}", e))?;
+
+    println!();
+    println!(
+        "{}Updated {} package{}",
+        SPARKLES,
+        style(result.packages.len()).green().bold(),
+        if result.packages.len() == 1 { "" } else { "s" }
+    );
+
+    Ok(())
+}
+
+/// List cached packages.
+fn cmd_cache_list() -> Result<()> {
+    let cache = PackageCache::new().map_err(|e| miette::miette!("{}", e))?;
+    let packages = cache.list().map_err(|e| miette::miette!("{}", e))?;
+
+    if packages.is_empty() {
+        println!("{}No packages cached", style("  ").dim());
+        return Ok(());
+    }
+
+    println!("{}Cached packages:", PACKAGE);
+    println!();
+
+    for (name, rev, path) in &packages {
+        println!(
+            "  {} {} {}",
+            style(name).green(),
+            style(format!("({})", &rev[..rev.len().min(8)])).dim(),
+            style(path.display()).dim()
+        );
+    }
+
+    let size = cache.size().unwrap_or(0);
+    let size_mb = size as f64 / 1024.0 / 1024.0;
+    println!();
+    println!(
+        "{}Total: {} packages, {:.1} MB",
+        style("  ").dim(),
+        packages.len(),
+        size_mb
+    );
+
+    Ok(())
+}
+
+/// Remove a package from the cache.
+fn cmd_cache_remove(package: &str) -> Result<()> {
+    let cache = PackageCache::new().map_err(|e| miette::miette!("{}", e))?;
+    cache
+        .remove(package)
+        .map_err(|e| miette::miette!("{}", e))?;
+
+    println!(
+        "{}Removed {} from cache",
+        TRASH,
+        style(package).red().bold()
+    );
+
+    Ok(())
+}
+
+/// Clear the entire package cache.
+fn cmd_cache_clean() -> Result<()> {
+    let cache = PackageCache::new().map_err(|e| miette::miette!("{}", e))?;
+    let size_before = cache.size().unwrap_or(0);
+    let packages = cache.list().map_err(|e| miette::miette!("{}", e))?;
+    let count = packages.len();
+
+    cache.clean().map_err(|e| miette::miette!("{}", e))?;
+
+    let size_mb = size_before as f64 / 1024.0 / 1024.0;
+    println!(
+        "{}Cleared {} package{} ({:.1} MB)",
+        TRASH,
+        count,
+        if count == 1 { "" } else { "s" },
+        size_mb
+    );
+
+    Ok(())
 }

@@ -14,4 +14,7 @@ mod tree;
 
 pub use error::LoadError;
 pub use manifest::ProjectManifest;
-pub use tree::{load_project, load_single_file, ModulePath, ModuleTree, ParsedModule};
+pub use tree::{
+    load_project, load_project_with_packages, load_single_file, ModulePath, ModuleTree,
+    ParsedModule,
+};

@@ -73,4 +73,12 @@ pub enum LoadError {
     #[error("no sage.toml found in '{dir}' or parent directories")]
     #[diagnostic(code(sage::loader::no_manifest))]
     NoManifest { dir: PathBuf },
+
+    /// Package manager error.
+    #[error("{source}")]
+    #[diagnostic(transparent)]
+    PackageError {
+        #[from]
+        source: sage_package::PackageError,
+    },
 }

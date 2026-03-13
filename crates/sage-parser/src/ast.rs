@@ -188,6 +188,11 @@ pub enum EventKind {
     },
     /// `on stop` — runs during graceful shutdown.
     Stop,
+    /// `on error(e)` — runs when an unhandled error occurs in the agent.
+    Error {
+        /// The parameter name for the error.
+        param_name: Ident,
+    },
 }
 
 impl fmt::Display for EventKind {
@@ -201,6 +206,9 @@ impl fmt::Display for EventKind {
                 write!(f, "message({param_name}: {param_ty})")
             }
             EventKind::Stop => write!(f, "stop"),
+            EventKind::Error { param_name } => {
+                write!(f, "error({param_name})")
+            }
         }
     }
 }
@@ -209,7 +217,7 @@ impl fmt::Display for EventKind {
 // Function declarations
 // =============================================================================
 
-/// A function declaration: `fn name(params) -> ReturnType { ... }`
+/// A function declaration: `fn name(params) -> ReturnType { ... }` or `fn name(params) -> ReturnType fails { ... }`
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnDecl {
     /// Whether this function is public (can be imported by other modules).
@@ -220,6 +228,8 @@ pub struct FnDecl {
     pub params: Vec<Param>,
     /// The return type.
     pub return_ty: TypeExpr,
+    /// Whether this function can fail (marked with `fails`).
+    pub is_fallible: bool,
     /// The function body.
     pub body: Block,
     /// Span covering the entire declaration.
@@ -545,6 +555,26 @@ pub enum Expr {
         /// Span covering the expression.
         span: Span,
     },
+
+    /// Try expression: `try expr` — propagates failure upward.
+    Try {
+        /// The expression that may fail.
+        expr: Box<Expr>,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Catch expression: `expr catch { recovery }` or `expr catch(e) { recovery }`.
+    Catch {
+        /// The expression that may fail.
+        expr: Box<Expr>,
+        /// The optional error binding (e.g., `e` in `catch(e)`).
+        error_bind: Option<Ident>,
+        /// The recovery expression.
+        recovery: Box<Expr>,
+        /// Span covering the expression.
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -570,7 +600,9 @@ impl Expr {
             | Expr::Match { span, .. }
             | Expr::RecordConstruct { span, .. }
             | Expr::FieldAccess { span, .. }
-            | Expr::Receive { span, .. } => span,
+            | Expr::Receive { span, .. }
+            | Expr::Try { span, .. }
+            | Expr::Catch { span, .. } => span,
         }
     }
 }

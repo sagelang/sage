@@ -209,6 +209,10 @@ mod tests {
                     let result = await w;
                     emit(result);
                 }
+
+                on error(e) {
+                    emit("error");
+                }
             }
             run Main;
         "#;
@@ -434,6 +438,10 @@ mod tests {
                     let w = spawn Worker { unused: 1 };
                     emit(await w);
                 }
+
+                on error(e) {
+                    emit(0);
+                }
             }
             run Main;
         "#;
@@ -459,6 +467,10 @@ mod tests {
                 on start {
                     let w = spawn Worker { value: 21 };
                     emit(await w);
+                }
+
+                on error(e) {
+                    emit(0);
                 }
             }
             run Main;

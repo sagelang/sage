@@ -44,6 +44,10 @@ pub struct Checker {
     in_loop: bool,
     /// The receives type of the current agent (for receive validation).
     receives_type: Option<Type>,
+    /// RFC-0007: Whether we're in a fallible context (function/handler marked fails).
+    in_fallible_context: bool,
+    /// RFC-0007: Whether the current agent has an error handler.
+    agent_has_error_handler: bool,
 }
 
 impl Checker {
@@ -61,6 +65,8 @@ impl Checker {
             current_module: vec![],
             in_loop: false,
             receives_type: None,
+            in_fallible_context: false,
+            agent_has_error_handler: false,
         }
     }
 
@@ -78,6 +84,8 @@ impl Checker {
             current_module: module_path,
             in_loop: false,
             receives_type: None,
+            in_fallible_context: false,
+            agent_has_error_handler: false,
         }
     }
 
@@ -179,6 +187,7 @@ impl Checker {
                 return_type,
                 is_pub: func.is_pub,
                 module_path: self.current_module.clone(),
+                is_fallible: func.is_fallible,
             });
         }
 
@@ -261,6 +270,12 @@ impl Checker {
         // Set receives type from the agent's receives clause
         self.receives_type = agent.receives.as_ref().map(resolve_type);
 
+        // RFC-0007: Check if agent has an error handler
+        self.agent_has_error_handler = agent
+            .handlers
+            .iter()
+            .any(|h| matches!(h.event, EventKind::Error { .. }));
+
         for handler in &agent.handlers {
             self.push_scope();
 
@@ -272,6 +287,11 @@ impl Checker {
             {
                 let ty = resolve_type(param_ty);
                 self.define_var(&param_name.name, ty);
+            }
+
+            // RFC-0007: Add error parameter to scope if this is an error handler
+            if let EventKind::Error { param_name } = &handler.event {
+                self.define_var(&param_name.name, Type::Named("Error".to_string()));
             }
 
             self.check_block(&handler.body);
@@ -288,11 +308,15 @@ impl Checker {
 
         self.current_agent = None;
         self.receives_type = None;
+        self.agent_has_error_handler = false;
     }
 
     fn check_function(&mut self, func: &FnDecl) {
         self.in_function = true;
         self.expected_return = Some(resolve_type(&func.return_ty));
+
+        // RFC-0007: Track if we're in a fallible function
+        self.in_fallible_context = func.is_fallible;
 
         self.push_scope();
 
@@ -307,6 +331,7 @@ impl Checker {
         self.pop_scope();
         self.in_function = false;
         self.expected_return = None;
+        self.in_fallible_context = false;
     }
 
     fn check_const(&mut self, const_decl: &ConstDecl) {
@@ -653,6 +678,19 @@ impl Checker {
             Expr::Await { handle, span } => {
                 let handle_ty = self.check_expr(handle);
 
+                // RFC-0007: await is a fallible operation - check context
+                // Agents with on_error handlers catch errors internally
+                if !self.in_fallible_context && !self.agent_has_error_handler {
+                    if self.current_agent.is_some() {
+                        self.errors.push(CheckError::missing_error_handler(
+                            self.current_agent.as_ref().unwrap().clone(),
+                            span,
+                        ));
+                    } else {
+                        self.errors.push(CheckError::try_in_non_fallible(span));
+                    }
+                }
+
                 if let Some(agent_name) = handle_ty.agent_name() {
                     // The result type is the emit type of the agent
                     // For now, default to String since emit_type inference isn't implemented
@@ -924,6 +962,65 @@ impl Checker {
                         Type::Error
                     }
                 }
+            }
+
+            // RFC-0007: Error handling
+            Expr::Try { expr, span } => {
+                // Check that we're in a fallible context
+                if !self.in_fallible_context {
+                    // In an agent, check for error handler
+                    if self.current_agent.is_some() && !self.agent_has_error_handler {
+                        self.errors.push(CheckError::missing_error_handler(
+                            self.current_agent.as_ref().unwrap().clone(),
+                            span,
+                        ));
+                    } else if self.current_agent.is_none() {
+                        self.errors.push(CheckError::try_in_non_fallible(span));
+                    }
+                }
+
+                // Check the inner expression
+                let inner_ty = self.check_expr(expr);
+
+                // Return the inner type (unwrapped from potential error)
+                inner_ty
+            }
+
+            Expr::Catch {
+                expr,
+                error_bind,
+                recovery,
+                span,
+            } => {
+                // Check the inner (fallible) expression
+                let expr_ty = self.check_expr(expr);
+
+                // Create a new scope for the recovery block (for error binding)
+                self.push_scope();
+
+                // If there's an error binding, add it to scope
+                if let Some(err_ident) = error_bind {
+                    // Error type has .message (String) and .kind (ErrorKind)
+                    // For now, use a simple Named type
+                    self.define_var(&err_ident.name, Type::Named("Error".to_string()));
+                }
+
+                // Check the recovery expression
+                let recovery_ty = self.check_expr(recovery);
+
+                self.pop_scope();
+
+                // Recovery type must match the expression type
+                if !recovery_ty.is_compatible_with(&expr_ty) && !expr_ty.is_error() {
+                    self.errors.push(CheckError::catch_type_mismatch(
+                        expr_ty.to_string(),
+                        recovery_ty.to_string(),
+                        span,
+                    ));
+                }
+
+                // Return the expression type (catch handles the error internally)
+                expr_ty
             }
         }
     }
@@ -1498,6 +1595,7 @@ impl MultiModuleChecker {
                 return_type,
                 is_pub: func.is_pub,
                 module_path: module_path.clone(),
+                is_fallible: func.is_fallible,
             });
         }
 
@@ -1863,6 +1961,10 @@ struct ModuleChecker<'a> {
     in_loop: bool,
     /// The receives type of the current agent (for receive validation).
     receives_type: Option<Type>,
+    /// RFC-0007: Whether we're in a fallible context (function/handler marked fails).
+    in_fallible_context: bool,
+    /// RFC-0007: Whether the current agent has an error handler.
+    agent_has_error_handler: bool,
 }
 
 impl<'a> ModuleChecker<'a> {
@@ -1884,6 +1986,8 @@ impl<'a> ModuleChecker<'a> {
             inferred_emit_types: HashMap::new(),
             in_loop: false,
             receives_type: None,
+            in_fallible_context: false,
+            agent_has_error_handler: false,
         }
     }
 
@@ -1904,6 +2008,12 @@ impl<'a> ModuleChecker<'a> {
         // Set receives type from the agent's receives clause
         self.receives_type = agent.receives.as_ref().map(resolve_type);
 
+        // RFC-0007: Check if agent has an error handler
+        self.agent_has_error_handler = agent
+            .handlers
+            .iter()
+            .any(|h| matches!(h.event, EventKind::Error { .. }));
+
         for handler in &agent.handlers {
             self.push_scope();
 
@@ -1914,6 +2024,11 @@ impl<'a> ModuleChecker<'a> {
             {
                 let ty = resolve_type(param_ty);
                 self.define_var(&param_name.name, ty);
+            }
+
+            // RFC-0007: Add error parameter to scope if this is an error handler
+            if let EventKind::Error { param_name } = &handler.event {
+                self.define_var(&param_name.name, Type::Named("Error".to_string()));
             }
 
             self.check_block(&handler.body);
@@ -1930,11 +2045,15 @@ impl<'a> ModuleChecker<'a> {
 
         self.current_agent = None;
         self.receives_type = None;
+        self.agent_has_error_handler = false;
     }
 
     fn check_function(&mut self, func: &FnDecl) {
         self.in_function = true;
         self.expected_return = Some(resolve_type(&func.return_ty));
+
+        // RFC-0007: Track if we're in a fallible function
+        self.in_fallible_context = func.is_fallible;
 
         self.push_scope();
 
@@ -1948,6 +2067,7 @@ impl<'a> ModuleChecker<'a> {
         self.pop_scope();
         self.in_function = false;
         self.expected_return = None;
+        self.in_fallible_context = false;
     }
 
     fn check_block(&mut self, block: &Block) {
@@ -2258,6 +2378,19 @@ impl<'a> ModuleChecker<'a> {
             Expr::Await { handle, span } => {
                 let handle_ty = self.check_expr(handle);
 
+                // RFC-0007: await is a fallible operation - check context
+                // Agents with on_error handlers catch errors internally
+                if !self.in_fallible_context && !self.agent_has_error_handler {
+                    if self.current_agent.is_some() {
+                        self.errors.push(CheckError::missing_error_handler(
+                            self.current_agent.as_ref().unwrap().clone(),
+                            span,
+                        ));
+                    } else {
+                        self.errors.push(CheckError::try_in_non_fallible(span));
+                    }
+                }
+
                 if let Some(agent_name) = handle_ty.agent_name() {
                     self.lookup_agent(agent_name)
                         .and_then(|a| a.emit_type.clone())
@@ -2523,6 +2656,65 @@ impl<'a> ModuleChecker<'a> {
                         Type::Error
                     }
                 }
+            }
+
+            // RFC-0007: Error handling
+            Expr::Try { expr, span } => {
+                // Check that we're in a fallible context
+                if !self.in_fallible_context {
+                    // In an agent, check for error handler
+                    if self.current_agent.is_some() && !self.agent_has_error_handler {
+                        self.errors.push(CheckError::missing_error_handler(
+                            self.current_agent.as_ref().unwrap().clone(),
+                            span,
+                        ));
+                    } else if self.current_agent.is_none() {
+                        self.errors.push(CheckError::try_in_non_fallible(span));
+                    }
+                }
+
+                // Check the inner expression
+                let inner_ty = self.check_expr(expr);
+
+                // Return the inner type (unwrapped from potential error)
+                inner_ty
+            }
+
+            Expr::Catch {
+                expr,
+                error_bind,
+                recovery,
+                span,
+            } => {
+                // Check the inner (fallible) expression
+                let expr_ty = self.check_expr(expr);
+
+                // Create a new scope for the recovery block (for error binding)
+                self.push_scope();
+
+                // If there's an error binding, add it to scope
+                if let Some(err_ident) = error_bind {
+                    // Error type has .message (String) and .kind (ErrorKind)
+                    // For now, use a simple Named type
+                    self.define_var(&err_ident.name, Type::Named("Error".to_string()));
+                }
+
+                // Check the recovery expression
+                let recovery_ty = self.check_expr(recovery);
+
+                self.pop_scope();
+
+                // Recovery type must match the expression type
+                if !recovery_ty.is_compatible_with(&expr_ty) && !expr_ty.is_error() {
+                    self.errors.push(CheckError::catch_type_mismatch(
+                        expr_ty.to_string(),
+                        recovery_ty.to_string(),
+                        span,
+                    ));
+                }
+
+                // Return the expression type (catch handles the error internally)
+                expr_ty
             }
         }
     }

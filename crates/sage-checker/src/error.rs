@@ -317,6 +317,50 @@ pub enum CheckError {
         #[label("not inside an agent handler")]
         span: SourceSpan,
     },
+
+    // =========================================================================
+    // RFC-0007: Error handling errors
+    // =========================================================================
+    #[error("unhandled error: calling fallible function `{name}` without `try` or `catch`")]
+    #[diagnostic(
+        code(sage::E013),
+        help("use `try {name}(...)` to propagate the error, or `{name}(...) catch {{ recovery }}` to handle it")
+    )]
+    UnhandledError {
+        name: String,
+        #[label("fallible function called without error handling")]
+        span: SourceSpan,
+    },
+
+    #[error("`try` used in non-fallible context")]
+    #[diagnostic(
+        code(sage::E014),
+        help("add `fails` annotation to the containing function, or use `catch` instead")
+    )]
+    TryInNonFallible {
+        #[label("cannot propagate errors from here")]
+        span: SourceSpan,
+    },
+
+    #[error("catch recovery type mismatch: expected `{expected}`, found `{found}`")]
+    #[diagnostic(code(sage::E015))]
+    CatchTypeMismatch {
+        expected: String,
+        found: String,
+        #[label("recovery expression must match fallible expression type")]
+        span: SourceSpan,
+    },
+
+    #[error("unhandled propagated error in agent without `on error` handler")]
+    #[diagnostic(
+        code(sage::E016),
+        help("add `on error(e) {{ ... }}` handler to the agent, or use `catch` instead of `try`")
+    )]
+    MissingErrorHandler {
+        agent: String,
+        #[label("`try` propagates errors but agent has no error handler")]
+        span: SourceSpan,
+    },
 }
 
 impl CheckError {
@@ -617,6 +661,47 @@ impl CheckError {
     #[must_use]
     pub fn receive_outside_agent(span: &Span) -> Self {
         Self::ReceiveOutsideAgent {
+            span: to_source_span(span),
+        }
+    }
+
+    // =========================================================================
+    // RFC-0007: Error handling helpers
+    // =========================================================================
+
+    /// Create an unhandled error (E013).
+    pub fn unhandled_error(name: impl Into<String>, span: &Span) -> Self {
+        Self::UnhandledError {
+            name: name.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a try-in-non-fallible error (E014).
+    #[must_use]
+    pub fn try_in_non_fallible(span: &Span) -> Self {
+        Self::TryInNonFallible {
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a catch type mismatch error (E015).
+    pub fn catch_type_mismatch(
+        expected: impl Into<String>,
+        found: impl Into<String>,
+        span: &Span,
+    ) -> Self {
+        Self::CatchTypeMismatch {
+            expected: expected.into(),
+            found: found.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a missing error handler error (E016).
+    pub fn missing_error_handler(agent: impl Into<String>, span: &Span) -> Self {
+        Self::MissingErrorHandler {
+            agent: agent.into(),
             span: to_source_span(span),
         }
     }

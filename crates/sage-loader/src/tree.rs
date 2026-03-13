@@ -20,6 +20,9 @@ pub struct ModuleTree {
     pub root: ModulePath,
     /// The project root directory.
     pub project_root: PathBuf,
+    /// External package roots, keyed by package name.
+    /// Maps package name to its cached path on disk.
+    pub external_roots: HashMap<String, PathBuf>,
 }
 
 /// A parsed module with its source and AST.
@@ -87,10 +90,13 @@ pub fn load_single_file(path: &Path) -> Result<ModuleTree, Vec<LoadError>> {
             .parent()
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from(".")),
+        external_roots: HashMap::new(),
     })
 }
 
 /// Load a project from a sage.toml or project directory.
+///
+/// This does NOT resolve external dependencies. For that, use `load_project_with_packages`.
 pub fn load_project(project_path: &Path) -> Result<ModuleTree, Vec<LoadError>> {
     // Find the manifest
     let manifest_path = if project_path.is_file() && project_path.ends_with("sage.toml") {
@@ -129,7 +135,100 @@ pub fn load_project(project_path: &Path) -> Result<ModuleTree, Vec<LoadError>> {
         modules: loader.modules,
         root: vec![],
         project_root,
+        external_roots: HashMap::new(),
     })
+}
+
+/// Load a project with external package resolution.
+///
+/// This function will:
+/// 1. Load the project manifest
+/// 2. Check for dependencies
+/// 3. If lock file exists and is fresh, use it; otherwise resolve dependencies
+/// 4. Load all external packages into the module tree
+pub fn load_project_with_packages(
+    project_path: &Path,
+) -> Result<(ModuleTree, bool), Vec<LoadError>> {
+    use sage_package::{check_lock_freshness, install_from_lock, resolve_dependencies, LockFile};
+
+    // First, do the basic project loading to check if it's a valid project
+    let manifest_path = if project_path.is_file() && project_path.ends_with("sage.toml") {
+        project_path.to_path_buf()
+    } else if project_path.is_dir() {
+        project_path.join("sage.toml")
+    } else {
+        // Single file - no packages
+        let tree = load_single_file(project_path)?;
+        return Ok((tree, false));
+    };
+
+    if !manifest_path.exists() {
+        if project_path.extension().is_some_and(|e| e == "sg") {
+            let tree = load_single_file(project_path)?;
+            return Ok((tree, false));
+        }
+        return Err(vec![LoadError::NoManifest {
+            dir: project_path.to_path_buf(),
+        }]);
+    }
+
+    let manifest = ProjectManifest::load(&manifest_path).map_err(|e| vec![e])?;
+    let project_root = manifest_path.parent().unwrap().to_path_buf();
+
+    // Parse dependencies
+    let deps = manifest.parse_dependencies().map_err(|e| vec![e])?;
+
+    // Resolve external packages
+    let external_roots = if deps.is_empty() {
+        HashMap::new()
+    } else {
+        let lock_path = project_root.join("sage.lock");
+        let packages = if lock_path.exists() {
+            let lock = LockFile::load(&lock_path)
+                .map_err(|e| vec![LoadError::PackageError { source: e }])?;
+            if check_lock_freshness(&deps, &lock) {
+                // Lock file is fresh - install from lock
+                install_from_lock(&lock).map_err(|e| vec![LoadError::PackageError { source: e }])?
+            } else {
+                // Lock file is stale - re-resolve
+                let resolved = resolve_dependencies(&project_root, &deps, Some(&lock))
+                    .map_err(|e| vec![LoadError::PackageError { source: e }])?;
+                resolved.packages
+            }
+        } else {
+            // No lock file - resolve fresh
+            let resolved = resolve_dependencies(&project_root, &deps, None)
+                .map_err(|e| vec![LoadError::PackageError { source: e }])?;
+            resolved.packages
+        };
+
+        packages
+            .into_iter()
+            .map(|(name, pkg)| (name, pkg.path))
+            .collect()
+    };
+
+    // Load the main project
+    let entry_path = project_root.join(&manifest.project.entry);
+    if !entry_path.exists() {
+        return Err(vec![LoadError::MissingEntry { path: entry_path }]);
+    }
+
+    let mut loader = ModuleLoader::new(project_root.clone());
+    let root_path: ModulePath = vec![];
+    loader.load_module(&root_path, &entry_path)?;
+
+    let installed = !external_roots.is_empty();
+
+    Ok((
+        ModuleTree {
+            modules: loader.modules,
+            root: vec![],
+            project_root,
+            external_roots,
+        },
+        installed,
+    ))
 }
 
 /// Internal loader that tracks state during recursive loading.

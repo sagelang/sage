@@ -16,6 +16,8 @@ pub enum TypeExpr {
     String,
     /// Unit type (void equivalent).
     Unit,
+    /// Error type for error handling (has `.message` and `.kind` fields).
+    Error,
     /// Homogeneous list: `List<T>`.
     List(Box<TypeExpr>),
     /// Optional value: `Option<T>`.
@@ -34,7 +36,12 @@ impl TypeExpr {
     pub fn is_primitive(&self) -> bool {
         matches!(
             self,
-            TypeExpr::Int | TypeExpr::Float | TypeExpr::Bool | TypeExpr::String | TypeExpr::Unit
+            TypeExpr::Int
+                | TypeExpr::Float
+                | TypeExpr::Bool
+                | TypeExpr::String
+                | TypeExpr::Unit
+                | TypeExpr::Error
         )
     }
 
@@ -67,6 +74,7 @@ impl fmt::Display for TypeExpr {
             TypeExpr::Bool => write!(f, "Bool"),
             TypeExpr::String => write!(f, "String"),
             TypeExpr::Unit => write!(f, "Unit"),
+            TypeExpr::Error => write!(f, "Error"),
             TypeExpr::List(inner) => write!(f, "List<{inner}>"),
             TypeExpr::Option(inner) => write!(f, "Option<{inner}>"),
             TypeExpr::Inferred(inner) => write!(f, "Inferred<{inner}>"),

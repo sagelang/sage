@@ -118,6 +118,18 @@ pub enum Token {
     #[token("receive")]
     KwReceive,
 
+    #[token("fails")]
+    KwFails,
+
+    #[token("try")]
+    KwTry,
+
+    #[token("catch")]
+    KwCatch,
+
+    #[token("error")]
+    KwError,
+
     // =========================================================================
     // Type keywords
     // =========================================================================
@@ -147,6 +159,12 @@ pub enum Token {
 
     #[token("Agent")]
     TyAgent,
+
+    #[token("Error")]
+    TyError,
+
+    #[token("ErrorKind")]
+    TyErrorKind,
 
     // =========================================================================
     // Literals
@@ -306,6 +324,10 @@ impl Token {
                 | Token::KwConst
                 | Token::KwReceives
                 | Token::KwReceive
+                | Token::KwFails
+                | Token::KwTry
+                | Token::KwCatch
+                | Token::KwError
         )
     }
 
@@ -323,6 +345,8 @@ impl Token {
                 | Token::TyOption
                 | Token::TyInferred
                 | Token::TyAgent
+                | Token::TyError
+                | Token::TyErrorKind
         )
     }
 
@@ -399,6 +423,10 @@ impl std::fmt::Display for Token {
             Token::KwConst => write!(f, "const"),
             Token::KwReceives => write!(f, "receives"),
             Token::KwReceive => write!(f, "receive"),
+            Token::KwFails => write!(f, "fails"),
+            Token::KwTry => write!(f, "try"),
+            Token::KwCatch => write!(f, "catch"),
+            Token::KwError => write!(f, "error"),
 
             // Type keywords
             Token::TyInt => write!(f, "Int"),
@@ -410,6 +438,8 @@ impl std::fmt::Display for Token {
             Token::TyOption => write!(f, "Option"),
             Token::TyInferred => write!(f, "Inferred"),
             Token::TyAgent => write!(f, "Agent"),
+            Token::TyError => write!(f, "Error"),
+            Token::TyErrorKind => write!(f, "ErrorKind"),
 
             // Literals
             Token::IntLit => write!(f, "<int>"),
@@ -888,5 +918,76 @@ mod tests {
         assert!(Token::KwBreak.is_keyword());
         assert!(Token::KwReceives.is_keyword());
         assert!(Token::KwReceive.is_keyword());
+    }
+
+    #[test]
+    fn lex_error_handling_keywords() {
+        let mut lexer = Token::lexer("fails try catch error");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwFails)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwTry)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwCatch)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwError)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn lex_try_catch_expression() {
+        let mut lexer = Token::lexer("let x = try infer(prompt) catch { fallback }");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwLet)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // x
+        assert_eq!(lexer.next(), Some(Ok(Token::Eq)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwTry)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwInfer)));
+        assert_eq!(lexer.next(), Some(Ok(Token::LParen)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // prompt
+        assert_eq!(lexer.next(), Some(Ok(Token::RParen)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwCatch)));
+        assert_eq!(lexer.next(), Some(Ok(Token::LBrace)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // fallback
+        assert_eq!(lexer.next(), Some(Ok(Token::RBrace)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn lex_fails_function() {
+        let mut lexer = Token::lexer("fn fetch(url: String) -> String fails { }");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwFn)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // fetch
+        assert_eq!(lexer.next(), Some(Ok(Token::LParen)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // url
+        assert_eq!(lexer.next(), Some(Ok(Token::Colon)));
+        assert_eq!(lexer.next(), Some(Ok(Token::TyString)));
+        assert_eq!(lexer.next(), Some(Ok(Token::RParen)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Arrow)));
+        assert_eq!(lexer.next(), Some(Ok(Token::TyString)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwFails)));
+        assert_eq!(lexer.next(), Some(Ok(Token::LBrace)));
+        assert_eq!(lexer.next(), Some(Ok(Token::RBrace)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn lex_on_error_handler() {
+        let mut lexer = Token::lexer("on error(e) { emit(fallback) }");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwOn)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwError)));
+        assert_eq!(lexer.next(), Some(Ok(Token::LParen)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // e
+        assert_eq!(lexer.next(), Some(Ok(Token::RParen)));
+        assert_eq!(lexer.next(), Some(Ok(Token::LBrace)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwEmit)));
+        assert_eq!(lexer.next(), Some(Ok(Token::LParen)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // fallback
+        assert_eq!(lexer.next(), Some(Ok(Token::RParen)));
+        assert_eq!(lexer.next(), Some(Ok(Token::RBrace)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn rfc7_keywords_are_keywords() {
+        assert!(Token::KwFails.is_keyword());
+        assert!(Token::KwTry.is_keyword());
+        assert!(Token::KwCatch.is_keyword());
+        assert!(Token::KwError.is_keyword());
     }
 }

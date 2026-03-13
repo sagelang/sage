@@ -400,14 +400,21 @@ fn event_kind_parser(source: Arc<str>) -> impl Parser<Token, EventKind, Error = 
         .ignore_then(just(Token::LParen))
         .ignore_then(ident_token_parser(src.clone()))
         .then_ignore(just(Token::Colon))
-        .then(type_parser(src))
+        .then(type_parser(src.clone()))
         .then_ignore(just(Token::RParen))
         .map(|(param_name, param_ty)| EventKind::Message {
             param_name,
             param_ty,
         });
 
-    start.or(stop).or(message)
+    // RFC-0007: on error(e) handler
+    let error = just(Token::KwError)
+        .ignore_then(just(Token::LParen))
+        .ignore_then(ident_token_parser(src))
+        .then_ignore(just(Token::RParen))
+        .map(|param_name| EventKind::Error { param_name });
+
+    start.or(stop).or(message).or(error)
 }
 
 // =============================================================================
@@ -442,14 +449,17 @@ fn fn_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseErro
         .then(params)
         .then_ignore(just(Token::Arrow))
         .then(type_parser(src2.clone()))
+        .then(just(Token::KwFails).or_not())
         .then(block_parser(src2))
         .map_with_span(
-            move |((((is_pub, name), params), return_ty), body), span: Range<usize>| {
+            move |(((((is_pub, name), params), return_ty), is_fallible), body),
+                  span: Range<usize>| {
                 TopLevel::Function(FnDecl {
                     is_pub: is_pub.is_some(),
                     name,
                     params,
                     return_ty,
+                    is_fallible: is_fallible.is_some(),
                     body,
                     span: make_span(&src3, span),
                 })
@@ -916,7 +926,7 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
             .to(UnaryOp::Neg)
             .or(just(Token::Bang).to(UnaryOp::Not))
             .repeated()
-            .then(postfix)
+            .then(postfix.clone())
             .foldr(|op, operand| {
                 let span = operand.span().clone();
                 Expr::Unary {
@@ -926,6 +936,22 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
                 }
             })
             .boxed();
+
+        // RFC-0007: try expression - propagates errors upward
+        // try expr
+        let try_expr = just(Token::KwTry)
+            .ignore_then(postfix)
+            .map_with_span({
+                let src = src.clone();
+                move |inner, span: Range<usize>| Expr::Try {
+                    expr: Box::new(inner),
+                    span: make_span(&src, span),
+                }
+            })
+            .boxed();
+
+        // Combined unary (including try)
+        let unary = try_expr.or(unary).boxed();
 
         // Binary operators with precedence levels
         // Level 7: * /
@@ -1062,7 +1088,7 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
         // Level 1: ||
         let or_op = just(Token::Or).to(BinOp::Or);
 
-        and.clone().then(or_op.then(and).repeated()).foldl({
+        let or_expr = and.clone().then(or_op.then(and).repeated()).foldl({
             let src = src.clone();
             move |left, (op, right)| {
                 let span = make_span(&src, left.span().start..right.span().end);
@@ -1072,6 +1098,32 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
                     right: Box::new(right),
                     span,
                 }
+            }
+        });
+
+        // RFC-0007: catch expression (lowest precedence)
+        // expr catch { recovery } OR expr catch(e) { recovery }
+        let catch_recovery = just(Token::KwCatch)
+            .ignore_then(
+                ident_token_parser(src.clone())
+                    .delimited_by(just(Token::LParen), just(Token::RParen))
+                    .or_not(),
+            )
+            .then(
+                expr.clone()
+                    .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+            );
+
+        or_expr.then(catch_recovery.or_not()).map_with_span({
+            let src = src.clone();
+            move |(inner, catch_opt), span: Range<usize>| match catch_opt {
+                Some((error_bind, recovery)) => Expr::Catch {
+                    expr: Box::new(inner),
+                    error_bind,
+                    recovery: Box::new(recovery),
+                    span: make_span(&src, span),
+                },
+                None => inner,
             }
         })
     })
@@ -2474,5 +2526,156 @@ mod tests {
             .find(|a| a.name.name == "Worker")
             .unwrap();
         assert!(worker.receives.is_some());
+    }
+
+    // =========================================================================
+    // RFC-0007: Error handling tests
+    // =========================================================================
+
+    #[test]
+    fn parse_fallible_function() {
+        let source = r#"
+            fn get_data(url: String) -> String fails {
+                return infer("Get data from {url}" -> String);
+            }
+
+            agent Main {
+                on start { emit(0); }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.functions.len(), 1);
+        assert!(prog.functions[0].is_fallible);
+    }
+
+    #[test]
+    fn parse_try_expression() {
+        let source = r#"
+            fn fallible() -> Int fails { return 42; }
+
+            agent Main {
+                on start {
+                    let x = try fallible();
+                    emit(x);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        // Find the let statement and check it contains a Try expression
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Let { value, .. } = &handler.body.stmts[0] {
+            assert!(matches!(value, Expr::Try { .. }));
+        } else {
+            panic!("expected Let statement");
+        }
+    }
+
+    #[test]
+    fn parse_catch_expression() {
+        let source = r#"
+            fn fallible() -> Int fails { return 42; }
+
+            agent Main {
+                on start {
+                    let x = fallible() catch { 0 };
+                    emit(x);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        // Find the let statement and check it contains a Catch expression
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Let { value, .. } = &handler.body.stmts[0] {
+            if let Expr::Catch { error_bind, .. } = value {
+                assert!(error_bind.is_none());
+            } else {
+                panic!("expected Catch expression");
+            }
+        } else {
+            panic!("expected Let statement");
+        }
+    }
+
+    #[test]
+    fn parse_catch_with_error_binding() {
+        let source = r#"
+            fn fallible() -> Int fails { return 42; }
+
+            agent Main {
+                on start {
+                    let x = fallible() catch(e) { 0 };
+                    emit(x);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        // Find the let statement and check it contains a Catch expression with binding
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Let { value, .. } = &handler.body.stmts[0] {
+            if let Expr::Catch { error_bind, .. } = value {
+                assert!(error_bind.is_some());
+                assert_eq!(error_bind.as_ref().unwrap().name, "e");
+            } else {
+                panic!("expected Catch expression");
+            }
+        } else {
+            panic!("expected Let statement");
+        }
+    }
+
+    #[test]
+    fn parse_on_error_handler() {
+        let source = r#"
+            agent Main {
+                on start {
+                    emit(0);
+                }
+
+                on error(e) {
+                    emit(1);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.agents.len(), 1);
+        assert_eq!(prog.agents[0].handlers.len(), 2);
+
+        // Check the error handler
+        let error_handler = prog.agents[0]
+            .handlers
+            .iter()
+            .find(|h| matches!(h.event, EventKind::Error { .. }));
+        assert!(error_handler.is_some());
+
+        if let EventKind::Error { param_name } = &error_handler.unwrap().event {
+            assert_eq!(param_name.name, "e");
+        } else {
+            panic!("expected Error event kind");
+        }
     }
 }

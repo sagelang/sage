@@ -15,12 +15,12 @@ mod error;
 mod llm;
 
 pub use agent::{spawn, AgentContext, AgentHandle};
-pub use error::{SageError, SageResult};
+pub use error::{ErrorKind, SageError, SageResult};
 pub use llm::LlmClient;
 
 /// Prelude for generated code.
 pub mod prelude {
     pub use crate::agent::{spawn, AgentContext, AgentHandle};
-    pub use crate::error::{SageError, SageResult};
+    pub use crate::error::{ErrorKind, SageError, SageResult};
     pub use crate::llm::LlmClient;
 }
