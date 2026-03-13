@@ -185,13 +185,19 @@ sudo dnf install gcc openssl-devel
 sudo pacman -S gcc openssl
 ```
 
-### Quick Install
+### Homebrew (macOS)
+
+```bash
+brew install cargopete/sage/sage
+```
+
+### Quick Install (macOS/Linux)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/cargopete/sage/main/scripts/install.sh | bash
 ```
 
-This downloads the pre-compiled toolchain (~100-230MB) — no Rust required.
+Both methods download the pre-compiled toolchain (~100-230MB) — no Rust required.
 
 ### From Source (for contributors)
 
