@@ -166,6 +166,10 @@ pub enum Token {
     #[token("ErrorKind")]
     TyErrorKind,
 
+    /// Function type keyword: `Fn`
+    #[token("Fn")]
+    TyFn,
+
     // =========================================================================
     // Literals
     // =========================================================================
@@ -273,6 +277,10 @@ pub enum Token {
     #[token("||")]
     Or,
 
+    /// Single pipe for closure parameters: `|`
+    #[token("|")]
+    Pipe,
+
     /// String concatenation operator.
     #[token("++")]
     PlusPlus,
@@ -347,6 +355,7 @@ impl Token {
                 | Token::TyAgent
                 | Token::TyError
                 | Token::TyErrorKind
+                | Token::TyFn
         )
     }
 
@@ -440,6 +449,7 @@ impl std::fmt::Display for Token {
             Token::TyAgent => write!(f, "Agent"),
             Token::TyError => write!(f, "Error"),
             Token::TyErrorKind => write!(f, "ErrorKind"),
+            Token::TyFn => write!(f, "Fn"),
 
             // Literals
             Token::IntLit => write!(f, "<int>"),
@@ -478,6 +488,7 @@ impl std::fmt::Display for Token {
             Token::Bang => write!(f, "!"),
             Token::And => write!(f, "&&"),
             Token::Or => write!(f, "||"),
+            Token::Pipe => write!(f, "|"),
             Token::PlusPlus => write!(f, "++"),
             Token::Semicolon => write!(f, ";"),
         }
@@ -989,5 +1000,59 @@ mod tests {
         assert!(Token::KwTry.is_keyword());
         assert!(Token::KwCatch.is_keyword());
         assert!(Token::KwError.is_keyword());
+    }
+
+    // =========================================================================
+    // RFC-0009: Closures
+    // =========================================================================
+
+    #[test]
+    fn lex_closure_syntax() {
+        // |x: Int| x + 1
+        let mut lexer = Token::lexer("|x: Int| x + 1");
+        assert_eq!(lexer.next(), Some(Ok(Token::Pipe)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // x
+        assert_eq!(lexer.next(), Some(Ok(Token::Colon)));
+        assert_eq!(lexer.next(), Some(Ok(Token::TyInt)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Pipe)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // x
+        assert_eq!(lexer.next(), Some(Ok(Token::Plus)));
+        assert_eq!(lexer.next(), Some(Ok(Token::IntLit)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn lex_empty_closure() {
+        // || 42
+        let mut lexer = Token::lexer("|| 42");
+        assert_eq!(lexer.next(), Some(Ok(Token::Or))); // || lexes as Or
+        assert_eq!(lexer.next(), Some(Ok(Token::IntLit)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn lex_fn_type() {
+        // Fn(Int, String) -> Bool
+        let mut lexer = Token::lexer("Fn(Int, String) -> Bool");
+        assert_eq!(lexer.next(), Some(Ok(Token::TyFn)));
+        assert_eq!(lexer.next(), Some(Ok(Token::LParen)));
+        assert_eq!(lexer.next(), Some(Ok(Token::TyInt)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Comma)));
+        assert_eq!(lexer.next(), Some(Ok(Token::TyString)));
+        assert_eq!(lexer.next(), Some(Ok(Token::RParen)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Arrow)));
+        assert_eq!(lexer.next(), Some(Ok(Token::TyBool)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn fn_is_type_keyword() {
+        assert!(Token::TyFn.is_type_keyword());
+    }
+
+    #[test]
+    fn pipe_display() {
+        assert_eq!(format!("{}", Token::Pipe), "|");
+        assert_eq!(format!("{}", Token::TyFn), "Fn");
     }
 }

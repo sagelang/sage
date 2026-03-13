@@ -1022,6 +1022,36 @@ impl Checker {
                 // Return the expression type (catch handles the error internally)
                 expr_ty
             }
+
+            // RFC-0009: Closures
+            Expr::Closure { params, body, .. } => {
+                // Push a new scope for closure parameters
+                self.push_scope();
+
+                let mut param_types = Vec::new();
+                for param in params {
+                    let param_ty = if let Some(ty_expr) = &param.ty {
+                        resolve_type(ty_expr)
+                    } else {
+                        // For now require explicit types - inference comes later
+                        self.errors.push(CheckError::closure_param_needs_type(
+                            param.name.name.clone(),
+                            &param.span,
+                        ));
+                        Type::Error
+                    };
+                    self.define_var(&param.name.name, param_ty.clone());
+                    param_types.push(param_ty);
+                }
+
+                // Type check the body
+                let body_ty = self.check_expr(body);
+
+                self.pop_scope();
+
+                // Return Fn type
+                Type::Fn(param_types, Box::new(body_ty))
+            }
         }
     }
 
@@ -2715,6 +2745,36 @@ impl<'a> ModuleChecker<'a> {
 
                 // Return the expression type (catch handles the error internally)
                 expr_ty
+            }
+
+            // RFC-0009: Closures
+            Expr::Closure { params, body, .. } => {
+                // Push a new scope for closure parameters
+                self.push_scope();
+
+                let mut param_types = Vec::new();
+                for param in params {
+                    let param_ty = if let Some(ty_expr) = &param.ty {
+                        resolve_type(ty_expr)
+                    } else {
+                        // For now require explicit types - inference comes later
+                        self.errors.push(CheckError::closure_param_needs_type(
+                            param.name.name.clone(),
+                            &param.span,
+                        ));
+                        Type::Error
+                    };
+                    self.define_var(&param.name.name, param_ty.clone());
+                    param_types.push(param_ty);
+                }
+
+                // Type check the body
+                let body_ty = self.check_expr(body);
+
+                self.pop_scope();
+
+                // Return Fn type
+                Type::Fn(param_types, Box::new(body_ty))
             }
         }
     }

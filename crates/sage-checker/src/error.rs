@@ -361,6 +361,20 @@ pub enum CheckError {
         #[label("`try` propagates errors but agent has no error handler")]
         span: SourceSpan,
     },
+
+    // =========================================================================
+    // RFC-0009: Closure errors
+    // =========================================================================
+    #[error("closure parameter `{name}` requires type annotation")]
+    #[diagnostic(
+        code(sage::E040),
+        help("add a type annotation: `|{name}: Type|`")
+    )]
+    ClosureParamNeedsType {
+        name: String,
+        #[label("type annotation required")]
+        span: SourceSpan,
+    },
 }
 
 impl CheckError {
@@ -702,6 +716,18 @@ impl CheckError {
     pub fn missing_error_handler(agent: impl Into<String>, span: &Span) -> Self {
         Self::MissingErrorHandler {
             agent: agent.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    // =========================================================================
+    // RFC-0009: Closure helpers
+    // =========================================================================
+
+    /// Create a closure param needs type error (E040).
+    pub fn closure_param_needs_type(name: impl Into<String>, span: &Span) -> Self {
+        Self::ClosureParamNeedsType {
+            name: name.into(),
             span: to_source_span(span),
         }
     }

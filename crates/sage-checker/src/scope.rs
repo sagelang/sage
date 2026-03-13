@@ -382,6 +382,11 @@ pub fn resolve_type(ty: &TypeExpr) -> Type {
             // We return Type::Named and let the checker validate
             Type::Named(ident.name.clone())
         }
+        TypeExpr::Fn(params, ret) => {
+            let param_types = params.iter().map(resolve_type).collect();
+            let ret_type = Box::new(resolve_type(ret));
+            Type::Fn(param_types, ret_type)
+        }
 
         // RFC-0007: Error type - TODO: proper error type in type checker
         TypeExpr::Error => Type::Named("Error".to_string()),
@@ -431,6 +436,33 @@ mod tests {
         assert_eq!(
             resolve_type(&inferred_string),
             Type::Inferred(Box::new(Type::String))
+        );
+    }
+
+    #[test]
+    fn resolve_type_fn() {
+        // Fn(Int) -> Bool
+        let fn_type = TypeExpr::Fn(vec![TypeExpr::Int], Box::new(TypeExpr::Bool));
+        assert_eq!(
+            resolve_type(&fn_type),
+            Type::Fn(vec![Type::Int], Box::new(Type::Bool))
+        );
+
+        // Fn(String, Int) -> Unit
+        let fn_type = TypeExpr::Fn(
+            vec![TypeExpr::String, TypeExpr::Int],
+            Box::new(TypeExpr::Unit),
+        );
+        assert_eq!(
+            resolve_type(&fn_type),
+            Type::Fn(vec![Type::String, Type::Int], Box::new(Type::Unit))
+        );
+
+        // Fn() -> String (no parameters)
+        let fn_type = TypeExpr::Fn(vec![], Box::new(TypeExpr::String));
+        assert_eq!(
+            resolve_type(&fn_type),
+            Type::Fn(vec![], Box::new(Type::String))
         );
     }
 }

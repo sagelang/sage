@@ -247,6 +247,17 @@ pub struct Param {
     pub span: Span,
 }
 
+/// A closure parameter: `name` or `name: Type`
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClosureParam {
+    /// The parameter name.
+    pub name: Ident,
+    /// Optional type annotation (can be inferred).
+    pub ty: Option<TypeExpr>,
+    /// Span covering the parameter.
+    pub span: Span,
+}
+
 // =============================================================================
 // Blocks and statements
 // =============================================================================
@@ -575,6 +586,16 @@ pub enum Expr {
         /// Span covering the expression.
         span: Span,
     },
+
+    /// Closure expression: `|params| body`
+    Closure {
+        /// The closure parameters.
+        params: Vec<ClosureParam>,
+        /// The closure body (single expression).
+        body: Box<Expr>,
+        /// Span covering the expression.
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -602,7 +623,8 @@ impl Expr {
             | Expr::FieldAccess { span, .. }
             | Expr::Receive { span, .. }
             | Expr::Try { span, .. }
-            | Expr::Catch { span, .. } => span,
+            | Expr::Catch { span, .. }
+            | Expr::Closure { span, .. } => span,
         }
     }
 }

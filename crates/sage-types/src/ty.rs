@@ -28,6 +28,9 @@ pub enum TypeExpr {
     Agent(Ident),
     /// Named type (agent name or future user-defined types).
     Named(Ident),
+    /// Function type: `Fn(A, B) -> C`.
+    /// The Vec holds parameter types; the Box holds the return type.
+    Fn(Vec<TypeExpr>, Box<TypeExpr>),
 }
 
 impl TypeExpr {
@@ -50,7 +53,11 @@ impl TypeExpr {
     pub fn is_compound(&self) -> bool {
         matches!(
             self,
-            TypeExpr::List(_) | TypeExpr::Option(_) | TypeExpr::Inferred(_) | TypeExpr::Agent(_)
+            TypeExpr::List(_)
+                | TypeExpr::Option(_)
+                | TypeExpr::Inferred(_)
+                | TypeExpr::Agent(_)
+                | TypeExpr::Fn(_, _)
         )
     }
 
@@ -80,6 +87,16 @@ impl fmt::Display for TypeExpr {
             TypeExpr::Inferred(inner) => write!(f, "Inferred<{inner}>"),
             TypeExpr::Agent(name) => write!(f, "Agent<{name}>"),
             TypeExpr::Named(name) => write!(f, "{name}"),
+            TypeExpr::Fn(params, ret) => {
+                write!(f, "Fn(")?;
+                for (i, param) in params.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{param}")?;
+                }
+                write!(f, ") -> {ret}")
+            }
         }
     }
 }
@@ -121,6 +138,36 @@ mod tests {
         // Option<List<String>>
         let nested = TypeExpr::Option(Box::new(TypeExpr::List(Box::new(TypeExpr::String))));
         assert_eq!(format!("{nested}"), "Option<List<String>>");
+    }
+
+    #[test]
+    fn fn_type_display() {
+        // Fn(Int) -> Int
+        let fn_type = TypeExpr::Fn(vec![TypeExpr::Int], Box::new(TypeExpr::Int));
+        assert_eq!(format!("{fn_type}"), "Fn(Int) -> Int");
+
+        // Fn(String, Int) -> Bool
+        let fn_type = TypeExpr::Fn(
+            vec![TypeExpr::String, TypeExpr::Int],
+            Box::new(TypeExpr::Bool),
+        );
+        assert_eq!(format!("{fn_type}"), "Fn(String, Int) -> Bool");
+
+        // Fn() -> String (no parameters)
+        let fn_type = TypeExpr::Fn(vec![], Box::new(TypeExpr::String));
+        assert_eq!(format!("{fn_type}"), "Fn() -> String");
+
+        // Higher-order: Fn(Int) -> Fn(Int) -> Int
+        let inner_fn = TypeExpr::Fn(vec![TypeExpr::Int], Box::new(TypeExpr::Int));
+        let outer_fn = TypeExpr::Fn(vec![TypeExpr::Int], Box::new(inner_fn));
+        assert_eq!(format!("{outer_fn}"), "Fn(Int) -> Fn(Int) -> Int");
+    }
+
+    #[test]
+    fn fn_type_is_compound() {
+        let fn_type = TypeExpr::Fn(vec![TypeExpr::Int], Box::new(TypeExpr::Bool));
+        assert!(fn_type.is_compound());
+        assert!(!fn_type.is_primitive());
     }
 
     #[test]

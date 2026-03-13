@@ -28,6 +28,8 @@ pub enum Type {
     Agent(String),
     /// User-defined type (record or enum) by name.
     Named(String),
+    /// Function type: parameter types and return type.
+    Fn(Vec<Type>, Box<Type>),
     /// An error type used when type checking fails.
     /// Propagates through expressions to avoid cascading errors.
     Error,
@@ -85,13 +87,48 @@ impl Type {
         if self.is_error() || other.is_error() {
             return true;
         }
-        // Inferred<T> is compatible with T
         match (self, other) {
+            // Inferred<T> is compatible with T
             (Type::Inferred(inner), other) | (other, Type::Inferred(inner)) => {
                 inner.as_ref().is_compatible_with(other)
             }
+            // Function types are compatible if params and return types are pairwise compatible
+            (Type::Fn(params1, ret1), Type::Fn(params2, ret2)) => {
+                if params1.len() != params2.len() {
+                    return false;
+                }
+                params1
+                    .iter()
+                    .zip(params2.iter())
+                    .all(|(p1, p2)| p1.is_compatible_with(p2))
+                    && ret1.is_compatible_with(ret2)
+            }
             _ => false,
         }
+    }
+
+    /// Get the parameter types if this is a function type.
+    #[must_use]
+    pub fn fn_params(&self) -> Option<&[Type]> {
+        match self {
+            Type::Fn(params, _) => Some(params),
+            _ => None,
+        }
+    }
+
+    /// Get the return type if this is a function type.
+    #[must_use]
+    pub fn fn_return(&self) -> Option<&Type> {
+        match self {
+            Type::Fn(_, ret) => Some(ret),
+            _ => None,
+        }
+    }
+
+    /// Check if this is a function type.
+    #[must_use]
+    pub fn is_fn(&self) -> bool {
+        matches!(self, Type::Fn(_, _))
     }
 }
 
@@ -108,6 +145,16 @@ impl fmt::Display for Type {
             Type::Inferred(inner) => write!(f, "Inferred<{inner}>"),
             Type::Agent(name) => write!(f, "Agent<{name}>"),
             Type::Named(name) => write!(f, "{name}"),
+            Type::Fn(params, ret) => {
+                write!(f, "Fn(")?;
+                for (i, param) in params.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{param}")?;
+                }
+                write!(f, ") -> {ret}")
+            }
             Type::Error => write!(f, "<error>"),
         }
     }
@@ -163,5 +210,51 @@ mod tests {
         // Error is compatible with everything
         assert!(Type::Error.is_compatible_with(&Type::Int));
         assert!(Type::Int.is_compatible_with(&Type::Error));
+    }
+
+    #[test]
+    fn fn_type_display() {
+        let fn_type = Type::Fn(vec![Type::Int], Box::new(Type::Bool));
+        assert_eq!(fn_type.to_string(), "Fn(Int) -> Bool");
+
+        let fn_type = Type::Fn(vec![Type::String, Type::Int], Box::new(Type::Unit));
+        assert_eq!(fn_type.to_string(), "Fn(String, Int) -> Unit");
+
+        let fn_type = Type::Fn(vec![], Box::new(Type::String));
+        assert_eq!(fn_type.to_string(), "Fn() -> String");
+    }
+
+    #[test]
+    fn fn_type_compatibility() {
+        let fn1 = Type::Fn(vec![Type::Int], Box::new(Type::Bool));
+        let fn2 = Type::Fn(vec![Type::Int], Box::new(Type::Bool));
+        let fn3 = Type::Fn(vec![Type::String], Box::new(Type::Bool));
+        let fn4 = Type::Fn(vec![Type::Int, Type::Int], Box::new(Type::Bool));
+
+        // Same types are compatible
+        assert!(fn1.is_compatible_with(&fn2));
+
+        // Different param types are not compatible
+        assert!(!fn1.is_compatible_with(&fn3));
+
+        // Different param count is not compatible
+        assert!(!fn1.is_compatible_with(&fn4));
+
+        // Fn types are not compatible with non-Fn types
+        assert!(!fn1.is_compatible_with(&Type::Int));
+    }
+
+    #[test]
+    fn fn_type_accessors() {
+        let fn_type = Type::Fn(vec![Type::Int, Type::String], Box::new(Type::Bool));
+
+        assert!(fn_type.is_fn());
+        assert_eq!(fn_type.fn_params(), Some(&[Type::Int, Type::String][..]));
+        assert_eq!(fn_type.fn_return(), Some(&Type::Bool));
+
+        // Non-Fn types return None
+        assert!(!Type::Int.is_fn());
+        assert_eq!(Type::Int.fn_params(), None);
+        assert_eq!(Type::Int.fn_return(), None);
     }
 }

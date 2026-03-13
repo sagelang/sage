@@ -3,8 +3,8 @@
 //! This module transforms a token stream into an AST.
 
 use crate::ast::{
-    AgentDecl, BeliefDecl, BinOp, Block, ConstDecl, ElseBranch, EnumDecl, EventKind, Expr,
-    FieldInit, FnDecl, HandlerDecl, Literal, MatchArm, ModDecl, Param, Pattern, Program,
+    AgentDecl, BeliefDecl, BinOp, Block, ClosureParam, ConstDecl, ElseBranch, EnumDecl, EventKind,
+    Expr, FieldInit, FnDecl, HandlerDecl, Literal, MatchArm, ModDecl, Param, Pattern, Program,
     RecordDecl, RecordField, Stmt, StringPart, StringTemplate, UnaryOp, UseDecl, UseKind,
 };
 use chumsky::prelude::*;
@@ -881,11 +881,57 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
                 }
             });
 
+        // Closure parameter: `name` or `name: Type`
+        let closure_param = ident_token_parser(src.clone())
+            .then(just(Token::Colon).ignore_then(type_parser(src.clone())).or_not())
+            .map_with_span({
+                let src = src.clone();
+                move |(name, ty), span: Range<usize>| ClosureParam {
+                    name,
+                    ty,
+                    span: make_span(&src, span),
+                }
+            });
+
+        // Closure expression: |params| body
+        // Handle both `|| expr` (empty params using Or token) and `|params| expr`
+        let closure_empty = just(Token::Or)
+            .ignore_then(expr.clone())
+            .map_with_span({
+                let src = src.clone();
+                move |body, span: Range<usize>| Expr::Closure {
+                    params: vec![],
+                    body: Box::new(body),
+                    span: make_span(&src, span),
+                }
+            });
+
+        let closure_with_params = just(Token::Pipe)
+            .ignore_then(
+                closure_param
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing(),
+            )
+            .then_ignore(just(Token::Pipe))
+            .then(expr.clone())
+            .map_with_span({
+                let src = src.clone();
+                move |(params, body), span: Range<usize>| Expr::Closure {
+                    params,
+                    body: Box::new(body),
+                    span: make_span(&src, span),
+                }
+            });
+
+        let closure = closure_with_params.or(closure_empty);
+
         // Atom: the base expression without binary ops
         // Box early to cut type complexity
         // Note: record_construct must come before call_expr and var to parse `Name { ... }` correctly
         // Note: receive_expr must come before call_expr to avoid being parsed as function call
-        let atom = infer_expr
+        // Note: closure must come before other expressions to handle `|` tokens correctly
+        let atom = closure
+            .or(infer_expr)
             .or(spawn_expr)
             .or(await_expr)
             .or(send_expr)
@@ -1199,13 +1245,26 @@ fn type_parser(source: Arc<str>) -> impl Parser<Token, TypeExpr, Error = ParseEr
             .then_ignore(just(Token::Gt))
             .map(TypeExpr::Agent);
 
-        let named_ty = ident_token_parser(src).map(TypeExpr::Named);
+        let named_ty = ident_token_parser(src.clone()).map(TypeExpr::Named);
+
+        // Function type: Fn(A, B) -> C
+        let fn_ty = just(Token::TyFn)
+            .ignore_then(
+                ty.clone()
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing()
+                    .delimited_by(just(Token::LParen), just(Token::RParen)),
+            )
+            .then_ignore(just(Token::Arrow))
+            .then(ty)
+            .map(|(params, ret)| TypeExpr::Fn(params, Box::new(ret)));
 
         primitive
             .or(list_ty)
             .or(option_ty)
             .or(inferred_ty)
             .or(agent_ty)
+            .or(fn_ty)
             .or(named_ty)
     })
 }
@@ -2676,6 +2735,170 @@ mod tests {
             assert_eq!(param_name.name, "e");
         } else {
             panic!("expected Error event kind");
+        }
+    }
+
+    // =========================================================================
+    // RFC-0009: Closures and function types
+    // =========================================================================
+
+    #[test]
+    fn parse_fn_type() {
+        let source = r#"
+            fn apply(f: Fn(Int) -> Int, x: Int) -> Int {
+                return f(x);
+            }
+
+            agent Main {
+                on start {
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.functions.len(), 1);
+        let func = &prog.functions[0];
+        assert_eq!(func.name.name, "apply");
+        assert_eq!(func.params.len(), 2);
+
+        // Check first param is Fn(Int) -> Int
+        if let TypeExpr::Fn(params, ret) = &func.params[0].ty {
+            assert_eq!(params.len(), 1);
+            assert!(matches!(params[0], TypeExpr::Int));
+            assert!(matches!(ret.as_ref(), TypeExpr::Int));
+        } else {
+            panic!("expected Fn type for first param");
+        }
+    }
+
+    #[test]
+    fn parse_closure_with_params() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let f = |x: Int| x + 1;
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        // Find the let statement in the on start handler
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Let { value, .. } = &handler.body.stmts[0] {
+            if let Expr::Closure { params, body, .. } = value {
+                assert_eq!(params.len(), 1);
+                assert_eq!(params[0].name.name, "x");
+                assert!(matches!(&params[0].ty, Some(TypeExpr::Int)));
+
+                // Body should be a binary expression
+                assert!(matches!(body.as_ref(), Expr::Binary { .. }));
+            } else {
+                panic!("expected closure expression");
+            }
+        } else {
+            panic!("expected let statement");
+        }
+    }
+
+    #[test]
+    fn parse_closure_empty_params() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let f = || 42;
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        // Find the let statement
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Let { value, .. } = &handler.body.stmts[0] {
+            if let Expr::Closure { params, body, .. } = value {
+                assert!(params.is_empty());
+
+                // Body should be a literal
+                assert!(matches!(body.as_ref(), Expr::Literal { .. }));
+            } else {
+                panic!("expected closure expression");
+            }
+        } else {
+            panic!("expected let statement");
+        }
+    }
+
+    #[test]
+    fn parse_closure_multiple_params() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let add = |x: Int, y: Int| x + y;
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Let { value, .. } = &handler.body.stmts[0] {
+            if let Expr::Closure { params, .. } = value {
+                assert_eq!(params.len(), 2);
+                assert_eq!(params[0].name.name, "x");
+                assert_eq!(params[1].name.name, "y");
+            } else {
+                panic!("expected closure expression");
+            }
+        } else {
+            panic!("expected let statement");
+        }
+    }
+
+    #[test]
+    fn parse_fn_type_multiarg() {
+        let source = r#"
+            fn fold_left(f: Fn(Int, Int) -> Int, init: Int) -> Int {
+                return init;
+            }
+
+            agent Main {
+                on start {
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        // Check Fn(Int, Int) -> Int
+        if let TypeExpr::Fn(params, ret) = &prog.functions[0].params[0].ty {
+            assert_eq!(params.len(), 2);
+            assert!(matches!(params[0], TypeExpr::Int));
+            assert!(matches!(params[1], TypeExpr::Int));
+            assert!(matches!(ret.as_ref(), TypeExpr::Int));
+        } else {
+            panic!("expected Fn type");
         }
     }
 }

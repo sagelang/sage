@@ -55,11 +55,11 @@ run Coordinator;
 
 ## Status
 
-**v0.2.0 released** — User-defined types, pattern matching, and agent message passing.
+**v0.3.0 released** — First-class functions, closures, and package management.
 
 | | |
 |---|---|
-| **Latest** | [v0.2.0](https://github.com/sagelang/sage/releases/tag/v0.2.0) |
+| **Latest** | [v0.3.0](https://github.com/sagelang/sage/releases/tag/v0.3.0) |
 | **Extension** | `.sg` |
 | **Platforms** | macOS (ARM), Linux (x86_64, ARM) |
 | **Build time** | ~0.5s |
@@ -104,6 +104,29 @@ fn factorial(n: Int) -> Int {
     return n * factorial(n - 1);
 }
 ```
+
+### Closures
+
+Sage supports first-class functions and closures:
+
+```sage
+// Closure with typed parameters
+let add = |x: Int, y: Int| x + y;
+
+// Empty parameter closure
+let get_value = || 42;
+
+// Function taking a closure parameter
+fn apply(f: Fn(Int) -> Int, x: Int) -> Int {
+    return f(x);
+}
+
+// Usage
+let double = |x: Int| x * 2;
+let result = apply(double, 21);  // 42
+```
+
+Closure parameters currently require explicit type annotations.
 
 ### Modules & Multi-File Projects
 
@@ -239,6 +262,7 @@ The `receives` clause declares the message type an agent accepts. `receive()` bl
 | `Unit` | No value (like Rust's `()`) |
 | `List<T>` | Lists, e.g., `[1, 2, 3]` |
 | `Inferred<T>` | LLM inference results |
+| `Fn(A, B) -> C` | Function types |
 
 ### Records & Enums
 
@@ -428,6 +452,7 @@ The compiler is written in ~9,000 lines of Rust, organised into focused crates:
 | `sage-lexer` | Tokenizer (logos-based) |
 | `sage-parser` | Parser (chumsky-based) |
 | `sage-loader` | Module loading + project management |
+| `sage-package` | Package management (git-based) |
 | `sage-checker` | Name resolution + type checker |
 | `sage-codegen` | Rust code generator |
 | `sage-runtime` | Async runtime, LLM integration |
@@ -442,6 +467,7 @@ sage/
 │   ├── sage-lexer/        # Tokenizer (logos-based)
 │   ├── sage-parser/       # Parser (chumsky-based)
 │   ├── sage-loader/       # Module loading + project management
+│   ├── sage-package/      # Package management (git-based)
 │   ├── sage-checker/      # Name resolution + type checker
 │   ├── sage-codegen/      # Rust code generator
 │   ├── sage-runtime/      # Runtime library (agents, LLM, etc.)
@@ -453,6 +479,7 @@ sage/
 │   ├── RFC-0002-*.md      # Multi-file project structure
 │   ├── RFC-0005-*.md      # User-defined types
 │   ├── RFC-0006-*.md      # Agent message passing
+│   ├── RFC-0007-*.md      # Error handling
 │   └── VISION.md          # Roadmap and future direction
 ├── tests/
 │   └── docker/            # Installation verification tests

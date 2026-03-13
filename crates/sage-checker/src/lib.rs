@@ -1043,4 +1043,80 @@ run Main;
             CheckError::ReceiveWithoutReceives { .. }
         ));
     }
+
+    // =========================================================================
+    // RFC-0009: Closures and function types
+    // =========================================================================
+
+    #[test]
+    fn check_closure_with_typed_params() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let f = |x: Int| x + 1;
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_closure_param_needs_type() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let f = |x| x + 1;
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(
+            result.errors[0],
+            CheckError::ClosureParamNeedsType { .. }
+        ));
+    }
+
+    #[test]
+    fn check_closure_body_type_error() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let f = |x: Int| x + "invalid";
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(
+            result.errors[0],
+            CheckError::InvalidBinaryOp { .. }
+        ));
+    }
+
+    #[test]
+    fn check_empty_closure() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let f = || 42;
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
 }

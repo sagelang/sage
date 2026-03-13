@@ -772,6 +772,25 @@ serde_json = "1"
                 self.emit.dedent();
                 self.emit.write("}");
             }
+
+            // RFC-0009: Closures
+            Expr::Closure { params, body, .. } => {
+                // Generate: Box::new(move |param1: Type1, param2: Type2| { body })
+                self.emit.write("Box::new(move |");
+                for (i, param) in params.iter().enumerate() {
+                    if i > 0 {
+                        self.emit.write(", ");
+                    }
+                    self.emit.write(&param.name.name);
+                    if let Some(ty) = &param.ty {
+                        self.emit.write(": ");
+                        self.emit_type(ty);
+                    }
+                }
+                self.emit.write("| ");
+                self.generate_expr(body);
+                self.emit.write(")");
+            }
         }
     }
 
@@ -900,6 +919,20 @@ serde_json = "1"
             // RFC-0007: Error handling
             TypeExpr::Error => {
                 self.emit.write("sage_runtime::SageError");
+            }
+
+            // RFC-0009: Function types
+            TypeExpr::Fn(params, ret) => {
+                self.emit.write("Box<dyn Fn(");
+                for (i, param) in params.iter().enumerate() {
+                    if i > 0 {
+                        self.emit.write(", ");
+                    }
+                    self.emit_type(param);
+                }
+                self.emit.write(") -> ");
+                self.emit_type(ret);
+                self.emit.write(" + Send + 'static>");
             }
         }
     }
