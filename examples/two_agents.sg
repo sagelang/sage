@@ -7,7 +7,7 @@ agent Worker {
 
     on start {
         let result = self.value * self.multiplier;
-        emit(result);
+        emit(str(result));
     }
 }
 
@@ -18,16 +18,19 @@ agent Main {
         let w2 = spawn Worker { value: 7, multiplier: 3 };
 
         // Await both results
-        let r1 = await w1;
-        let r2 = await w2;
+        let r1 = try await w1;
+        let r2 = try await w2;
 
-        // Combine the results
-        let total = r1 + r2;
+        // Display the results
         print("Worker 1 result: {r1}");
         print("Worker 2 result: {r2}");
-        print("Total: {total}");
 
-        emit(total);
+        emit("done");
+    }
+
+    on error(e) {
+        print("Worker failed");
+        emit("error");
     }
 }
 

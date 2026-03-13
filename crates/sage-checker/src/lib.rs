@@ -206,7 +206,7 @@ mod tests {
             agent Main {
                 on start {
                     let w = spawn Worker { name: "test" };
-                    let result = await w;
+                    let result = try await w;
                     emit(result);
                 }
 
@@ -379,8 +379,12 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    let x: Inferred<String> = infer("Hello");
+                    let x: Inferred<String> = try infer("Hello");
                     emit(x);
+                }
+
+                on error(e) {
+                    emit("error");
                 }
             }
             run Main;
@@ -436,7 +440,8 @@ mod tests {
             agent Main {
                 on start {
                     let w = spawn Worker { unused: 1 };
-                    emit(await w);
+                    let result = try await w;
+                    emit(result);
                 }
 
                 on error(e) {
@@ -466,7 +471,8 @@ mod tests {
             agent Main {
                 on start {
                     let w = spawn Worker { value: 21 };
-                    emit(await w);
+                    let result = try await w;
+                    emit(result);
                 }
 
                 on error(e) {
@@ -1110,6 +1116,134 @@ run Main;
             agent Main {
                 on start {
                     let f = || 42;
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    // =========================================================================
+    // RFC-0007: Error handling tests
+    // =========================================================================
+
+    #[test]
+    fn check_e013_unhandled_infer() {
+        // E013: infer without try or catch should produce an error
+        let source = r#"
+            agent Main {
+                on start {
+                    let x = infer("Hello");
+                    emit(x);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(result.errors[0], CheckError::UnhandledError { .. }));
+    }
+
+    #[test]
+    fn check_e013_unhandled_await() {
+        // E013: await without try or catch should produce an error
+        let source = r#"
+            agent Worker {
+                on start {
+                    emit(42);
+                }
+            }
+
+            agent Main {
+                on start {
+                    let w = spawn Worker { };
+                    let result = await w;
+                    emit(result);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(result.errors[0], CheckError::UnhandledError { .. }));
+    }
+
+    #[test]
+    fn check_e013_handled_with_try() {
+        // Using try should NOT produce E013 (when agent has on error handler)
+        let source = r#"
+            agent Main {
+                on start {
+                    let x = try infer("Hello");
+                    emit(x);
+                }
+
+                on error(e) {
+                    emit("error");
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_e013_handled_with_catch() {
+        // Using catch should NOT produce E013
+        let source = r#"
+            agent Main {
+                on start {
+                    let x = infer("Hello") catch { "fallback" };
+                    emit(x);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_e013_fallible_function_unhandled() {
+        // E013: calling a fails function without try or catch
+        let source = r#"
+            fn risky() -> Int fails { return 42; }
+
+            agent Main {
+                on start {
+                    let x = risky();
+                    emit(x);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(result.errors[0], CheckError::UnhandledError { .. }));
+    }
+
+    #[test]
+    fn check_e013_fallible_function_handled() {
+        // fails function with try should NOT produce E013
+        let source = r#"
+            fn risky() -> Int fails { return 42; }
+
+            agent Main {
+                on start {
+                    let x = try risky();
+                    emit(x);
+                }
+
+                on error(e) {
                     emit(0);
                 }
             }

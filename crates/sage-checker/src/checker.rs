@@ -48,6 +48,8 @@ pub struct Checker {
     in_fallible_context: bool,
     /// RFC-0007: Whether the current agent has an error handler.
     agent_has_error_handler: bool,
+    /// RFC-0007: Whether we're inside a try or catch expression (for E013 enforcement).
+    in_error_handling: bool,
 }
 
 impl Checker {
@@ -67,6 +69,7 @@ impl Checker {
             receives_type: None,
             in_fallible_context: false,
             agent_has_error_handler: false,
+            in_error_handling: false,
         }
     }
 
@@ -86,6 +89,7 @@ impl Checker {
             receives_type: None,
             in_fallible_context: false,
             agent_has_error_handler: false,
+            in_error_handling: false,
         }
     }
 
@@ -678,8 +682,13 @@ impl Checker {
             Expr::Infer {
                 template,
                 result_ty,
-                ..
+                span,
             } => {
+                // RFC-0007: E013 - infer is a fallible operation, must be wrapped in try or catch
+                if !self.in_error_handling {
+                    self.errors.push(CheckError::unhandled_error("infer", span));
+                }
+
                 // Track belief usage in template interpolations
                 for part in &template.parts {
                     if let sage_parser::StringPart::Interpolation(ident) = part {
@@ -745,17 +754,9 @@ impl Checker {
             Expr::Await { handle, span } => {
                 let handle_ty = self.check_expr(handle);
 
-                // RFC-0007: await is a fallible operation - check context
-                // Agents with on_error handlers catch errors internally
-                if !self.in_fallible_context && !self.agent_has_error_handler {
-                    if self.current_agent.is_some() {
-                        self.errors.push(CheckError::missing_error_handler(
-                            self.current_agent.as_ref().unwrap().clone(),
-                            span,
-                        ));
-                    } else {
-                        self.errors.push(CheckError::try_in_non_fallible(span));
-                    }
+                // RFC-0007: E013 - await is a fallible operation, must be wrapped in try or catch
+                if !self.in_error_handling {
+                    self.errors.push(CheckError::unhandled_error("await", span));
                 }
 
                 if let Some(agent_name) = handle_ty.agent_name() {
@@ -779,6 +780,11 @@ impl Checker {
                 message,
                 span,
             } => {
+                // RFC-0007: E013 - send is a fallible operation, must be wrapped in try or catch
+                if !self.in_error_handling {
+                    self.errors.push(CheckError::unhandled_error("send", span));
+                }
+
                 let handle_ty = self.check_expr(handle);
                 let msg_ty = self.check_expr(message);
 
@@ -1036,7 +1042,7 @@ impl Checker {
 
             // RFC-0007: Error handling
             Expr::Try { expr, span } => {
-                // Check that we're in a fallible context
+                // Check that we're in a fallible context (can propagate errors)
                 if !self.in_fallible_context {
                     // In an agent, check for error handler
                     if self.current_agent.is_some() && !self.agent_has_error_handler {
@@ -1049,8 +1055,15 @@ impl Checker {
                     }
                 }
 
+                // Set error handling context for inner expression (suppresses E013)
+                let old_in_error_handling = self.in_error_handling;
+                self.in_error_handling = true;
+
                 // Check the inner expression
                 let inner_ty = self.check_expr(expr);
+
+                // Restore error handling context
+                self.in_error_handling = old_in_error_handling;
 
                 // Return the inner type (unwrapped from potential error)
                 inner_ty
@@ -1062,8 +1075,15 @@ impl Checker {
                 recovery,
                 span,
             } => {
+                // Set error handling context for inner expression (suppresses E013)
+                let old_in_error_handling = self.in_error_handling;
+                self.in_error_handling = true;
+
                 // Check the inner (fallible) expression
                 let expr_ty = self.check_expr(expr);
+
+                // Restore error handling context
+                self.in_error_handling = old_in_error_handling;
 
                 // Create a new scope for the recovery block (for error binding)
                 self.push_scope();
@@ -1535,6 +1555,11 @@ impl Checker {
     fn check_call(&mut self, name: &str, args: &[Expr], span: &sage_types::Span) -> Type {
         // Check for user-defined function
         if let Some(func) = self.symbols.get_function(name).cloned() {
+            // RFC-0007: E013 - fallible functions must be wrapped in try or catch
+            if func.is_fallible && !self.in_error_handling {
+                self.errors.push(CheckError::unhandled_error(name, span));
+            }
+
             if args.len() != func.params.len() {
                 self.errors.push(CheckError::wrong_arg_count(
                     name,
@@ -2440,6 +2465,8 @@ struct ModuleChecker<'a> {
     in_fallible_context: bool,
     /// RFC-0007: Whether the current agent has an error handler.
     agent_has_error_handler: bool,
+    /// RFC-0007: Whether we're inside a try or catch expression (for E013 enforcement).
+    in_error_handling: bool,
 }
 
 impl<'a> ModuleChecker<'a> {
@@ -2463,6 +2490,7 @@ impl<'a> ModuleChecker<'a> {
             receives_type: None,
             in_fallible_context: false,
             agent_has_error_handler: false,
+            in_error_handling: false,
         }
     }
 
@@ -2913,17 +2941,9 @@ impl<'a> ModuleChecker<'a> {
             Expr::Await { handle, span } => {
                 let handle_ty = self.check_expr(handle);
 
-                // RFC-0007: await is a fallible operation - check context
-                // Agents with on_error handlers catch errors internally
-                if !self.in_fallible_context && !self.agent_has_error_handler {
-                    if self.current_agent.is_some() {
-                        self.errors.push(CheckError::missing_error_handler(
-                            self.current_agent.as_ref().unwrap().clone(),
-                            span,
-                        ));
-                    } else {
-                        self.errors.push(CheckError::try_in_non_fallible(span));
-                    }
+                // RFC-0007: E013 - await is a fallible operation, must be wrapped in try or catch
+                if !self.in_error_handling {
+                    self.errors.push(CheckError::unhandled_error("await", span));
                 }
 
                 if let Some(agent_name) = handle_ty.agent_name() {
@@ -2944,6 +2964,11 @@ impl<'a> ModuleChecker<'a> {
                 message,
                 span,
             } => {
+                // RFC-0007: E013 - send is a fallible operation, must be wrapped in try or catch
+                if !self.in_error_handling {
+                    self.errors.push(CheckError::unhandled_error("send", span));
+                }
+
                 let handle_ty = self.check_expr(handle);
                 let msg_ty = self.check_expr(message);
 
@@ -3198,7 +3223,7 @@ impl<'a> ModuleChecker<'a> {
 
             // RFC-0007: Error handling
             Expr::Try { expr, span } => {
-                // Check that we're in a fallible context
+                // Check that we're in a fallible context (can propagate errors)
                 if !self.in_fallible_context {
                     // In an agent, check for error handler
                     if self.current_agent.is_some() && !self.agent_has_error_handler {
@@ -3211,8 +3236,15 @@ impl<'a> ModuleChecker<'a> {
                     }
                 }
 
+                // Set error handling context for inner expression (suppresses E013)
+                let old_in_error_handling = self.in_error_handling;
+                self.in_error_handling = true;
+
                 // Check the inner expression
                 let inner_ty = self.check_expr(expr);
+
+                // Restore error handling context
+                self.in_error_handling = old_in_error_handling;
 
                 // Return the inner type (unwrapped from potential error)
                 inner_ty
@@ -3224,8 +3256,15 @@ impl<'a> ModuleChecker<'a> {
                 recovery,
                 span,
             } => {
+                // Set error handling context for inner expression (suppresses E013)
+                let old_in_error_handling = self.in_error_handling;
+                self.in_error_handling = true;
+
                 // Check the inner (fallible) expression
                 let expr_ty = self.check_expr(expr);
+
+                // Restore error handling context
+                self.in_error_handling = old_in_error_handling;
 
                 // Create a new scope for the recovery block (for error binding)
                 self.push_scope();

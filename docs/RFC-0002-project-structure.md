@@ -431,7 +431,7 @@ run Coordinator
 
 ### Phase 4: CLI & Project Support (Partial)
 - [x] Parse `sage.toml`
-- [ ] Implement `sage new`
+- [x] Implement `sage new`
 - [x] Update `sage run` for projects
 - [x] Update `sage check` for projects
 

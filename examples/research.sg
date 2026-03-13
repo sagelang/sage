@@ -4,6 +4,7 @@
 // - Agent state (formerly "beliefs")
 // - spawn/await for concurrency
 // - infer for LLM integration
+// - Error handling with try/on error
 //
 // Run with: sage run examples/research.sg
 // (Requires SAGE_API_KEY environment variable, or use --mock for testing)
@@ -12,10 +13,14 @@ agent Researcher {
     topic: String
 
     on start {
-        let summary = infer(
+        let summary = try infer(
             "Write a concise 2-sentence summary of: {self.topic}"
         );
         emit(summary);
+    }
+
+    on error(e) {
+        emit("Research unavailable for this topic");
     }
 }
 
@@ -27,9 +32,9 @@ agent Coordinator {
         let r1 = spawn Researcher { topic: "quantum computing" };
         let r2 = spawn Researcher { topic: "CRISPR gene editing" };
 
-        // Await results
-        let s1 = await r1;
-        let s2 = await r2;
+        // Await results (researchers handle errors internally, so always succeed)
+        let s1 = try await r1;
+        let s2 = try await r2;
 
         // Display findings
         print("");
@@ -42,6 +47,11 @@ agent Coordinator {
         print(s2);
 
         emit("Research complete");
+    }
+
+    on error(e) {
+        print("Research pipeline failed");
+        emit("Research failed");
     }
 }
 

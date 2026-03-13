@@ -4,9 +4,14 @@
 
 agent Main {
     on start {
-        let response = infer("What is 2 + 2? Reply with just the number.");
+        let response = try infer("What is 2 + 2? Reply with just the number.");
         print("LLM says: " ++ response);
         emit(response);
+    }
+
+    on error(e) {
+        print("Error occurred");
+        emit("error");
     }
 }
 

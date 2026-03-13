@@ -39,6 +39,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Create a new Sage project
+    New {
+        /// Name of the project to create
+        name: String,
+    },
+
     /// Compile and run a Sage program
     Run {
         /// Path to the .sg file or project directory
@@ -143,6 +149,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::New { name } => cmd_new(&name),
         Commands::Run {
             file,
             release,
@@ -618,6 +625,83 @@ fn build_file(
     }
 
     Ok(Some(binary_path))
+}
+
+// =============================================================================
+// Project scaffolding
+// =============================================================================
+
+/// Create a new Sage project.
+fn cmd_new(name: &str) -> Result<()> {
+    let project_dir = PathBuf::from(name);
+
+    // Check if directory already exists
+    if project_dir.exists() {
+        miette::bail!("Directory '{}' already exists", name);
+    }
+
+    // Create project directory structure
+    let src_dir = project_dir.join("src");
+    std::fs::create_dir_all(&src_dir)
+        .into_diagnostic()
+        .wrap_err("Failed to create project directory")?;
+
+    // Create sage.toml
+    let sage_toml = format!(
+        r#"[project]
+name = "{name}"
+version = "0.1.0"
+"#
+    );
+    std::fs::write(project_dir.join("sage.toml"), sage_toml)
+        .into_diagnostic()
+        .wrap_err("Failed to write sage.toml")?;
+
+    // Create src/main.sg
+    let main_sg = r#"// Your first Sage agent
+
+agent Main {
+    on start {
+        print("Hello from Sage!");
+        emit(0);
+    }
+}
+
+run Main;
+"#;
+    std::fs::write(src_dir.join("main.sg"), main_sg)
+        .into_diagnostic()
+        .wrap_err("Failed to write src/main.sg")?;
+
+    // Print success message
+    print_banner();
+    println!(
+        "{}Created project {}",
+        SPARKLES,
+        style(name).green().bold()
+    );
+    println!();
+    println!("  {}", style(format!("{}/", name)).dim());
+    println!("  ├── {}", style("sage.toml").yellow());
+    println!("  └── {}", style("src/").dim());
+    println!("      └── {}", style("main.sg").yellow());
+    println!();
+    println!(
+        "{}Get started with:",
+        style("  ").dim()
+    );
+    println!(
+        "    {} {}",
+        style("cd").cyan(),
+        style(name).white()
+    );
+    println!(
+        "    {} {}",
+        style("sage run").cyan(),
+        style(".").white()
+    );
+
+    Ok(())
 }
 
 // =============================================================================

@@ -319,7 +319,7 @@ run Coordinator
 ### Phase 4 - Codegen
 - [x] Generate `loop`/`break`
 - [x] Generate `receive()` calls
-- [ ] Generate `send()` calls (deferred - requires parser support for send expression)
+- [x] Generate `send()` calls
 
 ---
 
