@@ -64,14 +64,15 @@ run Coordinator;
 
 ## Status
 
-**v0.5.0 released** — First-class tool support with built-in HTTP client.
+**v0.5.1 released** — Editor support with Language Server Protocol (LSP).
 
 | | |
 |---|---|
-| **Latest** | [v0.5.0](https://github.com/sagelang/sage/releases/tag/v0.5.0) |
+| **Latest** | [v0.5.1](https://github.com/sagelang/sage/releases/tag/v0.5.1) |
 | **Extension** | `.sg` |
 | **Platforms** | macOS (ARM), Linux (x86_64, ARM) |
 | **Build time** | ~0.5s |
+| **Editors** | [Zed](https://zed.dev), [VS Code](https://code.visualstudio.com) |
 
 See [docs/RFC-0001-poc.md](docs/RFC-0001-poc.md) for the language specification.
 
@@ -560,6 +561,37 @@ cd sage
 cargo build --release
 ```
 
+## Editor Support
+
+Sage includes a Language Server Protocol (LSP) implementation for real-time diagnostics in your editor.
+
+### Zed
+
+Install the Sage extension from the Zed extension registry, or search for "Sage" in Extensions (`Cmd+Shift+X`).
+
+Features:
+- Syntax highlighting (tree-sitter based)
+- Real-time error diagnostics
+- Auto-indentation
+
+### VS Code
+
+Install the Sage extension from the VS Code marketplace, or search for "Sage" in Extensions.
+
+Features:
+- Syntax highlighting (TextMate grammar)
+- Real-time error diagnostics
+
+### Language Server
+
+The language server is built into the `sage` CLI. Editors connect via:
+
+```bash
+sage sense
+```
+
+This starts the LSP server on stdin/stdout. Most editors handle this automatically when the Sage extension is installed.
+
 ## Usage
 
 Create a new project:
@@ -623,7 +655,8 @@ The compiler is written in ~9,000 lines of Rust, organised into focused crates:
 | `sage-checker` | Name resolution + type checker |
 | `sage-codegen` | Rust code generator |
 | `sage-runtime` | Async runtime, LLM integration |
-| `sage-lang` | Command-line interface |
+| `sage-sense` | Language Server Protocol (LSP) |
+| `sage-cli` | Command-line interface |
 
 ## Project Structure
 
@@ -638,7 +671,12 @@ sage/
 │   ├── sage-checker/      # Name resolution + type checker
 │   ├── sage-codegen/      # Rust code generator
 │   ├── sage-runtime/      # Runtime library (agents, LLM, etc.)
+│   ├── sage-sense/        # Language Server Protocol (LSP)
 │   └── sage-cli/          # CLI entry point
+├── editors/
+│   ├── sage-zed/          # Zed extension
+│   ├── tree-sitter-sage/  # Tree-sitter grammar
+│   └── vscode/            # VS Code extension
 ├── scripts/
 │   └── build-toolchain.sh # Build pre-compiled runtime
 ├── docs/
@@ -650,6 +688,7 @@ sage/
 │   ├── RFC-0009-*.md      # First-class functions
 │   ├── RFC-0010-*.md      # Maps, tuples, enum payloads
 │   ├── RFC-0011-*.md      # First-class tool support (Http)
+│   ├── RFC-0014-*.md      # Editor support / LSP
 │   └── VISION.md          # Roadmap and future direction
 ├── tests/
 │   └── docker/            # Installation verification tests

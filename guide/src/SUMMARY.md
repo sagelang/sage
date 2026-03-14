@@ -34,6 +34,12 @@
 - [Built-in Tools](./tools/overview.md)
 - [HTTP Client](./tools/http.md)
 
+# Editors
+
+- [Overview](./editors/overview.md)
+- [Zed](./editors/zed.md)
+- [VS Code](./editors/vscode.md)
+
 # Reference
 
 - [CLI Commands](./reference/cli.md)

@@ -121,6 +121,40 @@ sage check hello.sg
 # ✨ No errors in hello.sg
 ```
 
+## sage sense
+
+Start the Language Server Protocol (LSP) server for editor integration:
+
+```bash
+sage sense
+```
+
+This command starts the Sage language server on stdin/stdout. It's typically invoked automatically by editor extensions (Zed, VS Code) rather than manually.
+
+### Features
+
+The language server provides:
+
+- Real-time parse error reporting
+- Type checking diagnostics
+- Undefined variable detection
+- All compiler error codes
+
+### Manual Usage
+
+For editors without a Sage extension, configure the LSP client to run `sage sense` as the language server command.
+
+Example for generic LSP configuration:
+
+```json
+{
+  "languageId": "sage",
+  "command": "sage",
+  "args": ["sense"],
+  "fileExtensions": [".sg"]
+}
+```
+
 ## Global Options
 
 | Option | Description |

@@ -3,6 +3,8 @@ name = "zed-sage"
 version = "0.5.0"
 edition = "2021"
 
+[workspace]
+
 [lib]
 crate-type = ["cdylib"]
 

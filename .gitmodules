@@ -1,0 +1,3 @@
+[submodule "editors/tree-sitter-sage"]
+	path = editors/tree-sitter-sage
+	url = https://github.com/sagelang/tree-sitter-sage
