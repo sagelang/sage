@@ -1,6 +1,6 @@
 # Sage Language — POC RFC
 **RFC-0001 | Proof of Concept Specification**
-Version: 0.1.0-draft | Author: Pete Pavlovski | Status: Draft
+Version: 0.1.0 | Author: Pete Pavlovski | Status: Implemented
 
 ---
 
