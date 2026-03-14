@@ -18,7 +18,7 @@
 # Agents
 
 - [What Are Agents?](./agents/overview.md)
-- [Beliefs (State)](./agents/beliefs.md)
+- [Agent State](./agents/beliefs.md)
 - [Event Handlers](./agents/handlers.md)
 - [Spawning & Awaiting](./agents/spawning.md)
 - [Messaging](./agents/messaging.md)
@@ -28,6 +28,11 @@
 - [The infer Expression](./llm/infer.md)
 - [Configuration](./llm/configuration.md)
 - [Patterns](./llm/patterns.md)
+
+# Tools
+
+- [Built-in Tools](./tools/overview.md)
+- [HTTP Client](./tools/http.md)
 
 # Reference
 

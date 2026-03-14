@@ -24,6 +24,79 @@ let names: List<String> = ["Alice", "Bob"];
 let empty: List<Int> = [];
 ```
 
+### Map\<K, V\>
+
+Key-value collections:
+
+```sage
+let ages: Map<String, Int> = {"alice": 30, "bob": 25};
+let alice_age = map_get(ages, "alice");  // Option<Int>
+
+map_set(ages, "charlie", 35);
+let has_bob = map_has(ages, "bob");      // true
+let keys = map_keys(ages);               // List<String>
+```
+
+### Tuples
+
+Fixed-size heterogeneous collections:
+
+```sage
+let pair: (Int, String) = (42, "hello");
+let first = pair.0;   // 42
+let second = pair.1;  // "hello"
+
+// Tuple destructuring
+let (x, y) = pair;
+
+// Three-element tuple
+let triple: (Int, String, Bool) = (1, "test", true);
+```
+
+### Option\<T\>
+
+Optional values:
+
+```sage
+let some_value: Option<Int> = Some(42);
+let no_value: Option<Int> = None;
+
+// Pattern matching on Option
+match some_value {
+    Some(n) => print("Got: " ++ str(n)),
+    None => print("Nothing"),
+}
+```
+
+### Result\<T, E\>
+
+Success or error values:
+
+```sage
+let success: Result<Int, String> = Ok(42);
+let failure: Result<Int, String> = Err("not found");
+
+match success {
+    Ok(value) => print("Value: " ++ str(value)),
+    Err(msg) => print("Error: " ++ msg),
+}
+```
+
+### Fn(A, B) -> C
+
+Function types for closures and higher-order functions:
+
+```sage
+let add: Fn(Int, Int) -> Int = |x: Int, y: Int| x + y;
+let double: Fn(Int) -> Int = |x: Int| x * 2;
+
+fn apply(f: Fn(Int) -> Int, x: Int) -> Int {
+    return f(x);
+}
+
+let result = apply(double, 21);  // 42
+```
+
 ## User-Defined Types
 
 ### Records
@@ -78,6 +151,28 @@ let s = Active;
 let d = North;
 ```
 
+### Enum Payloads
+
+Enums can carry data:
+
+```sage
+enum Result {
+    Ok(Int),
+    Err(String),
+}
+
+enum Message {
+    Text(String),
+    Number(Int),
+    Pair(Int, String),
+}
+
+// Construct variants with payloads
+let success = Result::Ok(42);
+let failure = Result::Err("not found");
+let msg = Message::Pair(1, "hello");
+```
+
 ### Match Expressions
 
 Pattern match on enums and other values:
@@ -100,6 +195,27 @@ fn classify(n: Int) -> String {
         0 => "zero",
         1 => "one",
         _ => "many",
+    };
+}
+```
+
+### Pattern Matching with Payloads
+
+Bind payload values in match arms:
+
+```sage
+fn unwrap_result(r: Result) -> String {
+    return match r {
+        Ok(value) => str(value),
+        Err(msg) => msg,
+    };
+}
+
+fn handle_message(m: Message) -> String {
+    return match m {
+        Text(s) => s,
+        Number(n) => str(n),
+        Pair(n, s) => str(n) ++ ": " ++ s,
     };
 }
 ```
@@ -131,10 +247,16 @@ agent Worker {
 agent Main {
     on start {
         let w: Agent<Int> = spawn Worker {};
-        let result: Int = await w;
+        let result: Int = try await w;
         emit(result);
     }
+
+    on error(e) {
+        emit(0);
+    }
 }
+
+run Main;
 ```
 
 ### Inferred\<T\>
@@ -142,7 +264,7 @@ agent Main {
 The result of an LLM inference call:
 
 ```sage
-let summary: Inferred<String> = infer("Summarize: {topic}");
+let summary = try infer("Summarize: {topic}");
 ```
 
 `Inferred<T>` can be used anywhere `T` is expected — the type coerces automatically.
@@ -159,7 +281,8 @@ let list = [1, 2, 3];    // List<Int>
 
 Explicit annotations are required for:
 - Function parameters
-- Beliefs
+- Agent state fields
+- Closure parameters
 - Ambiguous cases
 
 ## Type Annotations
@@ -175,6 +298,10 @@ fn double(n: Int) -> Int {
 }
 
 agent Worker {
-    belief count: Int
+    count: Int
+
+    on start {
+        emit(self.count * 2);
+    }
 }
 ```

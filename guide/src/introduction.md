@@ -2,17 +2,21 @@
 
 Sage is a programming language where **agents are first-class citizens**.
 
-Instead of building agents using Python frameworks like LangChain or CrewAI, you write agents as naturally as you write functions. Agents, their beliefs, and their interactions are semantic primitives baked into the compiler and runtime.
+Instead of building agents using Python frameworks like LangChain or CrewAI, you write agents as naturally as you write functions. Agents, their state, and their interactions are semantic primitives baked into the compiler and runtime.
 
 ```sage
 agent Researcher {
-    belief topic: String
+    topic: String
 
     on start {
-        let summary: Inferred<String> = infer(
+        let summary = try infer(
             "Write a concise 2-sentence summary of: {self.topic}"
         );
         emit(summary);
+    }
+
+    on error(e) {
+        emit("Research unavailable");
     }
 }
 
@@ -21,12 +25,17 @@ agent Coordinator {
         let r1 = spawn Researcher { topic: "quantum computing" };
         let r2 = spawn Researcher { topic: "CRISPR gene editing" };
 
-        let s1 = await r1;
-        let s2 = await r2;
+        let s1 = try await r1;
+        let s2 = try await r2;
 
         print(s1);
         print(s2);
         emit(0);
+    }
+
+    on error(e) {
+        print("A researcher failed");
+        emit(1);
     }
 }
 
@@ -35,7 +44,7 @@ run Coordinator;
 
 ## Why Sage?
 
-**Agents as primitives, not patterns.** Most agent frameworks are libraries that impose patterns on top of a general-purpose language. Sage makes agents a first-class concept — the compiler understands what an agent is, what beliefs it holds, and how agents communicate.
+**Agents as primitives, not patterns.** Most agent frameworks are libraries that impose patterns on top of a general-purpose language. Sage makes agents a first-class concept — the compiler understands what an agent is, what state it holds, and how agents communicate.
 
 **Type-safe LLM integration.** The `infer` expression lets you call LLMs with structured output. The type system ensures you handle inference results correctly.
 
@@ -49,8 +58,9 @@ This guide covers:
 
 1. **Getting Started** — Install Sage and write your first program
 2. **Language Guide** — Syntax, types, and control flow
-3. **Agents** — Beliefs, handlers, spawning, and messaging
+3. **Agents** — State, handlers, spawning, and messaging
 4. **LLM Integration** — Using `infer` to call language models
-5. **Reference** — CLI commands, environment variables, error codes
+5. **Tools** — Built-in tools like HTTP for external services
+6. **Reference** — CLI commands, environment variables, error codes
 
 Let's get started with [installation](./getting-started/installation.md).

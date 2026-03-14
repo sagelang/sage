@@ -49,21 +49,27 @@ agent Worker receives WorkerMsg {
 
 ## The `send()` Function
 
-Send a message to a running agent using its handle:
+Send a message to a running agent using its handle. `send` is fallible (the agent might have terminated), so use `try`:
 
 ```sage
 agent Main {
     on start {
         let w = spawn Worker { id: 1 };
-        send(w, Task);
-        send(w, Shutdown);
-        await w;
+        try send(w, Task);
+        try send(w, Shutdown);
+        try await w;
         emit(0);
     }
+
+    on error(e) {
+        emit(1);
+    }
 }
+
+run Main;
 ```
 
-`send` is fire-and-forget — it queues the message and returns immediately.
+`send` queues the message and returns immediately.
 
 ## Long-Running Agents with `loop`
 
@@ -78,7 +84,7 @@ agent Worker receives WorkerMsg {
             let msg: WorkerMsg = receive();
             match msg {
                 Task => {
-                    let result: Inferred<String> = infer("Process a task");
+                    let result = try infer("Process a task");
                     print("Worker {self.id}: {result}");
                 }
                 Ping => {
@@ -90,6 +96,11 @@ agent Worker receives WorkerMsg {
             }
         }
         emit(0);
+    }
+
+    on error(e) {
+        print("Worker {self.id} failed: " ++ e);
+        emit(1);
     }
 }
 ```
@@ -110,7 +121,7 @@ agent Worker receives WorkerMsg {
             let msg: WorkerMsg = receive();
             match msg {
                 Task => {
-                    let result: Inferred<String> = infer("Summarise something interesting");
+                    let result = try infer("Summarise something interesting");
                     print("Worker {self.id}: {result}");
                 }
                 Shutdown => {
@@ -120,6 +131,11 @@ agent Worker receives WorkerMsg {
         }
         emit(0);
     }
+
+    on error(e) {
+        print("Worker {self.id} failed");
+        emit(1);
+    }
 }
 
 agent Coordinator {
@@ -128,20 +144,25 @@ agent Coordinator {
         let w2 = spawn Worker { id: 2 };
 
         // Distribute tasks
-        send(w1, Task);
-        send(w2, Task);
-        send(w1, Task);
-        send(w2, Task);
+        try send(w1, Task);
+        try send(w2, Task);
+        try send(w1, Task);
+        try send(w2, Task);
 
         // Shut down workers
-        send(w1, Shutdown);
-        send(w2, Shutdown);
+        try send(w1, Shutdown);
+        try send(w2, Shutdown);
 
         // Wait for completion
-        await w1;
-        await w2;
+        try await w1;
+        try await w2;
 
         emit(0);
+    }
+
+    on error(e) {
+        print("Coordination failed");
+        emit(1);
     }
 }
 
@@ -163,9 +184,13 @@ agent Worker receives WorkerMsg {
 agent Main {
     on start {
         let w = spawn Worker {};
-        send(w, Task);       // OK - Task is a WorkerMsg variant
-        send(w, "hello");    // Error: expected WorkerMsg, got String
+        try send(w, Task);       // OK - Task is a WorkerMsg variant
+        try send(w, "hello");    // Error: expected WorkerMsg, got String
         emit(0);
+    }
+
+    on error(e) {
+        emit(1);
     }
 }
 ```

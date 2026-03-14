@@ -30,32 +30,31 @@ Sage currently emphasises multi-agent coordination (spawn, await, send). But the
 
 ## Future Goals
 
-### 1. First-Class Tool/MCP Support
+### 1. First-Class Tool Support ✓
 
-The Model Context Protocol (MCP) is becoming the standard for agent-tool interaction. Sage should have native support:
+**Implemented in v0.5.0 (RFC-0011)**
+
+Agents can now use built-in tools with the `use` declaration:
 
 ```sage
-// Future syntax (not yet implemented)
-tool FileSystem {
-    fn read(path: String) -> String
-    fn write(path: String, content: String) -> Unit
-}
-
-tool Database {
-    fn query(sql: String) -> List<Row>
-}
-
-agent Assistant {
-    use FileSystem, Database
+agent Fetcher {
+    use Http
 
     on start {
-        let data = Database.query("SELECT * FROM users")
-        // ...
+        let response = try Http.get("https://api.example.com/data");
+        print(response.body);
+        emit(response.status);
+    }
+
+    on error(e) {
+        emit(-1);
     }
 }
+
+run Fetcher;
 ```
 
-This would make Sage viable for the single-agent + tools pattern that's dominant today.
+The `Http` tool provides `get` and `post` methods. Future tools (Fs, Kv, Database, Browser) will follow the same pattern. MCP integration is a potential future direction.
 
 ### 2. Tool Discovery & Composition
 
@@ -132,6 +131,7 @@ It's a domain-specific language for AI agent systems. That's a narrow but potent
 ## Resolved Questions
 
 - **How do we handle agent failures?** ✓ Implemented via `try`/`catch`/`on error` (RFC-0007)
+- **How do agents access external services?** ✓ Implemented via built-in tools with `use` declaration (RFC-0011)
 
 ---
 

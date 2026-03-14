@@ -2,6 +2,34 @@
 
 The `sage` command-line tool compiles and runs Sage programs.
 
+## sage new
+
+Create a new Sage project with scaffolding:
+
+```bash
+sage new my_project
+```
+
+This creates:
+
+```
+my_project/
+├── sage.toml           # Project manifest
+└── src/
+    └── main.sg         # Entry point with example code
+```
+
+### Examples
+
+```bash
+# Create a new project
+sage new my_agent
+
+# Enter the project and run it
+cd my_agent
+sage run .
+```
+
 ## sage run
 
 Compile and execute a Sage program:

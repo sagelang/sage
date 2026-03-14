@@ -5,14 +5,14 @@ Agents are the core abstraction in Sage — autonomous units of computation with
 ## The Mental Model
 
 Think of an agent as a small, focused worker:
-- It has **beliefs** (its private state)
-- It responds to **events** (start, messages, stop)
+- It has **state** (its private fields)
+- It responds to **events** (start, messages, errors)
 - It can **spawn** other agents
 - It **emits** a result when done
 
 ```sage
 agent Worker {
-    belief task: String       // State
+    task: String              // State
 
     on start {                // Event handler
         let result = do_work(self.task);
@@ -34,7 +34,7 @@ Threads are low-level and share memory. Agents are high-level and communicate th
 
 ## Agent Lifecycle
 
-1. **Spawn** — Agent is created with initial beliefs
+1. **Spawn** — Agent is created with initial state
 2. **Start** — The `on start` handler runs
 3. **Running** — Agent can receive messages, spawn other agents
 4. **Emit** — Agent produces its result
@@ -63,7 +63,7 @@ spawn Worker { task: "..." }
 
 ```sage
 agent Counter {
-    belief initial: Int
+    initial: Int
 
     on start {
         let count = self.initial;
@@ -81,11 +81,16 @@ agent Main {
         let c1 = spawn Counter { initial: 0 };
         let c2 = spawn Counter { initial: 100 };
 
-        let r1 = await c1;  // 5
-        let r2 = await c2;  // 105
+        let r1 = try await c1;  // 5
+        let r2 = try await c2;  // 105
 
         print("Results: " ++ str(r1) ++ ", " ++ str(r2));
         emit(0);
+    }
+
+    on error(e) {
+        print("A counter failed");
+        emit(1);
     }
 }
 
@@ -96,7 +101,7 @@ Both counters run concurrently. The main agent waits for both results.
 
 ## Next
 
-- [Beliefs](./beliefs.md) — Agent state
+- [State](./beliefs.md) — Agent fields
 - [Event Handlers](./handlers.md) — Responding to events
 - [Spawning & Awaiting](./spawning.md) — Creating and coordinating agents
 - [Messaging](./messaging.md) — Communication between agents

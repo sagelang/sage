@@ -64,11 +64,11 @@ run Coordinator;
 
 ## Status
 
-**v0.4.0 released** — Error handling enforcement, `sage new` scaffolding.
+**v0.5.0 released** — First-class tool support with built-in HTTP client.
 
 | | |
 |---|---|
-| **Latest** | [v0.4.0](https://github.com/sagelang/sage/releases/tag/v0.4.0) |
+| **Latest** | [v0.5.0](https://github.com/sagelang/sage/releases/tag/v0.5.0) |
 | **Extension** | `.sg` |
 | **Platforms** | macOS (ARM), Linux (x86_64, ARM) |
 | **Build time** | ~0.5s |
@@ -400,6 +400,44 @@ fn risky_operation() -> Int fails {
 }
 ```
 
+### Built-in Tools
+
+Agents can use built-in tools by declaring them with `use`:
+
+```sage
+agent Fetcher {
+    use Http
+
+    on start {
+        let response = try Http.get("https://httpbin.org/get");
+        print(response.body);
+        emit(response.status);
+    }
+
+    on error(e) {
+        emit(-1);
+    }
+}
+
+run Fetcher;
+```
+
+**Available tools:**
+
+| Tool | Methods | Description |
+|------|---------|-------------|
+| `Http` | `get(url)`, `post(url, body)` | HTTP client for web requests |
+
+**HttpResponse fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | `Int` | HTTP status code (e.g., 200, 404) |
+| `body` | `String` | Response body as text |
+| `headers` | `Map<String, String>` | Response headers |
+
+Tool calls are fallible and must be wrapped in `try` or `catch`.
+
 ### Expressions
 
 | Operator | Description |
@@ -451,6 +489,8 @@ let (x, y) = pair;
 | `map_delete(map, key)` | Remove key from map |
 | `map_keys(map)` | Get all keys as list |
 | `map_values(map)` | Get all values as list |
+| `Http.get(url)` | HTTP GET request (requires `use Http`) |
+| `Http.post(url, body)` | HTTP POST request (requires `use Http`) |
 
 ### Semicolons
 
@@ -609,6 +649,7 @@ sage/
 │   ├── RFC-0007-*.md      # Error handling
 │   ├── RFC-0009-*.md      # First-class functions
 │   ├── RFC-0010-*.md      # Maps, tuples, enum payloads
+│   ├── RFC-0011-*.md      # First-class tool support (Http)
 │   └── VISION.md          # Roadmap and future direction
 ├── tests/
 │   └── docker/            # Installation verification tests

@@ -1,8 +1,8 @@
-# Beliefs (State)
+# Agent State
 
-Beliefs are an agent's private state. They're initialized when the agent is spawned and can be accessed throughout the agent's lifetime.
+Agent fields are private state. They're initialized when the agent is spawned and can be accessed throughout the agent's lifetime.
 
-## Declaring Beliefs
+## Declaring Fields
 
 Agent state uses record-style field declarations:
 
@@ -15,7 +15,7 @@ agent Person {
 
 Fields must have explicit type annotations.
 
-## Initializing Beliefs
+## Initializing Fields
 
 When spawning an agent, provide values for all fields:
 
@@ -30,7 +30,7 @@ Missing fields cause a compile error:
 let p = spawn Person { name: "Alice" };
 ```
 
-## Accessing Beliefs
+## Accessing Fields
 
 Use `self.fieldName` inside the agent:
 
@@ -45,16 +45,16 @@ agent Greeter {
 }
 ```
 
-## Beliefs Are Immutable
+## Fields Are Immutable
 
-Beliefs cannot be reassigned after initialization:
+Fields cannot be reassigned after initialization:
 
 ```sage
 agent Counter {
     count: Int
 
     on start {
-        // This won't work — beliefs are immutable
+        // This won't work — fields are immutable
         // self.count = self.count + 1;
 
         // Use a local variable instead
@@ -65,12 +65,12 @@ agent Counter {
 }
 ```
 
-## Entry Agent Beliefs
+## Entry Agent Fields
 
-The entry agent (the one in `run`) cannot have required beliefs:
+The entry agent (the one in `run`) cannot have required fields:
 
 ```sage
-// Error: entry agent cannot have required beliefs
+// Error: entry agent cannot have required fields
 agent Main {
     config: String
 
@@ -84,7 +84,7 @@ run Main;  // How would we provide `config`?
 
 ## Design Pattern: Configuration
 
-Use beliefs to configure agent behavior:
+Use fields to configure agent behavior:
 
 ```sage
 agent Fetcher {
@@ -108,9 +108,13 @@ agent Main {
             timeout: 3000
         };
 
-        let r1 = await f1;
-        let r2 = await f2;
+        let r1 = try await f1;
+        let r2 = try await f2;
         emit(0);
+    }
+
+    on error(e) {
+        emit(1);
     }
 }
 

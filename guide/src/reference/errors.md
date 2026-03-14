@@ -78,20 +78,44 @@ error: unknown agent 'Worker'
 
 **Fix**: Define the agent or check the spelling.
 
-### Missing belief
+### Missing field
 
 ```
-error: missing belief 'name'
+error: missing field 'name'
   --> hello.sg:15:22
   |
 15 |     let g = spawn Greeter {};
-   |                   ^^^^^^^^^ belief 'name' not provided
+   |                   ^^^^^^^^^ field 'name' not provided
 ```
 
-**Fix**: Provide all required beliefs when spawning:
+**Fix**: Provide all required fields when spawning:
 
 ```sage
 let g = spawn Greeter { name: "World" };
+```
+
+### Unhandled fallible operation (E013)
+
+```
+error[E013]: fallible operation must be handled
+  --> hello.sg:5:15
+  |
+5 |     let x = infer("prompt");
+  |             ^^^^^^^^^^^^^^^ this can fail
+  |
+  = help: use 'try' to propagate or 'catch' to handle inline
+```
+
+**Fix**: Handle the error with `try` or `catch`:
+
+```sage
+// Propagate to on error handler
+let x = try infer("prompt");
+
+// Or handle inline
+let x = catch infer("prompt") {
+    "fallback"
+};
 ```
 
 ### Wrong message type
@@ -100,11 +124,11 @@ let g = spawn Greeter { name: "World" };
 error: type mismatch in send
   --> hello.sg:8:10
   |
-8 |     send(worker, "hello");
-  |          ^^^^^^^^^^^^^^^^ worker expects Int, got String
+8 |     try send(worker, "hello");
+  |              ^^^^^^^^^^^^^^^^ worker expects WorkerMsg, got String
 ```
 
-**Fix**: Send a value of the type the agent's message handler expects.
+**Fix**: Send a value of the type the agent accepts (defined by its `receives` clause).
 
 ## Runtime Errors
 

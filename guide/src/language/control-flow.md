@@ -40,6 +40,16 @@ for name in names {
 }
 ```
 
+Iterate over maps with tuple destructuring:
+
+```sage
+let scores = {"alice": 100, "bob": 85, "charlie": 92};
+
+for (name, score) in scores {
+    print(name ++ ": " ++ str(score));
+}
+```
+
 ## While Loops
 
 ```sage

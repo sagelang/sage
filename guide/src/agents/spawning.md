@@ -15,21 +15,25 @@ The spawned agent starts running immediately and concurrently with the spawning 
 ### Spawn Syntax
 
 ```sage
-spawn AgentName { belief1: value1, belief2: value2 }
+spawn AgentName { field1: value1, field2: value2 }
 ```
 
-All beliefs must be provided:
+All fields must be provided:
 
 ```sage
 agent Point {
-    belief x: Int
-    belief y: Int
+    x: Int
+    y: Int
+
+    on start {
+        emit(self.x + self.y);
+    }
 }
 
 // Correct
 let p = spawn Point { x: 10, y: 20 };
 
-// Error: missing belief `y`
+// Error: missing field `y`
 let p = spawn Point { x: 10 };
 ```
 
@@ -49,11 +53,11 @@ let w: Agent<Int> = spawn Worker {};
 
 ## await
 
-Waits for an agent to emit its result:
+Waits for an agent to emit its result. Since agents can fail, `await` is a fallible operation that requires `try`:
 
 ```sage
 let worker = spawn Worker {};
-let result = await worker;  // Blocks until Worker emits
+let result = try await worker;  // Blocks until Worker emits
 ```
 
 ### Await Type
@@ -67,8 +71,20 @@ agent StringWorker {
     }
 }
 
-let w = spawn StringWorker {};
-let result: String = await w;
+agent Main {
+    on start {
+        let w = spawn StringWorker {};
+        let result: String = try await w;
+        print(result);
+        emit(0);
+    }
+
+    on error(e) {
+        emit(1);
+    }
+}
+
+run Main;
 ```
 
 ### Await Blocks
@@ -81,7 +97,7 @@ Spawned agents run concurrently:
 
 ```sage
 agent Sleeper {
-    belief ms: Int
+    ms: Int
 
     on start {
         sleep_ms(self.ms);
@@ -97,11 +113,15 @@ agent Main {
         let s3 = spawn Sleeper { ms: 300 };
 
         // Total time: ~300ms (not 600ms)
-        let r1 = await s1;
-        let r2 = await s2;
-        let r3 = await s3;
+        let r1 = try await s1;
+        let r2 = try await s2;
+        let r3 = try await s3;
 
         emit(0);
+    }
+
+    on error(e) {
+        emit(1);
     }
 }
 
@@ -114,13 +134,17 @@ Spawn multiple workers, await all results:
 
 ```sage
 agent Researcher {
-    belief topic: String
+    topic: String
 
     on start {
-        let result: Inferred<String> = infer(
+        let result = try infer(
             "One sentence about: {self.topic}"
         );
         emit(result);
+    }
+
+    on error(e) {
+        emit("Research failed");
     }
 }
 
@@ -132,14 +156,19 @@ agent Coordinator {
         let r3 = spawn Researcher { topic: "Quantum" };
 
         // Fan in
-        let s1 = await r1;
-        let s2 = await r2;
-        let s3 = await r3;
+        let s1 = try await r1;
+        let s2 = try await r2;
+        let s3 = try await r3;
 
         print(s1);
         print(s2);
         print(s3);
         emit(0);
+    }
+
+    on error(e) {
+        print("A researcher failed");
+        emit(1);
     }
 }
 
@@ -152,7 +181,8 @@ Chain agents together:
 
 ```sage
 agent Step1 {
-    belief input: String
+    input: String
+
     on start {
         let result = self.input ++ " -> step1";
         emit(result);
@@ -160,7 +190,8 @@ agent Step1 {
 }
 
 agent Step2 {
-    belief input: String
+    input: String
+
     on start {
         let result = self.input ++ " -> step2";
         emit(result);
@@ -170,13 +201,17 @@ agent Step2 {
 agent Main {
     on start {
         let s1 = spawn Step1 { input: "start" };
-        let r1 = await s1;
+        let r1 = try await s1;
 
         let s2 = spawn Step2 { input: r1 };
-        let r2 = await s2;
+        let r2 = try await s2;
 
         print(r2);  // "start -> step1 -> step2"
         emit(0);
+    }
+
+    on error(e) {
+        emit(1);
     }
 }
 

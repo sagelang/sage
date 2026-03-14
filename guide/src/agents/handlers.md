@@ -17,46 +17,59 @@ agent Worker {
 
 Every agent must have an `on start` handler — it's where the agent's main logic lives.
 
-## on message
+## on error
 
-Runs when the agent receives a message:
+Handles errors propagated by `try`:
 
 ```sage
-agent Accumulator {
+agent Researcher {
+    topic: String
+
     on start {
-        // Wait for messages
+        let result = try infer("Summarize: {self.topic}");
+        emit(result);
     }
 
-    on message(value: Int) {
-        print("Received: " ++ str(value));
+    on error(e) {
+        print("Research failed: " ++ e);
+        emit("unavailable");
     }
 }
 ```
 
-See [Messaging](./messaging.md) for details on sending messages.
+When a `try` expression fails, control jumps to `on error`. Without an `on error` handler, the agent will panic.
 
-## on stop
+## Message Handling
 
-Runs when the agent is about to terminate (not yet implemented):
+For agents that receive messages, use the `receives` clause with `receive()`:
 
 ```sage
-agent Worker {
+enum Command {
+    Ping,
+    Shutdown,
+}
+
+agent Worker receives Command {
     on start {
-        // Do work
+        loop {
+            let msg: Command = receive();
+            match msg {
+                Ping => print("Pong!"),
+                Shutdown => break,
+            }
+        }
         emit(0);
     }
-
-    on stop {
-        print("Cleaning up...");
-    }
 }
 ```
+
+See [Messaging](./messaging.md) for details.
 
 ## Handler Order
 
 1. `on start` runs first, exactly once
-2. `on message` can run multiple times, whenever a message arrives
-3. `on stop` runs last, after `emit`
+2. `on error` runs if a `try` expression fails
+3. After `emit`, the agent terminates
 
 ## emit
 
@@ -64,8 +77,8 @@ The `emit` expression signals that the agent has produced its result:
 
 ```sage
 agent Calculator {
-    belief a: Int
-    belief b: Int
+    a: Int
+    b: Int
 
     on start {
         let result = self.a + self.b;
@@ -104,13 +117,15 @@ agent Example {
     on start {
         let x = 42;
         // x is only visible here
+        emit(0);
     }
 
-    on message(n: Int) {
+    on error(e) {
         // x is not visible here
-        // Use beliefs for persistent state
+        // Use agent fields for persistent state
+        emit(1);
     }
 }
 ```
 
-Use beliefs for state that needs to persist across handlers.
+Use agent fields (accessed via `self`) for state that needs to persist.
