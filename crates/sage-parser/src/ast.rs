@@ -23,6 +23,8 @@ pub struct Program {
     pub enums: Vec<EnumDecl>,
     /// Constant declarations.
     pub consts: Vec<ConstDecl>,
+    /// Tool declarations (RFC-0011).
+    pub tools: Vec<ToolDecl>,
     /// Agent declarations.
     pub agents: Vec<AgentDecl>,
     /// Function declarations.
@@ -143,6 +145,36 @@ pub struct ConstDecl {
 }
 
 // =============================================================================
+// Tool declarations (RFC-0011)
+// =============================================================================
+
+/// A tool declaration: `tool Http { fn get(url: String) -> Result<String, String> }`
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolDecl {
+    /// Whether this tool is public.
+    pub is_pub: bool,
+    /// The tool's name.
+    pub name: Ident,
+    /// The tool's function signatures.
+    pub functions: Vec<ToolFnDecl>,
+    /// Span covering the declaration.
+    pub span: Span,
+}
+
+/// A function signature in a tool declaration (no body).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolFnDecl {
+    /// The function's name.
+    pub name: Ident,
+    /// The function's parameters.
+    pub params: Vec<Param>,
+    /// The return type.
+    pub return_ty: TypeExpr,
+    /// Span covering the declaration.
+    pub span: Span,
+}
+
+// =============================================================================
 // Agent declarations
 // =============================================================================
 
@@ -155,6 +187,8 @@ pub struct AgentDecl {
     pub name: Ident,
     /// The message type this agent receives (for message passing).
     pub receives: Option<TypeExpr>,
+    /// Tools this agent uses (RFC-0011): `use Http, Fs`
+    pub tool_uses: Vec<Ident>,
     /// Belief declarations (agent state).
     pub beliefs: Vec<BeliefDecl>,
     /// Event handlers.
@@ -658,6 +692,18 @@ pub enum Expr {
         /// Span covering the expression.
         span: Span,
     },
+
+    /// Tool function call (RFC-0011): `Http.get(url)`
+    ToolCall {
+        /// The tool name.
+        tool: Ident,
+        /// The function name.
+        function: Ident,
+        /// The arguments.
+        args: Vec<Expr>,
+        /// Span covering the expression.
+        span: Span,
+    },
 }
 
 /// A map entry: `key: value`
@@ -701,7 +747,8 @@ impl Expr {
             | Expr::Tuple { span, .. }
             | Expr::TupleIndex { span, .. }
             | Expr::Map { span, .. }
-            | Expr::VariantConstruct { span, .. } => span,
+            | Expr::VariantConstruct { span, .. }
+            | Expr::ToolCall { span, .. } => span,
         }
     }
 }

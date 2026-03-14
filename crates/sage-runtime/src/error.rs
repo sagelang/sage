@@ -20,6 +20,8 @@ pub enum ErrorKind {
     Agent,
     /// Runtime errors (type mismatches, I/O, etc.).
     Runtime,
+    /// RFC-0011: Error from tool execution (Http, Fs, etc.).
+    Tool,
 }
 
 impl std::fmt::Display for ErrorKind {
@@ -28,6 +30,7 @@ impl std::fmt::Display for ErrorKind {
             ErrorKind::Llm => write!(f, "Llm"),
             ErrorKind::Agent => write!(f, "Agent"),
             ErrorKind::Runtime => write!(f, "Runtime"),
+            ErrorKind::Tool => write!(f, "Tool"),
         }
     }
 }
@@ -61,6 +64,10 @@ pub enum SageError {
     /// Agent task was cancelled or panicked.
     #[error("Agent task failed: {0}")]
     JoinError(String),
+
+    /// RFC-0011: Error from tool execution.
+    #[error("Tool error: {0}")]
+    Tool(String),
 }
 
 impl SageError {
@@ -78,9 +85,11 @@ impl SageError {
     #[must_use]
     pub fn kind(&self) -> ErrorKind {
         match self {
-            SageError::Llm(_) | SageError::Http(_) | SageError::Json(_) => ErrorKind::Llm,
+            SageError::Llm(_) | SageError::Json(_) => ErrorKind::Llm,
             SageError::Agent(_) | SageError::JoinError(_) => ErrorKind::Agent,
             SageError::Type { .. } => ErrorKind::Runtime,
+            // RFC-0011: Http errors are tool errors
+            SageError::Http(_) | SageError::Tool(_) => ErrorKind::Tool,
         }
     }
 
@@ -103,6 +112,12 @@ impl SageError {
             expected: expected.into(),
             got: got.into(),
         }
+    }
+
+    /// RFC-0011: Create a tool error with a message.
+    #[must_use]
+    pub fn tool(msg: impl Into<String>) -> Self {
+        SageError::Tool(msg.into())
     }
 }
 
@@ -137,5 +152,12 @@ mod tests {
         assert_eq!(format!("{}", ErrorKind::Llm), "Llm");
         assert_eq!(format!("{}", ErrorKind::Agent), "Agent");
         assert_eq!(format!("{}", ErrorKind::Runtime), "Runtime");
+        assert_eq!(format!("{}", ErrorKind::Tool), "Tool");
+    }
+
+    #[test]
+    fn tool_error_classification() {
+        assert_eq!(SageError::tool("http failed").kind(), ErrorKind::Tool);
+        assert_eq!(SageError::tool("timeout").message(), "Tool error: timeout");
     }
 }

@@ -130,6 +130,9 @@ pub enum Token {
     #[token("error")]
     KwError,
 
+    #[token("tool")]
+    KwTool,
+
     // =========================================================================
     // Type keywords
     // =========================================================================
@@ -344,6 +347,7 @@ impl Token {
                 | Token::KwTry
                 | Token::KwCatch
                 | Token::KwError
+                | Token::KwTool
         )
     }
 
@@ -446,6 +450,7 @@ impl std::fmt::Display for Token {
             Token::KwTry => write!(f, "try"),
             Token::KwCatch => write!(f, "catch"),
             Token::KwError => write!(f, "error"),
+            Token::KwTool => write!(f, "tool"),
 
             // Type keywords
             Token::TyInt => write!(f, "Int"),
@@ -1066,5 +1071,45 @@ mod tests {
     fn pipe_display() {
         assert_eq!(format!("{}", Token::Pipe), "|");
         assert_eq!(format!("{}", Token::TyFn), "Fn");
+    }
+
+    // =========================================================================
+    // RFC-0011: Tool Support
+    // =========================================================================
+
+    #[test]
+    fn lex_tool_keyword() {
+        let mut lexer = Token::lexer("tool Http { fn get(url: String) -> String }");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwTool)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // Http
+        assert_eq!(lexer.next(), Some(Ok(Token::LBrace)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwFn)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // get
+        assert_eq!(lexer.next(), Some(Ok(Token::LParen)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // url
+        assert_eq!(lexer.next(), Some(Ok(Token::Colon)));
+        assert_eq!(lexer.next(), Some(Ok(Token::TyString)));
+        assert_eq!(lexer.next(), Some(Ok(Token::RParen)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Arrow)));
+        assert_eq!(lexer.next(), Some(Ok(Token::TyString)));
+        assert_eq!(lexer.next(), Some(Ok(Token::RBrace)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn tool_is_keyword() {
+        assert!(Token::KwTool.is_keyword());
+    }
+
+    #[test]
+    fn lex_agent_use_tool() {
+        let mut lexer = Token::lexer("agent Fetcher { use Http }");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwAgent)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // Fetcher
+        assert_eq!(lexer.next(), Some(Ok(Token::LBrace)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwUse)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // Http
+        assert_eq!(lexer.next(), Some(Ok(Token::RBrace)));
+        assert_eq!(lexer.next(), None);
     }
 }

@@ -61,6 +61,8 @@ pub struct AgentContext<T> {
     result_tx: Option<oneshot::Sender<T>>,
     /// Channel to receive messages from other agents.
     message_rx: mpsc::Receiver<Message>,
+    /// Whether emit has been called (prevents double-emit).
+    emitted: bool,
 }
 
 impl<T> AgentContext<T> {
@@ -74,16 +76,23 @@ impl<T> AgentContext<T> {
             llm,
             result_tx: Some(result_tx),
             message_rx,
+            emitted: false,
         }
     }
 
     /// Emit a value to the awaiter.
     ///
     /// This should be called once at the end of the agent's execution.
-    pub fn emit(mut self, value: T) -> SageResult<T>
+    /// Calling emit multiple times is a no-op after the first call.
+    pub fn emit(&mut self, value: T) -> SageResult<T>
     where
         T: Clone,
     {
+        if self.emitted {
+            // Already emitted, just return the value
+            return Ok(value);
+        }
+        self.emitted = true;
         if let Some(tx) = self.result_tx.take() {
             // Ignore send errors - the receiver may have been dropped
             let _ = tx.send(value.clone());
@@ -175,7 +184,7 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_simple_agent() {
-        let handle = spawn(|ctx: AgentContext<i64>| async move { ctx.emit(42) });
+        let handle = spawn(|mut ctx: AgentContext<i64>| async move { ctx.emit(42) });
 
         let result = handle.result().await.expect("agent should succeed");
         assert_eq!(result, 42);
@@ -183,7 +192,7 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_agent_with_computation() {
-        let handle = spawn(|ctx: AgentContext<i64>| async move {
+        let handle = spawn(|mut ctx: AgentContext<i64>| async move {
             let sum = (1..=10).sum();
             ctx.emit(sum)
         });

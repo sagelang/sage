@@ -92,17 +92,10 @@ impl Generator {
 
         // Entry point (required for executables)
         if let Some(run_agent) = &program.run_agent {
-            // RFC-0007: Check if entry agent has an error handler
-            let has_error_handler = program
-                .agents
-                .iter()
-                .find(|a| a.name.name == run_agent.name)
-                .map_or(false, |a| {
-                    a.handlers
-                        .iter()
-                        .any(|h| matches!(h.event, EventKind::Error { .. }))
-                });
-            self.generate_main(&run_agent.name, has_error_handler);
+            // Find the entry agent
+            if let Some(agent) = program.agents.iter().find(|a| a.name.name == run_agent.name) {
+                self.generate_main(agent);
+            }
         }
 
         std::mem::take(&mut self.emit).finish()
@@ -188,18 +181,15 @@ impl Generator {
 
             // Entry point (only in root module)
             if let Some(run_agent) = &root_module.program.run_agent {
-                // RFC-0007: Check if entry agent has an error handler
-                let has_error_handler = root_module
+                // Find the entry agent
+                if let Some(agent) = root_module
                     .program
                     .agents
                     .iter()
                     .find(|a| a.name.name == run_agent.name)
-                    .map_or(false, |a| {
-                        a.handlers
-                            .iter()
-                            .any(|h| matches!(h.event, EventKind::Error { .. }))
-                    });
-                self.generate_main(&run_agent.name, has_error_handler);
+                {
+                    self.generate_main(agent);
+                }
             }
         }
 
@@ -318,17 +308,32 @@ serde_json = "1"
     fn generate_agent(&mut self, agent: &AgentDecl) {
         let name = &agent.name.name;
 
+        // RFC-0011: Check for tool usage
+        let has_tools = !agent.tool_uses.is_empty();
+        let needs_struct_body = !agent.beliefs.is_empty() || has_tools;
+
         // Struct definition with visibility
         if agent.is_pub {
             self.emit.write("pub ");
         }
         self.emit.write("struct ");
         self.emit.write(name);
-        if agent.beliefs.is_empty() {
+        if !needs_struct_body {
             self.emit.writeln(";");
         } else {
             self.emit.writeln(" {");
             self.emit.indent();
+
+            // RFC-0011: Generate tool fields
+            for tool_use in &agent.tool_uses {
+                // Generate field like: http: HttpClient
+                self.emit.write(&tool_use.name.to_lowercase());
+                self.emit.write(": ");
+                self.emit.write(&tool_use.name);
+                self.emit.writeln("Client,");
+            }
+
+            // Regular belief fields
             for belief in &agent.beliefs {
                 self.emit.write(&belief.name.name);
                 self.emit.write(": ");
@@ -354,7 +359,7 @@ serde_json = "1"
             match &handler.event {
                 EventKind::Start => {
                     self.emit
-                        .write("async fn on_start(self, ctx: AgentContext<");
+                        .write("async fn on_start(self, ctx: &mut AgentContext<");
                     self.emit.write(&output_type);
                     self.emit.write(">) -> SageResult<");
                     self.emit.write(&output_type);
@@ -369,7 +374,7 @@ serde_json = "1"
                 EventKind::Error { param_name } => {
                     self.emit.write("async fn on_error(self, ");
                     self.emit.write(&param_name.name);
-                    self.emit.write(": SageError, ctx: AgentContext<");
+                    self.emit.write(": SageError, ctx: &mut AgentContext<");
                     self.emit.write(&output_type);
                     self.emit.write(">) -> SageResult<");
                     self.emit.write(&output_type);
@@ -389,33 +394,64 @@ serde_json = "1"
         self.emit.writeln("}");
     }
 
-    fn generate_main(&mut self, entry_agent: &str, has_error_handler: bool) {
+    fn generate_main(&mut self, agent: &AgentDecl) {
+        let entry_agent = &agent.name.name;
+        let has_error_handler = agent
+            .handlers
+            .iter()
+            .any(|h| matches!(h.event, EventKind::Error { .. }));
+
+        // RFC-0011: Check if agent uses tools
+        let has_tools = !agent.tool_uses.is_empty();
+
         self.emit.writeln("#[tokio::main]");
         self.emit
             .writeln("async fn main() -> Result<(), Box<dyn std::error::Error>> {");
         self.emit.indent();
 
+        // Helper to generate agent construction (with or without tool fields)
+        let agent_construct = if has_tools {
+            let mut s = format!("{entry_agent} {{ ");
+            for (i, tool_use) in agent.tool_uses.iter().enumerate() {
+                if i > 0 {
+                    s.push_str(", ");
+                }
+                // Generate: http: HttpClient::from_env()
+                s.push_str(&tool_use.name.to_lowercase());
+                s.push_str(": ");
+                s.push_str(&tool_use.name);
+                s.push_str("Client::from_env()");
+            }
+            s.push_str(" }");
+            s
+        } else {
+            entry_agent.to_string()
+        };
+
         if has_error_handler {
             // RFC-0007: Generate error dispatch code
+            // Handlers take &mut ctx, so no cloning needed
             self.emit
-                .writeln("let handle = sage_runtime::spawn(|ctx| async move {");
+                .writeln("let handle = sage_runtime::spawn(|mut ctx| async move {");
             self.emit.indent();
-            self.emit.write("match ");
-            self.emit.write(entry_agent);
-            self.emit.writeln(".on_start(ctx.clone()).await {");
+            self.emit.write("let agent = ");
+            self.emit.write(&agent_construct);
+            self.emit.writeln(";");
+            self.emit.writeln("match agent.on_start(&mut ctx).await {");
             self.emit.indent();
             self.emit.writeln("Ok(result) => Ok(result),");
             self.emit.write("Err(e) => ");
-            self.emit.write(entry_agent);
-            self.emit.writeln(".on_error(e, ctx).await,");
+            self.emit.write(&agent_construct);
+            self.emit.writeln(".on_error(e, &mut ctx).await,");
             self.emit.dedent();
             self.emit.writeln("}");
             self.emit.dedent();
             self.emit.writeln("});");
         } else {
-            self.emit.write("let handle = sage_runtime::spawn(|ctx| ");
-            self.emit.write(entry_agent);
-            self.emit.writeln(".on_start(ctx));");
+            // Simple case: no error handler
+            self.emit.write("let handle = sage_runtime::spawn(|mut ctx| ");
+            self.emit.write(&agent_construct);
+            self.emit.writeln(".on_start(&mut ctx));");
         }
 
         self.emit.writeln("let result = handle.result().await?;");
@@ -713,7 +749,6 @@ serde_json = "1"
                 self.emit_string_template(template);
             }
 
-            // TODO: Implement in RFC-0005
             Expr::Match {
                 scrutinee, arms, ..
             } => {
@@ -731,7 +766,6 @@ serde_json = "1"
                 self.emit.write("}");
             }
 
-            // TODO: Implement in RFC-0005
             Expr::RecordConstruct { name, fields, .. } => {
                 self.emit.write(&name.name);
                 self.emit.write(" { ");
@@ -746,7 +780,6 @@ serde_json = "1"
                 self.emit.write(" }");
             }
 
-            // TODO: Implement in RFC-0005
             Expr::FieldAccess { object, field, .. } => {
                 self.generate_expr(object);
                 self.emit.write(".");
@@ -863,6 +896,29 @@ serde_json = "1"
                     self.generate_expr(payload_expr);
                     self.emit.write(")");
                 }
+            }
+
+            // RFC-0011: Tool calls
+            Expr::ToolCall {
+                tool,
+                function,
+                args,
+                ..
+            } => {
+                // Generate: self.tool_name.function(args).await
+                // Returns SageResult<T> - must be handled with try/catch
+                self.emit.write("self.");
+                self.emit.write(&tool.name.to_lowercase());
+                self.emit.write(".");
+                self.emit.write(&function.name);
+                self.emit.write("(");
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        self.emit.write(", ");
+                    }
+                    self.generate_expr(arg);
+                }
+                self.emit.write(").await");
             }
         }
     }
@@ -1546,9 +1602,56 @@ run Main;
         "#;
 
         let output = generate_source(source);
-        // Should generate on_error method
-        assert!(output.contains("async fn on_error(self, e: SageError"));
-        // Main should dispatch to on_error on failure
-        assert!(output.contains(".on_error(e, ctx)"));
+        // Should generate on_error method with &mut ctx
+        assert!(output.contains("async fn on_error(self, e: SageError, ctx: &mut AgentContext"));
+        // Main should dispatch to on_error on failure with &mut ctx
+        assert!(output.contains(".on_error(e, &mut ctx)"));
+    }
+
+    // =========================================================================
+    // RFC-0011: Tool support codegen tests
+    // =========================================================================
+
+    #[test]
+    fn generate_agent_with_tool_use() {
+        let source = r#"
+            agent Fetcher {
+                use Http
+
+                on start {
+                    let r = Http.get("https://example.com");
+                    emit(0);
+                }
+            }
+            run Fetcher;
+        "#;
+
+        let output = generate_source(source);
+        // Should generate struct with http field
+        assert!(output.contains("struct Fetcher {"));
+        assert!(output.contains("http: HttpClient,"));
+        // Should initialize HttpClient in main
+        assert!(output.contains("http: HttpClient::from_env()"));
+        // Should generate tool call
+        assert!(output.contains("self.http.get("));
+    }
+
+    #[test]
+    fn generate_tool_call_expression() {
+        let source = r#"
+            agent Fetcher {
+                use Http
+
+                on start {
+                    let response = Http.get("https://httpbin.org/get");
+                    emit(0);
+                }
+            }
+            run Fetcher;
+        "#;
+
+        let output = generate_source(source);
+        // Tool call should generate self.http.get(...).await (no ?, handled by try/catch)
+        assert!(output.contains("self.http.get(\"https://httpbin.org/get\".to_string()).await"));
     }
 }

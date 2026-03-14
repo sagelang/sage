@@ -5,7 +5,8 @@
 use crate::ast::{
     AgentDecl, BeliefDecl, BinOp, Block, ClosureParam, ConstDecl, ElseBranch, EnumDecl, EventKind,
     Expr, FieldInit, FnDecl, HandlerDecl, Literal, MapEntry, MatchArm, ModDecl, Param, Pattern,
-    Program, RecordDecl, RecordField, Stmt, StringPart, StringTemplate, UnaryOp, UseDecl, UseKind,
+    Program, RecordDecl, RecordField, Stmt, StringPart, StringTemplate, ToolDecl, ToolFnDecl,
+    UnaryOp, UseDecl, UseKind,
 };
 use chumsky::prelude::*;
 use chumsky::BoxedParser;
@@ -56,6 +57,7 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
         .or(record_parser(source.clone()))
         .or(enum_parser(source.clone()))
         .or(const_parser(source.clone()))
+        .or(tool_parser(source.clone()))
         .or(agent_parser(source.clone()))
         .or(fn_parser(source.clone()))
         .recover_with(skip_then_retry_until([
@@ -65,6 +67,7 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
             Token::KwRecord,
             Token::KwEnum,
             Token::KwConst,
+            Token::KwTool,
             Token::KwAgent,
             Token::KwFn,
             Token::KwRun,
@@ -82,6 +85,7 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
             let mut records = Vec::new();
             let mut enums = Vec::new();
             let mut consts = Vec::new();
+            let mut tools = Vec::new();
             let mut agents = Vec::new();
             let mut functions = Vec::new();
 
@@ -92,6 +96,7 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
                     TopLevel::Record(r) => records.push(r),
                     TopLevel::Enum(e) => enums.push(e),
                     TopLevel::Const(c) => consts.push(c),
+                    TopLevel::Tool(t) => tools.push(t),
                     TopLevel::Agent(a) => agents.push(a),
                     TopLevel::Function(f) => functions.push(f),
                 }
@@ -103,6 +108,7 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
                 records,
                 enums,
                 consts,
+                tools,
                 agents,
                 functions,
                 run_agent,
@@ -119,6 +125,7 @@ enum TopLevel {
     Record(RecordDecl),
     Enum(EnumDecl),
     Const(ConstDecl),
+    Tool(ToolDecl),
     Agent(AgentDecl),
     Function(FnDecl),
 }
@@ -346,6 +353,64 @@ fn const_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseE
 }
 
 // =============================================================================
+// Tool parsers (RFC-0011)
+// =============================================================================
+
+/// Parser for a tool declaration: `tool Http { fn get(url: String) -> String }`
+#[allow(clippy::needless_pass_by_value)]
+fn tool_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseError> {
+    let src = source.clone();
+    let src2 = source.clone();
+    let src3 = source.clone();
+
+    // Tool function parameter: `name: Type`
+    let param = ident_token_parser(src.clone())
+        .then_ignore(just(Token::Colon))
+        .then(type_parser(src.clone()))
+        .map_with_span(move |(name, ty), span: Range<usize>| Param {
+            name,
+            ty,
+            span: make_span(&src, span),
+        });
+
+    let params = param
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .delimited_by(just(Token::LParen), just(Token::RParen));
+
+    // Tool function signature: `fn name(params) -> ReturnType`
+    let tool_fn = just(Token::KwFn)
+        .ignore_then(ident_token_parser(src2.clone()))
+        .then(params)
+        .then_ignore(just(Token::Arrow))
+        .then(type_parser(src2.clone()))
+        .map_with_span(move |((name, params), return_ty), span: Range<usize>| ToolFnDecl {
+            name,
+            params,
+            return_ty,
+            span: make_span(&src2, span),
+        });
+
+    just(Token::KwPub)
+        .or_not()
+        .then_ignore(just(Token::KwTool))
+        .then(ident_token_parser(src3.clone()))
+        .then(
+            tool_fn
+                .repeated()
+                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+        )
+        .map_with_span(move |((is_pub, name), functions), span: Range<usize>| {
+            TopLevel::Tool(ToolDecl {
+                is_pub: is_pub.is_some(),
+                name,
+                functions,
+                span: make_span(&src3, span),
+            })
+        })
+}
+
+// =============================================================================
 // Agent parsers
 // =============================================================================
 
@@ -356,6 +421,17 @@ fn agent_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseE
     let src2 = source.clone();
     let src3 = source.clone();
     let src4 = source.clone();
+    let src5 = source.clone();
+
+    // Tool use clause: `use Http, Fs`
+    let tool_use = just(Token::KwUse)
+        .ignore_then(
+            ident_token_parser(src5.clone())
+                .separated_by(just(Token::Comma))
+                .at_least(1),
+        )
+        .or_not()
+        .map(|tools| tools.unwrap_or_default());
 
     // Agent state fields: `name: Type` (no `belief` keyword in RFC-0005)
     // We still call them "beliefs" internally for backwards compatibility
@@ -388,15 +464,18 @@ fn agent_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseE
         .then(ident_token_parser(src3.clone()))
         .then(receives_clause)
         .then_ignore(just(Token::LBrace))
+        .then(tool_use)
         .then(belief.repeated())
         .then(handler.repeated())
         .then_ignore(just(Token::RBrace))
         .map_with_span(
-            move |((((is_pub, name), receives), beliefs), handlers), span: Range<usize>| {
+            move |(((((is_pub, name), receives), tool_uses), beliefs), handlers),
+                  span: Range<usize>| {
                 TopLevel::Agent(AgentDecl {
                     is_pub: is_pub.is_some(),
                     name,
                     receives,
+                    tool_uses,
                     beliefs,
                     handlers,
                     span: make_span(&src4, span),
@@ -1057,12 +1136,25 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
             .or(var)
             .boxed();
 
-        // Postfix access: expr.field or expr.0 (tuple index)
-        // We need to distinguish between field access and tuple index
+        // Postfix access: expr.field, expr.0 (tuple index), or expr.method(args) (tool call)
+        // We need to distinguish between field access, tuple index, and method call
         enum PostfixOp {
             Field(Ident),
             TupleIndex(usize, Range<usize>),
+            MethodCall(Ident, Vec<Expr>, Range<usize>), // method name, args, span of closing paren
         }
+
+        // Parse method call: .ident(args)
+        let method_call = ident_token_parser(src.clone())
+            .then(
+                expr.clone()
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing()
+                    .delimited_by(just(Token::LParen), just(Token::RParen)),
+            )
+            .map_with_span(|(name, args), span: Range<usize>| {
+                PostfixOp::MethodCall(name, args, span)
+            });
 
         let postfix_op = just(Token::Dot).ignore_then(
             // Try to parse a tuple index (integer literal)
@@ -1082,6 +1174,8 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
                     )),
                 }
             })
+            // Try method call first, then field access
+            .or(method_call)
             .or(ident_token_parser(src.clone()).map(PostfixOp::Field)),
         );
 
@@ -1104,6 +1198,28 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
                             tuple: Box::new(object),
                             index,
                             span,
+                        }
+                    }
+                    PostfixOp::MethodCall(method, args, call_span) => {
+                        // If object is a Var, this might be a tool call
+                        // Tool calls look like: Http.get(url)
+                        if let Expr::Var { name: tool, .. } = &object {
+                            let span = make_span(&src, object.span().start..call_span.end);
+                            Expr::ToolCall {
+                                tool: tool.clone(),
+                                function: method,
+                                args,
+                                span,
+                            }
+                        } else {
+                            // Not a tool call - for now, produce a FieldAccess error
+                            // (Sage doesn't support general method calls on values)
+                            let span = make_span(&src, object.span().start..call_span.end);
+                            Expr::FieldAccess {
+                                object: Box::new(object),
+                                field: method,
+                                span,
+                            }
                         }
                     }
                 }
@@ -3167,6 +3283,168 @@ mod tests {
                 assert_eq!(elements.len(), 2);
             } else {
                 panic!("expected tuple expression, got {:?}", value);
+            }
+        } else {
+            panic!("expected let statement");
+        }
+    }
+
+    // =========================================================================
+    // RFC-0011: Tool support tests
+    // =========================================================================
+
+    #[test]
+    fn parse_tool_declaration() {
+        let source = r#"
+            tool Http {
+                fn get(url: String) -> Result<String, String>
+                fn post(url: String, body: String) -> Result<String, String>
+            }
+            agent Main {
+                on start { emit(0); }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.tools.len(), 1);
+        assert_eq!(prog.tools[0].name.name, "Http");
+        assert_eq!(prog.tools[0].functions.len(), 2);
+        assert_eq!(prog.tools[0].functions[0].name.name, "get");
+        assert_eq!(prog.tools[0].functions[1].name.name, "post");
+    }
+
+    #[test]
+    fn parse_pub_tool_declaration() {
+        let source = r#"
+            pub tool Database {
+                fn query(sql: String) -> Result<List<String>, String>
+            }
+            agent Main {
+                on start { emit(0); }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert!(prog.tools[0].is_pub);
+        assert_eq!(prog.tools[0].name.name, "Database");
+    }
+
+    #[test]
+    fn parse_agent_with_tool_use() {
+        let source = r#"
+            agent Fetcher {
+                use Http
+
+                url: String
+
+                on start {
+                    emit(0);
+                }
+            }
+            run Fetcher;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.agents[0].tool_uses.len(), 1);
+        assert_eq!(prog.agents[0].tool_uses[0].name, "Http");
+        assert_eq!(prog.agents[0].beliefs.len(), 1);
+    }
+
+    #[test]
+    fn parse_agent_with_multiple_tool_uses() {
+        let source = r#"
+            agent Pipeline {
+                use Http, Fs
+
+                on start {
+                    emit(0);
+                }
+            }
+            run Pipeline;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.agents[0].tool_uses.len(), 2);
+        assert_eq!(prog.agents[0].tool_uses[0].name, "Http");
+        assert_eq!(prog.agents[0].tool_uses[1].name, "Fs");
+    }
+
+    #[test]
+    fn parse_tool_call_expression() {
+        let source = r#"
+            agent Fetcher {
+                use Http
+
+                on start {
+                    let response = Http.get("https://example.com");
+                    emit(0);
+                }
+            }
+            run Fetcher;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Let { value, .. } = &handler.body.stmts[0] {
+            if let Expr::ToolCall {
+                tool,
+                function,
+                args,
+                ..
+            } = value
+            {
+                assert_eq!(tool.name, "Http");
+                assert_eq!(function.name, "get");
+                assert_eq!(args.len(), 1);
+            } else {
+                panic!("expected ToolCall expression, got {:?}", value);
+            }
+        } else {
+            panic!("expected let statement");
+        }
+    }
+
+    #[test]
+    fn parse_tool_call_with_multiple_args() {
+        let source = r#"
+            agent Writer {
+                use Fs
+
+                on start {
+                    let result = Fs.write("/tmp/test.txt", "hello world");
+                    emit(0);
+                }
+            }
+            run Writer;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Let { value, .. } = &handler.body.stmts[0] {
+            if let Expr::ToolCall { args, .. } = value {
+                assert_eq!(args.len(), 2);
+            } else {
+                panic!("expected ToolCall expression, got {:?}", value);
             }
         } else {
             panic!("expected let statement");

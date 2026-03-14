@@ -50,6 +50,10 @@ pub struct Checker {
     agent_has_error_handler: bool,
     /// RFC-0007: Whether we're inside a try or catch expression (for E013 enforcement).
     in_error_handling: bool,
+    /// RFC-0011: Tools declared by the current agent via `use`.
+    current_agent_tools: HashSet<String>,
+    /// RFC-0011: Reference to scope for tool lookups.
+    scope: Scope,
 }
 
 impl Checker {
@@ -70,6 +74,8 @@ impl Checker {
             in_fallible_context: false,
             agent_has_error_handler: false,
             in_error_handling: false,
+            current_agent_tools: HashSet::new(),
+            scope: Scope::with_builtins(),
         }
     }
 
@@ -90,6 +96,8 @@ impl Checker {
             in_fallible_context: false,
             agent_has_error_handler: false,
             in_error_handling: false,
+            current_agent_tools: HashSet::new(),
+            scope: Scope::with_builtins(),
         }
     }
 
@@ -1270,6 +1278,70 @@ impl Checker {
 
                 // Return the enum type
                 Type::Named(enum_name.name.clone())
+            }
+
+            // RFC-0011: Tool calls
+            Expr::ToolCall {
+                tool,
+                function,
+                args,
+                span,
+            } => {
+                // Check that the agent has declared this tool via `use`
+                if !self.current_agent_tools.contains(&tool.name) {
+                    self.errors.push(CheckError::undeclared_tool_use(&tool.name, span));
+                    return Type::Error;
+                }
+
+                // Look up the tool in scope and extract function info
+                // (clone to avoid borrow conflicts with check_expr)
+                let fn_lookup = self.scope.lookup_tool(&tool.name).and_then(|t| {
+                    t.functions.get(&function.name).map(|f| {
+                        (f.params.clone(), f.return_ty.clone())
+                    })
+                });
+                let tool_exists = self.scope.lookup_tool(&tool.name).is_some();
+
+                if !tool_exists {
+                    // Tool not in scope - shouldn't happen for builtins
+                    self.errors.push(CheckError::undeclared_tool_use(&tool.name, span));
+                    return Type::Error;
+                }
+
+                if let Some((params, return_ty)) = fn_lookup {
+                    // Check argument count
+                    if args.len() != params.len() {
+                        self.errors.push(CheckError::tool_call_arity(
+                            &tool.name,
+                            &function.name,
+                            params.len(),
+                            args.len(),
+                            span,
+                        ));
+                        return Type::Error;
+                    }
+
+                    // Check argument types
+                    for (arg, (_, expected_ty)) in args.iter().zip(params.iter()) {
+                        let arg_ty = self.check_expr(arg);
+                        if !arg_ty.is_compatible_with(expected_ty) {
+                            self.errors.push(CheckError::type_mismatch(
+                                expected_ty.to_string(),
+                                arg_ty.to_string(),
+                                arg.span(),
+                            ));
+                        }
+                    }
+
+                    return_ty
+                } else {
+                    self.errors.push(CheckError::undefined_tool_function(
+                        &tool.name,
+                        &function.name,
+                        span,
+                    ));
+                    Type::Error
+                }
             }
         }
     }
@@ -3451,6 +3523,15 @@ impl<'a> ModuleChecker<'a> {
 
                 // Return the enum type
                 Type::Named(enum_name.name.clone())
+            }
+
+            // RFC-0011: Tool calls - just check inner expressions
+            Expr::ToolCall { args, .. } => {
+                for arg in args {
+                    self.check_expr(arg);
+                }
+                // Return a placeholder type - actual checking is done in first pass
+                Type::Error
             }
         }
     }

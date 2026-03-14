@@ -146,7 +146,7 @@ pub enum CheckError {
     #[error("agent `{name}` has no message handler")]
     #[diagnostic(
         code(sage::no_message_handler),
-        help("add an `on message(x: T)` handler")
+        help("Oswyn suggests: add an `on message(x: T)` handler")
     )]
     NoMessageHandler {
         name: String,
@@ -160,7 +160,7 @@ pub enum CheckError {
     #[error("entry agent `{name}` must have no beliefs")]
     #[diagnostic(
         code(sage::entry_agent_has_beliefs),
-        help("entry agents cannot have beliefs since there's no way to initialize them")
+        help("Oswyn explains: entry agents cannot have beliefs since there's no way to initialize them")
     )]
     EntryAgentHasBeliefs {
         name: String,
@@ -188,7 +188,7 @@ pub enum CheckError {
     },
 
     #[error("item `{name}` in module `{module}` is private")]
-    #[diagnostic(code(sage::private_item), help("add `pub` to make it public"))]
+    #[diagnostic(code(sage::private_item), help("Oswyn suggests: add `pub` to make it public"))]
     PrivateItem {
         name: String,
         module: String,
@@ -228,7 +228,7 @@ pub enum CheckError {
     #[error("cannot access field on type `{ty}`")]
     #[diagnostic(
         code(sage::field_access_on_non_record),
-        help("field access is only valid on record types")
+        help("Oswyn explains: field access is only valid on record types")
     )]
     FieldAccessOnNonRecord {
         ty: String,
@@ -257,7 +257,7 @@ pub enum CheckError {
     #[error("non-exhaustive match: missing patterns")]
     #[diagnostic(
         code(sage::non_exhaustive_match),
-        help("add a wildcard `_` pattern or cover all variants")
+        help("Oswyn suggests: add a wildcard `_` pattern or cover all variants")
     )]
     NonExhaustiveMatch {
         #[label("match is not exhaustive")]
@@ -303,7 +303,7 @@ pub enum CheckError {
     #[error("`receive()` called in agent `{name}` which has no `receives` declaration")]
     #[diagnostic(
         code(sage::receive_without_receives),
-        help("add `receives MsgType` to agent `{name}`")
+        help("Oswyn suggests: add `receives MsgType` to agent `{name}`")
     )]
     ReceiveWithoutReceives {
         name: String,
@@ -324,7 +324,7 @@ pub enum CheckError {
     #[error("unhandled error: calling fallible function `{name}` without `try` or `catch`")]
     #[diagnostic(
         code(sage::E013),
-        help("use `try {name}(...)` to propagate the error, or `{name}(...) catch {{ recovery }}` to handle it")
+        help("Oswyn suggests: use `try {name}(...)` to propagate, or `catch` to handle it")
     )]
     UnhandledError {
         name: String,
@@ -335,7 +335,7 @@ pub enum CheckError {
     #[error("`try` used in non-fallible context")]
     #[diagnostic(
         code(sage::E014),
-        help("add `fails` annotation to the containing function, or use `catch` instead")
+        help("Oswyn suggests: add `fails` to the function, or use `catch` instead")
     )]
     TryInNonFallible {
         #[label("cannot propagate errors from here")]
@@ -354,7 +354,7 @@ pub enum CheckError {
     #[error("unhandled propagated error in agent without `on error` handler")]
     #[diagnostic(
         code(sage::E016),
-        help("add `on error(e) {{ ... }}` handler to the agent, or use `catch` instead of `try`")
+        help("Oswyn suggests: add `on error(e) {{ ... }}` handler, or use `catch` instead")
     )]
     MissingErrorHandler {
         agent: String,
@@ -368,7 +368,7 @@ pub enum CheckError {
     #[error("closure parameter `{name}` requires type annotation")]
     #[diagnostic(
         code(sage::E040),
-        help("add a type annotation: `|{name}: Type|`")
+        help("Oswyn suggests: add a type annotation: `|{name}: Type|`")
     )]
     ClosureParamNeedsType {
         name: String,
@@ -400,10 +400,47 @@ pub enum CheckError {
     #[error("empty map literal requires type annotation")]
     #[diagnostic(
         code(sage::E025),
-        help("use `let m: Map<K, V> = {{}}` or provide at least one entry")
+        help("Oswyn suggests: use `let m: Map<K, V> = {{}}` or provide at least one entry")
     )]
     EmptyMapLiteral {
         #[label("cannot infer key/value types")]
+        span: SourceSpan,
+    },
+
+    // =========================================================================
+    // RFC-0011: Tool errors
+    // =========================================================================
+    #[error("tool `{tool}` has no function `{function}`")]
+    #[diagnostic(
+        code(sage::E036),
+        help("Oswyn suggests: check the tool declaration for available functions")
+    )]
+    UndefinedToolFunction {
+        tool: String,
+        function: String,
+        #[label("no such function on tool `{tool}`")]
+        span: SourceSpan,
+    },
+
+    #[error("agent uses tool `{tool}` without declaring `use {tool}`")]
+    #[diagnostic(
+        code(sage::E038),
+        help("Oswyn suggests: add `use {tool}` at the start of the agent body")
+    )]
+    UndeclaredToolUse {
+        tool: String,
+        #[label("tool not declared in agent")]
+        span: SourceSpan,
+    },
+
+    #[error("tool function `{tool}.{function}` expects {expected} arguments, found {found}")]
+    #[diagnostic(code(sage::E039))]
+    ToolCallArity {
+        tool: String,
+        function: String,
+        expected: usize,
+        found: usize,
+        #[label("wrong number of arguments")]
         span: SourceSpan,
     },
 }
@@ -791,6 +828,44 @@ impl CheckError {
     #[must_use]
     pub fn empty_map_literal(span: &Span) -> Self {
         Self::EmptyMapLiteral {
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create an undefined tool function error (E036).
+    pub fn undefined_tool_function(
+        tool: impl Into<String>,
+        function: impl Into<String>,
+        span: &Span,
+    ) -> Self {
+        Self::UndefinedToolFunction {
+            tool: tool.into(),
+            function: function.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create an undeclared tool use error (E038).
+    pub fn undeclared_tool_use(tool: impl Into<String>, span: &Span) -> Self {
+        Self::UndeclaredToolUse {
+            tool: tool.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a tool call arity error (E039).
+    pub fn tool_call_arity(
+        tool: impl Into<String>,
+        function: impl Into<String>,
+        expected: usize,
+        found: usize,
+        span: &Span,
+    ) -> Self {
+        Self::ToolCallArity {
+            tool: tool.into(),
+            function: function.into(),
+            expected,
+            found,
             span: to_source_span(span),
         }
     }

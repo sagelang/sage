@@ -120,11 +120,33 @@ pub struct ConstInfo {
     pub module_path: ModulePath,
 }
 
-/// A scope containing variable bindings.
+/// Information about a declared tool (RFC-0011).
+#[derive(Debug, Clone)]
+pub struct ToolInfo {
+    /// The tool's name.
+    pub name: String,
+    /// Functions provided by this tool.
+    pub functions: HashMap<String, ToolFnInfo>,
+    /// Whether this tool is public.
+    pub is_pub: bool,
+}
+
+/// Information about a tool function (RFC-0011).
+#[derive(Debug, Clone)]
+pub struct ToolFnInfo {
+    /// Parameter names and types.
+    pub params: Vec<(String, Type)>,
+    /// Return type.
+    pub return_ty: Type,
+}
+
+/// A scope containing variable bindings and tool declarations.
 #[derive(Debug, Clone, Default)]
 pub struct Scope {
     /// Variables in this scope (name -> type).
     variables: HashMap<String, Type>,
+    /// Tools available in this scope (RFC-0011).
+    tools: HashMap<String, ToolInfo>,
 }
 
 impl Scope {
@@ -132,6 +154,53 @@ impl Scope {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create a scope with built-in tools (RFC-0011).
+    #[must_use]
+    pub fn with_builtins() -> Self {
+        let mut scope = Self::new();
+
+        // Register Http built-in tool
+        let mut http_functions = HashMap::new();
+
+        // Http.get(url: String) -> Result<HttpResponse, String>
+        http_functions.insert(
+            "get".to_string(),
+            ToolFnInfo {
+                params: vec![("url".to_string(), Type::String)],
+                return_ty: Type::Result(
+                    Box::new(Type::Named("HttpResponse".to_string())),
+                    Box::new(Type::String),
+                ),
+            },
+        );
+
+        // Http.post(url: String, body: String) -> Result<HttpResponse, String>
+        http_functions.insert(
+            "post".to_string(),
+            ToolFnInfo {
+                params: vec![
+                    ("url".to_string(), Type::String),
+                    ("body".to_string(), Type::String),
+                ],
+                return_ty: Type::Result(
+                    Box::new(Type::Named("HttpResponse".to_string())),
+                    Box::new(Type::String),
+                ),
+            },
+        );
+
+        scope.tools.insert(
+            "Http".to_string(),
+            ToolInfo {
+                name: "Http".to_string(),
+                functions: http_functions,
+                is_pub: true,
+            },
+        );
+
+        scope
     }
 
     /// Define a variable in this scope.
@@ -149,6 +218,12 @@ impl Scope {
     #[must_use]
     pub fn contains(&self, name: &str) -> bool {
         self.variables.contains_key(name)
+    }
+
+    /// Look up a tool in this scope (RFC-0011).
+    #[must_use]
+    pub fn lookup_tool(&self, name: &str) -> Option<&ToolInfo> {
+        self.tools.get(name)
     }
 }
 
@@ -481,7 +556,7 @@ pub fn resolve_type(ty: &TypeExpr) -> Type {
             Type::Result(Box::new(resolve_type(ok)), Box::new(resolve_type(err)))
         }
 
-        // RFC-0007: Error type - TODO: proper error type in type checker
+        // RFC-0007: Error type (represented as named type for simplicity)
         TypeExpr::Error => Type::Named("Error".to_string()),
     }
 }
