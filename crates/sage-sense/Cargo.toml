@@ -1,0 +1,27 @@
+[package]
+name = "sage-sense"
+description = "Language Server Protocol implementation for the Sage language"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Compiler pipeline
+sage-lexer = { path = "../sage-lexer", version = "0.5.0" }
+sage-parser = { path = "../sage-parser", version = "0.5.0" }
+sage-checker = { path = "../sage-checker", version = "0.5.0" }
+sage-types = { path = "../sage-types", version = "0.5.0" }
+
+# LSP protocol
+tower-lsp = "0.20"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Error handling
+anyhow = "1"
+miette = "7"
+
+[lints]
+workspace = true

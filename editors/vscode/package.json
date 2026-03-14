@@ -1,0 +1,69 @@
+{
+  "name": "vscode-sage",
+  "displayName": "Sage",
+  "description": "Sage language support for Visual Studio Code",
+  "version": "0.5.0",
+  "publisher": "sage-lang",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sagelang/sage"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "sage",
+        "aliases": ["Sage", "sage"],
+        "extensions": [".sg"],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/sage-light.png",
+          "dark": "./icons/sage-dark.png"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "sage",
+        "scopeName": "source.sage",
+        "path": "./syntaxes/sage.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Sage",
+      "properties": {
+        "sage.path": {
+          "type": ["string", "null"],
+          "default": null,
+          "markdownDescription": "Path to the `sage` binary. If `null`, looks up `sage` on `PATH`."
+        },
+        "sage.trace.server": {
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Trace LSP communication (for debugging)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.0.0"
+  }
+}

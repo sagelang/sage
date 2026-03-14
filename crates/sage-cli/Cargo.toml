@@ -17,7 +17,9 @@ sage-checker = { path = "../sage-checker", version = "0.5.0" }
 sage-codegen = { path = "../sage-codegen", version = "0.5.0" }
 sage-loader = { path = "../sage-loader", version = "0.5.0" }
 sage-package = { path = "../sage-package", version = "0.5.0" }
+sage-sense = { path = "../sage-sense", version = "0.5.0" }
 clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 miette = { version = "7", features = ["fancy"] }
 dotenvy = "0.15"
 console = "0.15"

@@ -1,0 +1,11 @@
+[package]
+name = "sage"
+version = "0.5.0"
+description = "Sage language support for Zed"
+repository = "https://github.com/sagelang/sage"
+authors = ["Sage Team"]
+schema_version = 1
+
+[language_servers.sage-sense]
+name = "sage-sense"
+languages = ["Sage"]

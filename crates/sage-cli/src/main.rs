@@ -128,6 +128,9 @@ enum Commands {
         #[command(subcommand)]
         action: CacheAction,
     },
+
+    /// Start the Sage Language Server (for editor integration)
+    Sense,
 }
 
 #[derive(Subcommand)]
@@ -183,6 +186,7 @@ fn main() -> Result<()> {
             CacheAction::Remove { package } => cmd_cache_remove(&package),
             CacheAction::Clean => cmd_cache_clean(),
         },
+        Commands::Sense => cmd_sense(),
     }
 }
 
@@ -1011,4 +1015,16 @@ fn cmd_cache_clean() -> Result<()> {
     );
 
     Ok(())
+}
+
+/// Start the Sage Language Server (sage sense).
+fn cmd_sense() -> Result<()> {
+    // Build a new Tokio runtime for the LSP server
+    let runtime = tokio::runtime::Runtime::new()
+        .into_diagnostic()
+        .wrap_err("Failed to create Tokio runtime")?;
+
+    runtime
+        .block_on(sage_sense::run())
+        .map_err(|e| miette::miette!("{}", e))
 }
