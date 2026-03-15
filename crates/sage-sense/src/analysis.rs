@@ -10,7 +10,7 @@ pub fn analyse(source: &str) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     // Step 1: Lex (with error recovery)
-    let (tokens, lex_errors) = sage_lexer::lex_partial(source);
+    let (tokens, lex_errors) = sage_parser::lex_partial(source);
     for error in &lex_errors {
         diagnostics.push(lex_error_to_diagnostic(error, source));
     }

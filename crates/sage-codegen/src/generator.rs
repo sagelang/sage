@@ -4,9 +4,8 @@ use crate::emit::Emitter;
 use sage_loader::ModuleTree;
 use sage_parser::{
     AgentDecl, BinOp, Block, ConstDecl, EnumDecl, EventKind, Expr, FnDecl, InterpExpr, Literal,
-    MockValue, Program, RecordDecl, Stmt, StringPart, TestDecl, UnaryOp,
+    MockValue, Program, RecordDecl, Stmt, StringPart, TestDecl, TypeExpr, UnaryOp,
 };
-use sage_types::TypeExpr;
 
 /// How to specify the sage-runtime dependency in generated Cargo.toml.
 #[derive(Debug, Clone)]
@@ -2043,8 +2042,7 @@ serde_json = "1"
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sage_lexer::lex;
-    use sage_parser::parse;
+    use sage_parser::{lex, parse};
     use std::sync::Arc;
 
     fn generate_source(source: &str) -> String {

@@ -1,13 +1,12 @@
-//! Parser for the Sage language.
+//! Lexer and parser for the Sage language.
 //!
-//! This crate provides parsing for Sage source code, transforming a token
-//! stream into a typed Abstract Syntax Tree (AST).
+//! This crate provides tokenization and parsing for Sage source code,
+//! transforming source text into a typed Abstract Syntax Tree (AST).
 //!
 //! # Example
 //!
 //! ```
-//! use sage_lexer::lex;
-//! use sage_parser::parse;
+//! use sage_parser::{lex, parse};
 //! use std::sync::Arc;
 //!
 //! let source = r#"
@@ -29,8 +28,25 @@
 
 #![forbid(unsafe_code)]
 
+// Lexer modules
+mod lexer;
+mod token;
+
+// Parser modules
 pub mod ast;
 mod parser;
+pub mod span;
+mod ty;
 
+// Lexer exports
+pub use lexer::{lex, lex_partial, LexError, LexErrorLocation, LexResult, Spanned};
+pub use token::Token;
+
+// Re-export logos for downstream use
+pub use logos::Logos;
+
+// Parser exports
 pub use ast::*;
 pub use parser::{parse, ParseError};
+pub use span::{Ident, Span};
+pub use ty::TypeExpr;

@@ -157,7 +157,7 @@ impl LexResult {
 /// # Example
 ///
 /// ```
-/// use sage_lexer::{lex, Token};
+/// use sage_parser::{lex, Token};
 ///
 /// let result = lex("let x = 42").unwrap();
 /// assert_eq!(result.tokens()[0].token, Token::KwLet);

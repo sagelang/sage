@@ -59,7 +59,7 @@ pub fn load_single_file(path: &Path) -> Result<ModuleTree, Vec<LoadError>> {
     })?;
 
     let source_arc: Arc<str> = Arc::from(source.as_str());
-    let lex_result = sage_lexer::lex(&source).map_err(|e| {
+    let lex_result = sage_parser::lex(&source).map_err(|e| {
         vec![LoadError::ParseError {
             file: path.to_path_buf(),
             errors: vec![format!("{e}")],
@@ -334,7 +334,7 @@ fn load_test_file(path: &Path) -> Result<TestFile, Vec<LoadError>> {
     })?;
 
     let source_arc: Arc<str> = Arc::from(source.as_str());
-    let lex_result = sage_lexer::lex(&source).map_err(|e| {
+    let lex_result = sage_parser::lex(&source).map_err(|e| {
         vec![LoadError::ParseError {
             file: path.to_path_buf(),
             errors: vec![format!("{e}")],
@@ -412,7 +412,7 @@ impl ModuleLoader {
         })?;
 
         let source_arc: Arc<str> = Arc::from(source.as_str());
-        let lex_result = sage_lexer::lex(&source).map_err(|e| {
+        let lex_result = sage_parser::lex(&source).map_err(|e| {
             vec![LoadError::ParseError {
                 file: file_path.to_path_buf(),
                 errors: vec![format!("{e}")],

@@ -13,9 +13,8 @@
   <a href="#installation">Install</a> •
   <a href="#language-syntax">Syntax</a> •
   <a href="#usage">Usage</a> •
-  <a href="https://sagelang.github.io/sage">Guide</a> •
-  <a href="docs/RFC-0001-poc.md">Specification</a> •
-  <a href="docs/VISION.md">Roadmap</a>
+  <a href="https://sagelang.github.io/sage-book">Guide</a> •
+  <a href="https://github.com/sagelang/rfcs">RFCs</a>
 </p>
 
 ---
@@ -64,17 +63,17 @@ run Coordinator;
 
 ## Status
 
-**v0.5.2 released** — Built-in testing framework with LLM mocking.
+**v0.6.0 released** — Crate consolidation and refactored project structure.
 
 | | |
 |---|---|
-| **Latest** | [v0.5.2](https://github.com/sagelang/sage/releases/tag/v0.5.2) |
+| **Latest** | [v0.6.0](https://github.com/sagelang/sage/releases/tag/v0.6.0) |
 | **Extension** | `.sg` |
 | **Platforms** | macOS (ARM), Linux (x86_64, ARM) |
 | **Build time** | ~0.5s |
 | **Editors** | [Zed](https://zed.dev), [VS Code](https://code.visualstudio.com) |
 
-See [docs/RFC-0001-poc.md](docs/RFC-0001-poc.md) for the language specification.
+See the [RFCs repository](https://github.com/sagelang/rfcs) for the language specification.
 
 ## Language Syntax
 
@@ -692,8 +691,7 @@ The compiler is written in ~9,000 lines of Rust, organised into focused crates:
 
 | Crate | Purpose |
 |-------|---------|
-| `sage-lexer` | Tokenizer (logos-based) |
-| `sage-parser` | Parser (chumsky-based) |
+| `sage-parser` | Lexer + Parser (logos + chumsky) |
 | `sage-loader` | Module loading + project management |
 | `sage-package` | Package management (git-based) |
 | `sage-checker` | Name resolution + type checker |
@@ -707,9 +705,7 @@ The compiler is written in ~9,000 lines of Rust, organised into focused crates:
 ```
 sage/
 ├── crates/
-│   ├── sage-types/        # Shared type definitions (Span, Ident, TypeExpr)
-│   ├── sage-lexer/        # Tokenizer (logos-based)
-│   ├── sage-parser/       # Parser (chumsky-based)
+│   ├── sage-parser/       # Lexer + Parser (logos + chumsky)
 │   ├── sage-loader/       # Module loading + project management
 │   ├── sage-package/      # Package management (git-based)
 │   ├── sage-checker/      # Name resolution + type checker
@@ -717,30 +713,24 @@ sage/
 │   ├── sage-runtime/      # Runtime library (agents, LLM, etc.)
 │   ├── sage-sense/        # Language Server Protocol (LSP)
 │   └── sage-cli/          # CLI entry point
-├── editors/
-│   ├── sage-zed/          # Zed extension
-│   ├── tree-sitter-sage/  # Tree-sitter grammar
-│   └── vscode/            # VS Code extension
 ├── scripts/
 │   └── build-toolchain.sh # Build pre-compiled runtime
-├── docs/
-│   ├── RFC-0001-poc.md    # Language specification
-│   ├── RFC-0002-*.md      # Multi-file project structure
-│   ├── RFC-0005-*.md      # User-defined types
-│   ├── RFC-0006-*.md      # Agent message passing
-│   ├── RFC-0007-*.md      # Error handling
-│   ├── RFC-0009-*.md      # First-class functions
-│   ├── RFC-0010-*.md      # Maps, tuples, enum payloads
-│   ├── RFC-0011-*.md      # First-class tool support (Http)
-│   ├── RFC-0012-*.md      # Built-in testing framework
-│   ├── RFC-0014-*.md      # Editor support / LSP
-│   └── VISION.md          # Roadmap and future direction
 ├── tests/
 │   └── docker/            # Installation verification tests
 ├── assets/
 │   └── ward.png           # Ward the Owl mascot
 └── examples/              # Example .sg programs
 ```
+
+## Related Repositories
+
+| Repository | Description |
+|------------|-------------|
+| [sagelang/rfcs](https://github.com/sagelang/rfcs) | Language design RFCs |
+| [sagelang/sage-book](https://github.com/sagelang/sage-book) | GitBook documentation |
+| [sagelang/sage-vscode](https://github.com/sagelang/sage-vscode) | VS Code extension |
+| [sagelang/sage-zed](https://github.com/sagelang/sage-zed) | Zed extension |
+| [sagelang/tree-sitter-sage](https://github.com/sagelang/tree-sitter-sage) | Tree-sitter grammar |
 
 ## License
 

@@ -21,9 +21,9 @@ pub fn span_to_range(start: usize, end: usize, source: &str) -> Range {
     }
 }
 
-/// Convert a sage-lexer LexErrorLocation to an LSP Diagnostic.
+/// Convert a LexErrorLocation to an LSP Diagnostic.
 pub fn lex_error_to_diagnostic(
-    error: &sage_lexer::LexErrorLocation,
+    error: &sage_parser::LexErrorLocation,
     source: &str,
 ) -> Diagnostic {
     Diagnostic {

@@ -3,7 +3,7 @@
 //! This module defines all AST node types that the parser produces.
 //! Every node carries a `Span` for error reporting.
 
-use sage_types::{Ident, Span, TypeExpr};
+use crate::{Ident, Span, TypeExpr};
 use std::fmt;
 
 // =============================================================================

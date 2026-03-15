@@ -1,7 +1,5 @@
 [workspace]
 members = [
-    "crates/sage-types",
-    "crates/sage-lexer",
     "crates/sage-parser",
     "crates/sage-loader",
     "crates/sage-package",
@@ -14,7 +12,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.5.2"
+version = "0.6.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/sagelang/sage"

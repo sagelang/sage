@@ -1,6 +1,6 @@
 //! Type expressions for the Sage language.
 
-use crate::Ident;
+use crate::span::Ident;
 use std::fmt;
 
 /// A type expression as it appears in source code.

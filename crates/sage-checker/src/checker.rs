@@ -1430,7 +1430,7 @@ impl Checker {
         op: BinOp,
         left: &Type,
         right: &Type,
-        span: &sage_types::Span,
+        span: &sage_parser::Span,
     ) -> Type {
         // Handle error propagation
         if left.is_error() || right.is_error() {
@@ -1519,7 +1519,7 @@ impl Checker {
         }
     }
 
-    fn check_unary_op(&mut self, op: UnaryOp, operand: &Type, span: &sage_types::Span) -> Type {
+    fn check_unary_op(&mut self, op: UnaryOp, operand: &Type, span: &sage_parser::Span) -> Type {
         if operand.is_error() {
             return Type::Error;
         }
@@ -1703,7 +1703,7 @@ impl Checker {
         }
     }
 
-    fn check_call(&mut self, name: &str, args: &[Expr], span: &sage_types::Span) -> Type {
+    fn check_call(&mut self, name: &str, args: &[Expr], span: &sage_parser::Span) -> Type {
         // Check for user-defined function
         if let Some(func) = self.symbols.get_function(name).cloned() {
             // RFC-0007: E013 - fallible functions must be wrapped in try or catch
@@ -1748,7 +1748,7 @@ impl Checker {
         &mut self,
         builtin: &crate::scope::BuiltinInfo,
         args: &[Expr],
-        span: &sage_types::Span,
+        span: &sage_parser::Span,
     ) -> Type {
         // RFC-0012: E050 - assertion builtins only valid in test files
         if self.symbols.is_test_assertion(builtin.name) && !self.is_test_file {
@@ -2522,7 +2522,7 @@ impl Checker {
         }
     }
 
-    fn lookup_var(&mut self, name: &str, span: &sage_types::Span) -> Type {
+    fn lookup_var(&mut self, name: &str, span: &sage_parser::Span) -> Type {
         // Search from innermost to outermost scope
         for scope in self.scopes.iter().rev() {
             if let Some(ty) = scope.get(name) {
@@ -2906,7 +2906,7 @@ impl MultiModuleChecker {
         item_name: &str,
         _is_pub_use: bool,
         from_module: &ModulePath,
-        span: &sage_types::Span,
+        span: &sage_parser::Span,
     ) -> bool {
         // Check if the item exists and is accessible
 
@@ -4101,7 +4101,7 @@ impl<'a> ModuleChecker<'a> {
         op: BinOp,
         left: &Type,
         right: &Type,
-        span: &sage_types::Span,
+        span: &sage_parser::Span,
     ) -> Type {
         if left.is_error() || right.is_error() {
             return Type::Error;
@@ -4183,7 +4183,7 @@ impl<'a> ModuleChecker<'a> {
         }
     }
 
-    fn check_unary_op(&mut self, op: UnaryOp, operand: &Type, span: &sage_types::Span) -> Type {
+    fn check_unary_op(&mut self, op: UnaryOp, operand: &Type, span: &sage_parser::Span) -> Type {
         if operand.is_error() {
             return Type::Error;
         }
@@ -4367,7 +4367,7 @@ impl<'a> ModuleChecker<'a> {
         }
     }
 
-    fn check_call(&mut self, name: &str, args: &[Expr], span: &sage_types::Span) -> Type {
+    fn check_call(&mut self, name: &str, args: &[Expr], span: &sage_parser::Span) -> Type {
         // Check imports first
         if let Some((module_path, original_name)) = self.imports.get(name) {
             // Look up the function in the imported module
@@ -4398,7 +4398,7 @@ impl<'a> ModuleChecker<'a> {
         &mut self,
         func: &FunctionInfo,
         args: &[Expr],
-        span: &sage_types::Span,
+        span: &sage_parser::Span,
     ) -> Type {
         if args.len() != func.params.len() {
             self.errors.push(CheckError::wrong_arg_count(
@@ -4428,7 +4428,7 @@ impl<'a> ModuleChecker<'a> {
         &mut self,
         builtin: &crate::scope::BuiltinInfo,
         args: &[Expr],
-        span: &sage_types::Span,
+        span: &sage_parser::Span,
     ) -> Type {
         // RFC-0012: E050 - assertion builtins only valid in test files
         if self.symbols.is_test_assertion(builtin.name) && !self.is_test_file {
@@ -5158,7 +5158,7 @@ impl<'a> ModuleChecker<'a> {
         }
     }
 
-    fn lookup_var(&mut self, name: &str, span: &sage_types::Span) -> Type {
+    fn lookup_var(&mut self, name: &str, span: &sage_parser::Span) -> Type {
         for scope in self.scopes.iter().rev() {
             if let Some(ty) = scope.get(name) {
                 return ty.clone();

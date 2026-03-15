@@ -8,8 +8,7 @@
 //! # Example
 //!
 //! ```
-//! use sage_lexer::lex;
-//! use sage_parser::parse;
+//! use sage_parser::{lex, parse};
 //! use sage_checker::check;
 //! use std::sync::Arc;
 //!
@@ -49,8 +48,7 @@ pub use types::Type;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sage_lexer::lex;
-    use sage_parser::parse;
+    use sage_parser::{lex, parse};
     use std::sync::Arc;
 
     fn check_source(source: &str) -> (Option<sage_parser::Program>, CheckResult) {

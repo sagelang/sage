@@ -10,8 +10,8 @@ use crate::ast::{
 };
 use chumsky::prelude::*;
 use chumsky::BoxedParser;
-use sage_lexer::{Spanned, Token};
-use sage_types::{Ident, Span, TypeExpr};
+use crate::{Spanned, Token};
+use crate::{Ident, Span, TypeExpr};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -2013,7 +2013,7 @@ fn parse_interp_expr(s: &str, span: &Span) -> InterpExpr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sage_lexer::lex;
+    use crate::lex;
 
     fn parse_str(source: &str) -> (Option<Program>, Vec<ParseError>) {
         let lex_result = lex(source).expect("lexing should succeed");
@@ -2628,7 +2628,7 @@ mod tests {
         assert_eq!(prog.consts.len(), 1);
         assert!(!prog.consts[0].is_pub);
         assert_eq!(prog.consts[0].name.name, "MAX_RETRIES");
-        assert!(matches!(prog.consts[0].ty, sage_types::TypeExpr::Int));
+        assert!(matches!(prog.consts[0].ty, TypeExpr::Int));
     }
 
     #[test]

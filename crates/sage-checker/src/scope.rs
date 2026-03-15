@@ -1,7 +1,7 @@
 //! Scope and symbol table for name resolution.
 
 use crate::types::Type;
-use sage_types::TypeExpr;
+use sage_parser::TypeExpr;
 use std::collections::HashMap;
 
 /// A module path like `["agents", "researcher"]`.

@@ -1,7 +1,7 @@
 //! Error types for the semantic checker.
 
 use miette::{Diagnostic, SourceSpan};
-use sage_types::Span;
+use sage_parser::Span;
 use thiserror::Error;
 
 /// Convert a Sage span to a miette `SourceSpan`.
