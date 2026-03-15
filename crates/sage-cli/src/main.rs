@@ -1658,7 +1658,7 @@ edition = "2021"
 [workspace]
 
 [dependencies]
-sage-runtime = {{ version = "0.6", path = "{}" }}
+sage-runtime = {{ version = "1.0", path = "{}" }}
 tokio = {{ version = "1", features = ["full"] }}
 "#,
         std::env::current_dir()
