@@ -847,6 +847,8 @@ pub enum BinOp {
     Mul,
     /// `/`
     Div,
+    /// `%` (remainder/modulo)
+    Rem,
 
     // Comparison
     /// `==`
@@ -884,7 +886,7 @@ impl BinOp {
             BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => 4,
             BinOp::Concat => 5,
             BinOp::Add | BinOp::Sub => 6,
-            BinOp::Mul | BinOp::Div => 7,
+            BinOp::Mul | BinOp::Div | BinOp::Rem => 7,
         }
     }
 
@@ -903,6 +905,7 @@ impl fmt::Display for BinOp {
             BinOp::Sub => write!(f, "-"),
             BinOp::Mul => write!(f, "*"),
             BinOp::Div => write!(f, "/"),
+            BinOp::Rem => write!(f, "%"),
             BinOp::Eq => write!(f, "=="),
             BinOp::Ne => write!(f, "!="),
             BinOp::Lt => write!(f, "<"),
@@ -1004,10 +1007,10 @@ impl StringTemplate {
             .any(|p| matches!(p, StringPart::Interpolation(_)))
     }
 
-    /// Get all interpolated identifiers.
-    pub fn interpolations(&self) -> impl Iterator<Item = &Ident> {
+    /// Get all interpolation expressions.
+    pub fn interpolations(&self) -> impl Iterator<Item = &InterpExpr> {
         self.parts.iter().filter_map(|p| match p {
-            StringPart::Interpolation(ident) => Some(ident),
+            StringPart::Interpolation(expr) => Some(expr),
             StringPart::Literal(_) => None,
         })
     }
@@ -1019,7 +1022,7 @@ impl fmt::Display for StringTemplate {
         for part in &self.parts {
             match part {
                 StringPart::Literal(s) => write!(f, "{s}")?,
-                StringPart::Interpolation(ident) => write!(f, "{{{ident}}}")?,
+                StringPart::Interpolation(expr) => write!(f, "{{{expr}}}")?,
             }
         }
         write!(f, "\"")
@@ -1031,8 +1034,70 @@ impl fmt::Display for StringTemplate {
 pub enum StringPart {
     /// A literal string segment.
     Literal(String),
-    /// An interpolated identifier: `{ident}`
-    Interpolation(Ident),
+    /// An interpolated expression: `{ident}`, `{person.name}`, `{pair.0}`
+    Interpolation(InterpExpr),
+}
+
+/// An interpolation expression within a string template.
+/// Supports simple identifiers, field access chains, and tuple indexing.
+#[derive(Debug, Clone, PartialEq)]
+pub enum InterpExpr {
+    /// Simple identifier: `{name}`
+    Ident(Ident),
+    /// Field access: `{person.name}`, `{record.field.subfield}`
+    FieldAccess {
+        /// The base expression
+        base: Box<InterpExpr>,
+        /// The field being accessed
+        field: Ident,
+        /// Span covering the entire expression
+        span: Span,
+    },
+    /// Tuple index: `{pair.0}`, `{triple.2}`
+    TupleIndex {
+        /// The base expression
+        base: Box<InterpExpr>,
+        /// The tuple index (0-based)
+        index: usize,
+        /// Span covering the entire expression
+        span: Span,
+    },
+}
+
+impl InterpExpr {
+    /// Get the span of this interpolation expression.
+    #[must_use]
+    pub fn span(&self) -> &Span {
+        match self {
+            InterpExpr::Ident(ident) => &ident.span,
+            InterpExpr::FieldAccess { span, .. } => span,
+            InterpExpr::TupleIndex { span, .. } => span,
+        }
+    }
+
+    /// Get the base identifier of this expression.
+    #[must_use]
+    pub fn base_ident(&self) -> &Ident {
+        match self {
+            InterpExpr::Ident(ident) => ident,
+            InterpExpr::FieldAccess { base, .. } => base.base_ident(),
+            InterpExpr::TupleIndex { base, .. } => base.base_ident(),
+        }
+    }
+}
+
+impl fmt::Display for InterpExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InterpExpr::Ident(ident) => write!(f, "{}", ident.name),
+            InterpExpr::FieldAccess { base, field, .. } => {
+                write!(f, "{}.{}", base, field.name)
+            }
+            InterpExpr::TupleIndex { base, index, .. } => {
+                write!(f, "{}.{}", base, index)
+            }
+        }
+    }
 }
 
 // =============================================================================
@@ -1098,7 +1163,7 @@ mod tests {
         let template = StringTemplate {
             parts: vec![
                 StringPart::Literal("Hello, ".into()),
-                StringPart::Interpolation(Ident::dummy("name")),
+                StringPart::Interpolation(InterpExpr::Ident(Ident::dummy("name"))),
                 StringPart::Literal("!".into()),
             ],
             span: Span::dummy(),
@@ -1108,7 +1173,7 @@ mod tests {
 
         let interps: Vec<_> = template.interpolations().collect();
         assert_eq!(interps.len(), 1);
-        assert_eq!(interps[0].name, "name");
+        assert_eq!(interps[0].base_ident().name, "name");
     }
 
     #[test]

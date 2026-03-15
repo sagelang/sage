@@ -1,6 +1,6 @@
 # RFC-0013: Standard Library
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Created:** 2026-03-13
 - **Author:** Pete Pavlovski
 - **Depends on:** RFC-0003 (Compile to Rust), RFC-0005 (User-Defined Types), RFC-0009 (First-Class Functions), RFC-0010 (Maps, Tuples, Result)

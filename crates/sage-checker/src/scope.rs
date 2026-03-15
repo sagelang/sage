@@ -395,6 +395,592 @@ impl SymbolTable {
                 return_type: Type::Error, // Determined by first arg
             },
         );
+
+        // =========================================================================
+        // RFC-0013: Standard Library - String Functions
+        // =========================================================================
+
+        // split(String, String) -> List<String>
+        self.builtins.insert(
+            "split",
+            BuiltinInfo {
+                name: "split",
+                params: Some(vec![Type::String, Type::String]),
+                return_type: Type::List(Box::new(Type::String)),
+            },
+        );
+
+        // trim(String) -> String
+        self.builtins.insert(
+            "trim",
+            BuiltinInfo {
+                name: "trim",
+                params: Some(vec![Type::String]),
+                return_type: Type::String,
+            },
+        );
+
+        // trim_start(String) -> String
+        self.builtins.insert(
+            "trim_start",
+            BuiltinInfo {
+                name: "trim_start",
+                params: Some(vec![Type::String]),
+                return_type: Type::String,
+            },
+        );
+
+        // trim_end(String) -> String
+        self.builtins.insert(
+            "trim_end",
+            BuiltinInfo {
+                name: "trim_end",
+                params: Some(vec![Type::String]),
+                return_type: Type::String,
+            },
+        );
+
+        // starts_with(String, String) -> Bool
+        self.builtins.insert(
+            "starts_with",
+            BuiltinInfo {
+                name: "starts_with",
+                params: Some(vec![Type::String, Type::String]),
+                return_type: Type::Bool,
+            },
+        );
+
+        // ends_with(String, String) -> Bool
+        self.builtins.insert(
+            "ends_with",
+            BuiltinInfo {
+                name: "ends_with",
+                params: Some(vec![Type::String, Type::String]),
+                return_type: Type::Bool,
+            },
+        );
+
+        // replace(String, String, String) -> String
+        self.builtins.insert(
+            "replace",
+            BuiltinInfo {
+                name: "replace",
+                params: Some(vec![Type::String, Type::String, Type::String]),
+                return_type: Type::String,
+            },
+        );
+
+        // replace_first(String, String, String) -> String
+        self.builtins.insert(
+            "replace_first",
+            BuiltinInfo {
+                name: "replace_first",
+                params: Some(vec![Type::String, Type::String, Type::String]),
+                return_type: Type::String,
+            },
+        );
+
+        // to_upper(String) -> String
+        self.builtins.insert(
+            "to_upper",
+            BuiltinInfo {
+                name: "to_upper",
+                params: Some(vec![Type::String]),
+                return_type: Type::String,
+            },
+        );
+
+        // to_lower(String) -> String
+        self.builtins.insert(
+            "to_lower",
+            BuiltinInfo {
+                name: "to_lower",
+                params: Some(vec![Type::String]),
+                return_type: Type::String,
+            },
+        );
+
+        // str_len(String) -> Int
+        self.builtins.insert(
+            "str_len",
+            BuiltinInfo {
+                name: "str_len",
+                params: Some(vec![Type::String]),
+                return_type: Type::Int,
+            },
+        );
+
+        // str_slice(String, Int, Int) -> String
+        self.builtins.insert(
+            "str_slice",
+            BuiltinInfo {
+                name: "str_slice",
+                params: Some(vec![Type::String, Type::Int, Type::Int]),
+                return_type: Type::String,
+            },
+        );
+
+        // str_index_of(String, String) -> Option<Int>
+        self.builtins.insert(
+            "str_index_of",
+            BuiltinInfo {
+                name: "str_index_of",
+                params: Some(vec![Type::String, Type::String]),
+                return_type: Type::Option(Box::new(Type::Int)),
+            },
+        );
+
+        // str_repeat(String, Int) -> String
+        self.builtins.insert(
+            "str_repeat",
+            BuiltinInfo {
+                name: "str_repeat",
+                params: Some(vec![Type::String, Type::Int]),
+                return_type: Type::String,
+            },
+        );
+
+        // str_pad_start(String, Int, String) -> String
+        self.builtins.insert(
+            "str_pad_start",
+            BuiltinInfo {
+                name: "str_pad_start",
+                params: Some(vec![Type::String, Type::Int, Type::String]),
+                return_type: Type::String,
+            },
+        );
+
+        // str_pad_end(String, Int, String) -> String
+        self.builtins.insert(
+            "str_pad_end",
+            BuiltinInfo {
+                name: "str_pad_end",
+                params: Some(vec![Type::String, Type::Int, Type::String]),
+                return_type: Type::String,
+            },
+        );
+
+        // =========================================================================
+        // RFC-0013: Standard Library - Math Functions
+        // =========================================================================
+
+        // abs(Int) -> Int
+        self.builtins.insert(
+            "abs",
+            BuiltinInfo {
+                name: "abs",
+                params: Some(vec![Type::Int]),
+                return_type: Type::Int,
+            },
+        );
+
+        // abs_float(Float) -> Float
+        self.builtins.insert(
+            "abs_float",
+            BuiltinInfo {
+                name: "abs_float",
+                params: Some(vec![Type::Float]),
+                return_type: Type::Float,
+            },
+        );
+
+        // min(Int, Int) -> Int
+        self.builtins.insert(
+            "min",
+            BuiltinInfo {
+                name: "min",
+                params: Some(vec![Type::Int, Type::Int]),
+                return_type: Type::Int,
+            },
+        );
+
+        // max(Int, Int) -> Int
+        self.builtins.insert(
+            "max",
+            BuiltinInfo {
+                name: "max",
+                params: Some(vec![Type::Int, Type::Int]),
+                return_type: Type::Int,
+            },
+        );
+
+        // min_float(Float, Float) -> Float
+        self.builtins.insert(
+            "min_float",
+            BuiltinInfo {
+                name: "min_float",
+                params: Some(vec![Type::Float, Type::Float]),
+                return_type: Type::Float,
+            },
+        );
+
+        // max_float(Float, Float) -> Float
+        self.builtins.insert(
+            "max_float",
+            BuiltinInfo {
+                name: "max_float",
+                params: Some(vec![Type::Float, Type::Float]),
+                return_type: Type::Float,
+            },
+        );
+
+        // clamp(Int, Int, Int) -> Int
+        self.builtins.insert(
+            "clamp",
+            BuiltinInfo {
+                name: "clamp",
+                params: Some(vec![Type::Int, Type::Int, Type::Int]),
+                return_type: Type::Int,
+            },
+        );
+
+        // clamp_float(Float, Float, Float) -> Float
+        self.builtins.insert(
+            "clamp_float",
+            BuiltinInfo {
+                name: "clamp_float",
+                params: Some(vec![Type::Float, Type::Float, Type::Float]),
+                return_type: Type::Float,
+            },
+        );
+
+        // floor(Float) -> Int
+        self.builtins.insert(
+            "floor",
+            BuiltinInfo {
+                name: "floor",
+                params: Some(vec![Type::Float]),
+                return_type: Type::Int,
+            },
+        );
+
+        // ceil(Float) -> Int
+        self.builtins.insert(
+            "ceil",
+            BuiltinInfo {
+                name: "ceil",
+                params: Some(vec![Type::Float]),
+                return_type: Type::Int,
+            },
+        );
+
+        // round(Float) -> Int
+        self.builtins.insert(
+            "round",
+            BuiltinInfo {
+                name: "round",
+                params: Some(vec![Type::Float]),
+                return_type: Type::Int,
+            },
+        );
+
+        // floor_float(Float) -> Float
+        self.builtins.insert(
+            "floor_float",
+            BuiltinInfo {
+                name: "floor_float",
+                params: Some(vec![Type::Float]),
+                return_type: Type::Float,
+            },
+        );
+
+        // ceil_float(Float) -> Float
+        self.builtins.insert(
+            "ceil_float",
+            BuiltinInfo {
+                name: "ceil_float",
+                params: Some(vec![Type::Float]),
+                return_type: Type::Float,
+            },
+        );
+
+        // pow(Int, Int) -> Int
+        self.builtins.insert(
+            "pow",
+            BuiltinInfo {
+                name: "pow",
+                params: Some(vec![Type::Int, Type::Int]),
+                return_type: Type::Int,
+            },
+        );
+
+        // pow_float(Float, Float) -> Float
+        self.builtins.insert(
+            "pow_float",
+            BuiltinInfo {
+                name: "pow_float",
+                params: Some(vec![Type::Float, Type::Float]),
+                return_type: Type::Float,
+            },
+        );
+
+        // sqrt(Float) -> Float
+        self.builtins.insert(
+            "sqrt",
+            BuiltinInfo {
+                name: "sqrt",
+                params: Some(vec![Type::Float]),
+                return_type: Type::Float,
+            },
+        );
+
+        // int_to_float(Int) -> Float
+        self.builtins.insert(
+            "int_to_float",
+            BuiltinInfo {
+                name: "int_to_float",
+                params: Some(vec![Type::Int]),
+                return_type: Type::Float,
+            },
+        );
+
+        // float_to_int(Float) -> Int
+        self.builtins.insert(
+            "float_to_int",
+            BuiltinInfo {
+                name: "float_to_int",
+                params: Some(vec![Type::Float]),
+                return_type: Type::Int,
+            },
+        );
+
+        // =========================================================================
+        // RFC-0013: Standard Library - Parsing Functions
+        // =========================================================================
+
+        // parse_int(String) -> Result<Int, String>
+        self.builtins.insert(
+            "parse_int",
+            BuiltinInfo {
+                name: "parse_int",
+                params: Some(vec![Type::String]),
+                return_type: Type::Result(Box::new(Type::Int), Box::new(Type::String)),
+            },
+        );
+
+        // parse_float(String) -> Result<Float, String>
+        self.builtins.insert(
+            "parse_float",
+            BuiltinInfo {
+                name: "parse_float",
+                params: Some(vec![Type::String]),
+                return_type: Type::Result(Box::new(Type::Float), Box::new(Type::String)),
+            },
+        );
+
+        // parse_bool(String) -> Result<Bool, String>
+        self.builtins.insert(
+            "parse_bool",
+            BuiltinInfo {
+                name: "parse_bool",
+                params: Some(vec![Type::String]),
+                return_type: Type::Result(Box::new(Type::Bool), Box::new(Type::String)),
+            },
+        );
+
+        // float_to_str(Float) -> String
+        self.builtins.insert(
+            "float_to_str",
+            BuiltinInfo {
+                name: "float_to_str",
+                params: Some(vec![Type::Float]),
+                return_type: Type::String,
+            },
+        );
+
+        // bool_to_str(Bool) -> String
+        self.builtins.insert(
+            "bool_to_str",
+            BuiltinInfo {
+                name: "bool_to_str",
+                params: Some(vec![Type::Bool]),
+                return_type: Type::String,
+            },
+        );
+
+        // =========================================================================
+        // RFC-0013: Standard Library - List Higher-Order Functions
+        // =========================================================================
+
+        // map(List<A>, Fn(A) -> B) -> List<B>
+        self.builtins.insert(
+            "map",
+            BuiltinInfo {
+                name: "map",
+                params: None, // Generic - special handling
+                return_type: Type::Error,
+            },
+        );
+
+        // filter(List<A>, Fn(A) -> Bool) -> List<A>
+        self.builtins.insert(
+            "filter",
+            BuiltinInfo {
+                name: "filter",
+                params: None,
+                return_type: Type::Error,
+            },
+        );
+
+        // reduce(List<A>, B, Fn(B, A) -> B) -> B
+        self.builtins.insert(
+            "reduce",
+            BuiltinInfo {
+                name: "reduce",
+                params: None,
+                return_type: Type::Error,
+            },
+        );
+
+        // any(List<A>, Fn(A) -> Bool) -> Bool
+        self.builtins.insert(
+            "any",
+            BuiltinInfo {
+                name: "any",
+                params: None,
+                return_type: Type::Bool,
+            },
+        );
+
+        // all(List<A>, Fn(A) -> Bool) -> Bool
+        self.builtins.insert(
+            "all",
+            BuiltinInfo {
+                name: "all",
+                params: None,
+                return_type: Type::Bool,
+            },
+        );
+
+        // find(List<A>, Fn(A) -> Bool) -> Option<A>
+        self.builtins.insert(
+            "find",
+            BuiltinInfo {
+                name: "find",
+                params: None,
+                return_type: Type::Error,
+            },
+        );
+
+        // flat_map(List<A>, Fn(A) -> List<B>) -> List<B>
+        self.builtins.insert(
+            "flat_map",
+            BuiltinInfo {
+                name: "flat_map",
+                params: None,
+                return_type: Type::Error,
+            },
+        );
+
+        // zip(List<A>, List<B>) -> List<(A, B)>
+        self.builtins.insert(
+            "zip",
+            BuiltinInfo {
+                name: "zip",
+                params: None,
+                return_type: Type::Error,
+            },
+        );
+
+        // sort_by(List<A>, Fn(A, A) -> Int) -> List<A>
+        self.builtins.insert(
+            "sort_by",
+            BuiltinInfo {
+                name: "sort_by",
+                params: None,
+                return_type: Type::Error,
+            },
+        );
+
+        // enumerate(List<A>) -> List<(Int, A)>
+        self.builtins.insert(
+            "enumerate",
+            BuiltinInfo {
+                name: "enumerate",
+                params: None,
+                return_type: Type::Error,
+            },
+        );
+
+        // take(List<A>, Int) -> List<A>
+        self.builtins.insert(
+            "take",
+            BuiltinInfo {
+                name: "take",
+                params: None,
+                return_type: Type::Error,
+            },
+        );
+
+        // drop(List<A>, Int) -> List<A>
+        self.builtins.insert(
+            "drop",
+            BuiltinInfo {
+                name: "drop",
+                params: None,
+                return_type: Type::Error,
+            },
+        );
+
+        // flatten(List<List<A>>) -> List<A>
+        self.builtins.insert(
+            "flatten",
+            BuiltinInfo {
+                name: "flatten",
+                params: None,
+                return_type: Type::Error,
+            },
+        );
+
+        // reverse(List<A>) -> List<A>
+        self.builtins.insert(
+            "reverse",
+            BuiltinInfo {
+                name: "reverse",
+                params: None,
+                return_type: Type::Error,
+            },
+        );
+
+        // unique(List<A>) -> List<A>
+        self.builtins.insert(
+            "unique",
+            BuiltinInfo {
+                name: "unique",
+                params: None,
+                return_type: Type::Error,
+            },
+        );
+
+        // count_where(List<A>, Fn(A) -> Bool) -> Int
+        self.builtins.insert(
+            "count_where",
+            BuiltinInfo {
+                name: "count_where",
+                params: None,
+                return_type: Type::Int,
+            },
+        );
+
+        // sum(List<Int>) -> Int
+        self.builtins.insert(
+            "sum",
+            BuiltinInfo {
+                name: "sum",
+                params: Some(vec![Type::List(Box::new(Type::Int))]),
+                return_type: Type::Int,
+            },
+        );
+
+        // sum_floats(List<Float>) -> Float
+        self.builtins.insert(
+            "sum_floats",
+            BuiltinInfo {
+                name: "sum_floats",
+                params: Some(vec![Type::List(Box::new(Type::Float))]),
+                return_type: Type::Float,
+            },
+        );
     }
 
     /// Define an agent.

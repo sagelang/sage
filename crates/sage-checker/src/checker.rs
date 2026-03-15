@@ -699,10 +699,14 @@ impl Checker {
 
                 // Track belief usage in template interpolations
                 for part in &template.parts {
-                    if let sage_parser::StringPart::Interpolation(ident) = part {
-                        if let Some(field) = ident.name.strip_prefix("self.") {
+                    if let sage_parser::StringPart::Interpolation(interp_expr) = part {
+                        // Check the base identifier
+                        let base_ident = interp_expr.base_ident();
+                        if let Some(field) = base_ident.name.strip_prefix("self.") {
                             self.used_beliefs.insert(field.to_string());
                         }
+                        // Type-check the interpolation expression
+                        self.check_interp_expr(interp_expr);
                     }
                 }
                 // infer returns Inferred<T>, default to Inferred<String>
@@ -835,28 +839,10 @@ impl Checker {
             Expr::Paren { inner, .. } => self.check_expr(inner),
 
             Expr::StringInterp { template, .. } => {
-                // Check all interpolated identifiers
+                // Check all interpolated expressions (RFC-0013)
                 for part in &template.parts {
-                    if let sage_parser::StringPart::Interpolation(ident) = part {
-                        // Handle self.field references
-                        if let Some(field) = ident.name.strip_prefix("self.") {
-                            if let Some(agent_name) = &self.current_agent {
-                                if let Some(agent) = self.symbols.get_agent(agent_name) {
-                                    if agent.beliefs.contains_key(field) {
-                                        self.used_beliefs.insert(field.to_string());
-                                    } else {
-                                        self.errors
-                                            .push(CheckError::undefined_belief(field, &ident.span));
-                                    }
-                                }
-                            } else {
-                                self.errors
-                                    .push(CheckError::self_outside_agent(&ident.span));
-                            }
-                        } else {
-                            // Regular variable reference
-                            self.lookup_var(&ident.name, &ident.span);
-                        }
+                    if let sage_parser::StringPart::Interpolation(interp_expr) = part {
+                        self.check_interp_expr(interp_expr);
                     }
                 }
                 Type::String
@@ -1364,7 +1350,7 @@ impl Checker {
 
         match op {
             // Arithmetic: Int/Float
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
                 if left.is_numeric() && left == right {
                     left.clone()
                 } else {
@@ -1904,6 +1890,400 @@ impl Checker {
                 }
             }
 
+            // =========================================================================
+            // RFC-0013: List Higher-Order Functions
+            // =========================================================================
+
+            "map" => {
+                // map(List<A>, Fn(A) -> B) -> List<B>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("map", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Some(elem_ty) = list_ty.list_element() {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() == 1 && params[0].is_compatible_with(elem_ty) {
+                            return Type::List(ret.clone());
+                        }
+                    }
+                    if !fn_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("Fn({elem_ty}) -> B"),
+                            fn_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "filter" => {
+                // filter(List<A>, Fn(A) -> Bool) -> List<A>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("filter", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Some(elem_ty) = list_ty.list_element() {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() == 1
+                            && params[0].is_compatible_with(elem_ty)
+                            && **ret == Type::Bool
+                        {
+                            return list_ty.clone();
+                        }
+                    }
+                    if !fn_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("Fn({elem_ty}) -> Bool"),
+                            fn_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "reduce" => {
+                // reduce(List<A>, B, Fn(B, A) -> B) -> B
+                if args.len() != 3 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("reduce", 3, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let init_ty = self.check_expr(&args[1]);
+                let fn_ty = self.check_expr(&args[2]);
+
+                if let Some(elem_ty) = list_ty.list_element() {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() == 2
+                            && params[0].is_compatible_with(&init_ty)
+                            && params[1].is_compatible_with(elem_ty)
+                            && ret.is_compatible_with(&init_ty)
+                        {
+                            return init_ty;
+                        }
+                    }
+                    if !fn_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("Fn({init_ty}, {elem_ty}) -> {init_ty}"),
+                            fn_ty.to_string(),
+                            args[2].span(),
+                        ));
+                    }
+                } else if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "any" | "all" | "count_where" => {
+                // any/all(List<A>, Fn(A) -> Bool) -> Bool
+                // count_where(List<A>, Fn(A) -> Bool) -> Int
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count(builtin.name, 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Some(elem_ty) = list_ty.list_element() {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() == 1
+                            && params[0].is_compatible_with(elem_ty)
+                            && **ret == Type::Bool
+                        {
+                            return if builtin.name == "count_where" {
+                                Type::Int
+                            } else {
+                                Type::Bool
+                            };
+                        }
+                    }
+                    if !fn_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("Fn({elem_ty}) -> Bool"),
+                            fn_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "find" => {
+                // find(List<A>, Fn(A) -> Bool) -> Option<A>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("find", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Some(elem_ty) = list_ty.list_element() {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() == 1
+                            && params[0].is_compatible_with(elem_ty)
+                            && **ret == Type::Bool
+                        {
+                            return Type::Option(Box::new(elem_ty.clone()));
+                        }
+                    }
+                    if !fn_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("Fn({elem_ty}) -> Bool"),
+                            fn_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "flat_map" => {
+                // flat_map(List<A>, Fn(A) -> List<B>) -> List<B>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("flat_map", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Some(elem_ty) = list_ty.list_element() {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() == 1 && params[0].is_compatible_with(elem_ty) {
+                            // Return type must be List<B>
+                            if ret.list_element().is_some() {
+                                return (**ret).clone();
+                            }
+                        }
+                    }
+                    if !fn_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("Fn({elem_ty}) -> List<B>"),
+                            fn_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "zip" => {
+                // zip(List<A>, List<B>) -> List<(A, B)>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("zip", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list1_ty = self.check_expr(&args[0]);
+                let list2_ty = self.check_expr(&args[1]);
+
+                if let (Some(elem1), Some(elem2)) =
+                    (list1_ty.list_element(), list2_ty.list_element())
+                {
+                    return Type::List(Box::new(Type::Tuple(vec![
+                        elem1.clone(),
+                        elem2.clone(),
+                    ])));
+                }
+                if !list1_ty.is_error() && list1_ty.list_element().is_none() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list1_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                if !list2_ty.is_error() && list2_ty.list_element().is_none() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<B>",
+                        list2_ty.to_string(),
+                        args[1].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "sort_by" => {
+                // sort_by(List<A>, Fn(A, A) -> Int) -> List<A>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("sort_by", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Some(elem_ty) = list_ty.list_element() {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() == 2
+                            && params[0].is_compatible_with(elem_ty)
+                            && params[1].is_compatible_with(elem_ty)
+                            && **ret == Type::Int
+                        {
+                            return list_ty.clone();
+                        }
+                    }
+                    if !fn_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("Fn({elem_ty}, {elem_ty}) -> Int"),
+                            fn_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "enumerate" => {
+                // enumerate(List<A>) -> List<(Int, A)>
+                if args.len() != 1 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("enumerate", 1, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+
+                if let Some(elem_ty) = list_ty.list_element() {
+                    return Type::List(Box::new(Type::Tuple(vec![Type::Int, elem_ty.clone()])));
+                }
+                if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "take" | "drop" => {
+                // take/drop(List<A>, Int) -> List<A>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count(builtin.name, 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let n_ty = self.check_expr(&args[1]);
+
+                if n_ty != Type::Int && !n_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Int",
+                        n_ty.to_string(),
+                        args[1].span(),
+                    ));
+                }
+                if list_ty.list_element().is_some() {
+                    return list_ty;
+                }
+                if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "flatten" => {
+                // flatten(List<List<A>>) -> List<A>
+                if args.len() != 1 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("flatten", 1, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+
+                if let Some(inner) = list_ty.list_element() {
+                    if let Some(elem_ty) = inner.list_element() {
+                        return Type::List(Box::new(elem_ty.clone()));
+                    }
+                }
+                if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<List<A>>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "reverse" | "unique" => {
+                // reverse/unique(List<A>) -> List<A>
+                if args.len() != 1 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count(builtin.name, 1, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+
+                if list_ty.list_element().is_some() {
+                    return list_ty;
+                }
+                if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
             _ => {
                 // Standard built-in with fixed signature
                 if let Some(ref params) = builtin.params {
@@ -1930,6 +2310,66 @@ impl Checker {
                 }
 
                 builtin.return_type.clone()
+            }
+        }
+    }
+
+    /// Check an interpolation expression for type correctness (RFC-0013).
+    fn check_interp_expr(&mut self, expr: &sage_parser::InterpExpr) -> Type {
+        match expr {
+            sage_parser::InterpExpr::Ident(ident) => {
+                // Handle self.field references
+                if let Some(field) = ident.name.strip_prefix("self.") {
+                    if let Some(agent_name) = &self.current_agent {
+                        if let Some(agent) = self.symbols.get_agent(agent_name) {
+                            if let Some(ty) = agent.beliefs.get(field) {
+                                self.used_beliefs.insert(field.to_string());
+                                return ty.clone();
+                            }
+                            self.errors
+                                .push(CheckError::undefined_belief(field, &ident.span));
+                        }
+                    } else {
+                        self.errors.push(CheckError::self_outside_agent(&ident.span));
+                    }
+                    return Type::Error;
+                }
+                // Regular variable reference
+                self.lookup_var(&ident.name, &ident.span)
+            }
+            sage_parser::InterpExpr::FieldAccess { base, field, span } => {
+                let base_ty = self.check_interp_expr(base);
+                // Look up the field in the base type
+                if let Type::Named(record_name) = &base_ty {
+                    if let Some(record) = self.symbols.get_record(record_name) {
+                        if let Some(field_ty) = record.fields.get(&field.name) {
+                            return field_ty.clone();
+                        }
+                        self.errors.push(CheckError::undefined_record_field(
+                            &field.name,
+                            record_name,
+                            span,
+                        ));
+                    }
+                } else if !base_ty.is_error() {
+                    self.errors
+                        .push(CheckError::field_access_on_non_record(base_ty.to_string(), span));
+                }
+                Type::Error
+            }
+            sage_parser::InterpExpr::TupleIndex { base, index, span } => {
+                let base_ty = self.check_interp_expr(base);
+                if let Type::Tuple(elems) = &base_ty {
+                    if *index < elems.len() {
+                        return elems[*index].clone();
+                    }
+                    self.errors
+                        .push(CheckError::tuple_index_out_of_bounds(*index, elems.len(), span));
+                } else if !base_ty.is_error() {
+                    self.errors
+                        .push(CheckError::field_access_on_non_record(base_ty.to_string(), span));
+                }
+                Type::Error
             }
         }
     }
@@ -1994,6 +2434,11 @@ impl Checker {
         // Check if it's a constant
         if let Some(const_info) = self.symbols.get_const(name) {
             return const_info.ty.clone();
+        }
+
+        // Check for builtin constants (RFC-0013)
+        if name == "PI" || name == "E" {
+            return Type::Float;
         }
 
         self.errors.push(CheckError::undefined_variable(name, span));
@@ -2950,11 +3395,15 @@ impl<'a> ModuleChecker<'a> {
                 result_ty,
                 ..
             } => {
+                // RFC-0013: Check interpolation expressions
                 for part in &template.parts {
-                    if let sage_parser::StringPart::Interpolation(ident) = part {
-                        if let Some(field) = ident.name.strip_prefix("self.") {
+                    if let sage_parser::StringPart::Interpolation(interp_expr) = part {
+                        let base_ident = interp_expr.base_ident();
+                        if let Some(field) = base_ident.name.strip_prefix("self.") {
                             self.used_beliefs.insert(field.to_string());
                         }
+                        // Type-check the interpolation expression
+                        self.check_interp_expr(interp_expr);
                     }
                 }
                 let inner = result_ty.as_ref().map_or(Type::String, resolve_type);
@@ -3081,25 +3530,10 @@ impl<'a> ModuleChecker<'a> {
             Expr::Paren { inner, .. } => self.check_expr(inner),
 
             Expr::StringInterp { template, .. } => {
+                // RFC-0013: Check all interpolated expressions
                 for part in &template.parts {
-                    if let sage_parser::StringPart::Interpolation(ident) = part {
-                        if let Some(field) = ident.name.strip_prefix("self.") {
-                            if let Some(agent_name) = &self.current_agent {
-                                if let Some(agent) = self.lookup_agent(agent_name) {
-                                    if agent.beliefs.contains_key(field) {
-                                        self.used_beliefs.insert(field.to_string());
-                                    } else {
-                                        self.errors
-                                            .push(CheckError::undefined_belief(field, &ident.span));
-                                    }
-                                }
-                            } else {
-                                self.errors
-                                    .push(CheckError::self_outside_agent(&ident.span));
-                            }
-                        } else {
-                            self.lookup_var(&ident.name, &ident.span);
-                        }
+                    if let sage_parser::StringPart::Interpolation(interp_expr) = part {
+                        self.check_interp_expr(interp_expr);
                     }
                 }
                 Type::String
@@ -3551,7 +3985,7 @@ impl<'a> ModuleChecker<'a> {
         let right = right.unwrap_inferred();
 
         match op {
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
                 if left.is_numeric() && left == right {
                     left.clone()
                 } else {
@@ -4101,6 +4535,400 @@ impl<'a> ModuleChecker<'a> {
                 }
             }
 
+            // =========================================================================
+            // RFC-0013: List Higher-Order Functions
+            // =========================================================================
+
+            "map" => {
+                // map(List<A>, Fn(A) -> B) -> List<B>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("map", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Some(elem_ty) = list_ty.list_element() {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() == 1 && params[0].is_compatible_with(elem_ty) {
+                            return Type::List(ret.clone());
+                        }
+                    }
+                    if !fn_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("Fn({elem_ty}) -> B"),
+                            fn_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "filter" => {
+                // filter(List<A>, Fn(A) -> Bool) -> List<A>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("filter", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Some(elem_ty) = list_ty.list_element() {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() == 1
+                            && params[0].is_compatible_with(elem_ty)
+                            && **ret == Type::Bool
+                        {
+                            return list_ty.clone();
+                        }
+                    }
+                    if !fn_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("Fn({elem_ty}) -> Bool"),
+                            fn_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "reduce" => {
+                // reduce(List<A>, B, Fn(B, A) -> B) -> B
+                if args.len() != 3 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("reduce", 3, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let init_ty = self.check_expr(&args[1]);
+                let fn_ty = self.check_expr(&args[2]);
+
+                if let Some(elem_ty) = list_ty.list_element() {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() == 2
+                            && params[0].is_compatible_with(&init_ty)
+                            && params[1].is_compatible_with(elem_ty)
+                            && ret.is_compatible_with(&init_ty)
+                        {
+                            return init_ty;
+                        }
+                    }
+                    if !fn_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("Fn({init_ty}, {elem_ty}) -> {init_ty}"),
+                            fn_ty.to_string(),
+                            args[2].span(),
+                        ));
+                    }
+                } else if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "any" | "all" | "count_where" => {
+                // any/all(List<A>, Fn(A) -> Bool) -> Bool
+                // count_where(List<A>, Fn(A) -> Bool) -> Int
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count(builtin.name, 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Some(elem_ty) = list_ty.list_element() {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() == 1
+                            && params[0].is_compatible_with(elem_ty)
+                            && **ret == Type::Bool
+                        {
+                            return if builtin.name == "count_where" {
+                                Type::Int
+                            } else {
+                                Type::Bool
+                            };
+                        }
+                    }
+                    if !fn_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("Fn({elem_ty}) -> Bool"),
+                            fn_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "find" => {
+                // find(List<A>, Fn(A) -> Bool) -> Option<A>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("find", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Some(elem_ty) = list_ty.list_element() {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() == 1
+                            && params[0].is_compatible_with(elem_ty)
+                            && **ret == Type::Bool
+                        {
+                            return Type::Option(Box::new(elem_ty.clone()));
+                        }
+                    }
+                    if !fn_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("Fn({elem_ty}) -> Bool"),
+                            fn_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "flat_map" => {
+                // flat_map(List<A>, Fn(A) -> List<B>) -> List<B>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("flat_map", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Some(elem_ty) = list_ty.list_element() {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() == 1 && params[0].is_compatible_with(elem_ty) {
+                            // Return type must be List<B>
+                            if ret.list_element().is_some() {
+                                return (**ret).clone();
+                            }
+                        }
+                    }
+                    if !fn_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("Fn({elem_ty}) -> List<B>"),
+                            fn_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "zip" => {
+                // zip(List<A>, List<B>) -> List<(A, B)>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("zip", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list1_ty = self.check_expr(&args[0]);
+                let list2_ty = self.check_expr(&args[1]);
+
+                if let (Some(elem1), Some(elem2)) =
+                    (list1_ty.list_element(), list2_ty.list_element())
+                {
+                    return Type::List(Box::new(Type::Tuple(vec![
+                        elem1.clone(),
+                        elem2.clone(),
+                    ])));
+                }
+                if !list1_ty.is_error() && list1_ty.list_element().is_none() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list1_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                if !list2_ty.is_error() && list2_ty.list_element().is_none() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<B>",
+                        list2_ty.to_string(),
+                        args[1].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "sort_by" => {
+                // sort_by(List<A>, Fn(A, A) -> Int) -> List<A>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("sort_by", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Some(elem_ty) = list_ty.list_element() {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() == 2
+                            && params[0].is_compatible_with(elem_ty)
+                            && params[1].is_compatible_with(elem_ty)
+                            && **ret == Type::Int
+                        {
+                            return list_ty.clone();
+                        }
+                    }
+                    if !fn_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("Fn({elem_ty}, {elem_ty}) -> Int"),
+                            fn_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "enumerate" => {
+                // enumerate(List<A>) -> List<(Int, A)>
+                if args.len() != 1 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("enumerate", 1, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+
+                if let Some(elem_ty) = list_ty.list_element() {
+                    return Type::List(Box::new(Type::Tuple(vec![Type::Int, elem_ty.clone()])));
+                }
+                if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "take" | "drop" => {
+                // take/drop(List<A>, Int) -> List<A>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count(builtin.name, 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let n_ty = self.check_expr(&args[1]);
+
+                if n_ty != Type::Int && !n_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Int",
+                        n_ty.to_string(),
+                        args[1].span(),
+                    ));
+                }
+                if list_ty.list_element().is_some() {
+                    return list_ty;
+                }
+                if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "flatten" => {
+                // flatten(List<List<A>>) -> List<A>
+                if args.len() != 1 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("flatten", 1, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+
+                if let Some(inner) = list_ty.list_element() {
+                    if let Some(elem_ty) = inner.list_element() {
+                        return Type::List(Box::new(elem_ty.clone()));
+                    }
+                }
+                if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<List<A>>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "reverse" | "unique" => {
+                // reverse/unique(List<A>) -> List<A>
+                if args.len() != 1 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count(builtin.name, 1, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+
+                if list_ty.list_element().is_some() {
+                    return list_ty;
+                }
+                if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<A>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
             _ => {
                 if let Some(ref params) = builtin.params {
                     if args.len() != params.len() {
@@ -4210,6 +5038,11 @@ impl<'a> ModuleChecker<'a> {
             return const_info.ty.clone();
         }
 
+        // Check for builtin constants (RFC-0013)
+        if name == "PI" || name == "E" {
+            return Type::Float;
+        }
+
         self.errors.push(CheckError::undefined_variable(name, span));
         Type::Error
     }
@@ -4232,5 +5065,59 @@ impl<'a> ModuleChecker<'a> {
                 const_info.module_path == self.module_path && const_info.name == name
             })
             .map(|v| v as _)
+    }
+
+    /// Check an interpolation expression for type correctness (RFC-0013).
+    fn check_interp_expr(&mut self, expr: &sage_parser::InterpExpr) -> Type {
+        match expr {
+            sage_parser::InterpExpr::Ident(ident) => {
+                // Handle self.field references
+                if let Some(field) = ident.name.strip_prefix("self.") {
+                    if let Some(agent_name) = &self.current_agent {
+                        if let Some(agent) = self.lookup_agent(agent_name) {
+                            if let Some(ty) = agent.beliefs.get(field) {
+                                return ty.clone();
+                            }
+                            self.errors
+                                .push(CheckError::undefined_belief(field, &ident.span));
+                        }
+                    }
+                    return Type::Error;
+                }
+                // Regular variable reference
+                self.lookup_var(&ident.name, &ident.span)
+            }
+            sage_parser::InterpExpr::FieldAccess { base, field, span } => {
+                let base_ty = self.check_interp_expr(base);
+                // Look up the field in the base type
+                if let Type::Named(record_name) = &base_ty {
+                    if let Some(record) = self.lookup_record(record_name) {
+                        if let Some(field_ty) = record.fields.get(&field.name) {
+                            return field_ty.clone();
+                        }
+                        self.errors
+                            .push(CheckError::unknown_field(&field.name, span));
+                    }
+                } else if !base_ty.is_error() {
+                    self.errors
+                        .push(CheckError::field_access_on_non_record(base_ty.to_string(), span));
+                }
+                Type::Error
+            }
+            sage_parser::InterpExpr::TupleIndex { base, index, span } => {
+                let base_ty = self.check_interp_expr(base);
+                if let Type::Tuple(elems) = &base_ty {
+                    if *index < elems.len() {
+                        return elems[*index].clone();
+                    }
+                    self.errors
+                        .push(CheckError::tuple_index_out_of_bounds(*index, elems.len(), span));
+                } else if !base_ty.is_error() {
+                    self.errors
+                        .push(CheckError::tuple_index_on_non_tuple(base_ty.to_string(), span));
+                }
+                Type::Error
+            }
+        }
     }
 }

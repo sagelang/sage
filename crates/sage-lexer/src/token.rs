@@ -296,6 +296,10 @@ pub enum Token {
     #[token("++")]
     PlusPlus,
 
+    /// Modulo/remainder operator.
+    #[token("%")]
+    Percent,
+
     /// Statement terminator.
     #[token(";")]
     Semicolon,
@@ -398,6 +402,7 @@ impl Token {
                 | Token::Minus
                 | Token::Star
                 | Token::Slash
+                | Token::Percent
                 | Token::Bang
                 | Token::And
                 | Token::Or
@@ -507,6 +512,7 @@ impl std::fmt::Display for Token {
             Token::Or => write!(f, "||"),
             Token::Pipe => write!(f, "|"),
             Token::PlusPlus => write!(f, "++"),
+            Token::Percent => write!(f, "%"),
             Token::Semicolon => write!(f, ";"),
         }
     }
@@ -665,7 +671,7 @@ mod tests {
 
     #[test]
     fn lex_operators() {
-        let mut lexer = Token::lexer("= == != < > <= >= + - * / ! && || ++");
+        let mut lexer = Token::lexer("= == != < > <= >= + - * / % ! && || ++");
         assert_eq!(lexer.next(), Some(Ok(Token::Eq)));
         assert_eq!(lexer.next(), Some(Ok(Token::EqEq)));
         assert_eq!(lexer.next(), Some(Ok(Token::Ne)));
@@ -677,6 +683,7 @@ mod tests {
         assert_eq!(lexer.next(), Some(Ok(Token::Minus)));
         assert_eq!(lexer.next(), Some(Ok(Token::Star)));
         assert_eq!(lexer.next(), Some(Ok(Token::Slash)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Percent)));
         assert_eq!(lexer.next(), Some(Ok(Token::Bang)));
         assert_eq!(lexer.next(), Some(Ok(Token::And)));
         assert_eq!(lexer.next(), Some(Ok(Token::Or)));

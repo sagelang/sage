@@ -397,6 +397,17 @@ pub enum CheckError {
         span: SourceSpan,
     },
 
+    #[error("cannot use tuple index on non-tuple type `{ty}`")]
+    #[diagnostic(
+        code(sage::E049),
+        help("Oswyn suggests: tuple index syntax (.0, .1, etc.) only works on tuple types")
+    )]
+    TupleIndexOnNonTuple {
+        ty: String,
+        #[label("expected a tuple")]
+        span: SourceSpan,
+    },
+
     #[error("empty map literal requires type annotation")]
     #[diagnostic(
         code(sage::E025),
@@ -820,6 +831,15 @@ impl CheckError {
         Self::TupleIndexOutOfBounds {
             index,
             len,
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a tuple index on non-tuple error (E049).
+    #[must_use]
+    pub fn tuple_index_on_non_tuple(ty: impl Into<String>, span: &Span) -> Self {
+        Self::TupleIndexOnNonTuple {
+            ty: ty.into(),
             span: to_source_span(span),
         }
     }

@@ -644,6 +644,16 @@ fn build_file(
 
 /// Create a new Sage project.
 fn cmd_new(name: &str) -> Result<()> {
+    // Validate project name (RFC-0013)
+    if !is_valid_project_name(name) {
+        miette::bail!(
+            "Invalid project name '{}'. Project names must contain only \
+             alphanumeric characters, hyphens, and underscores, and must \
+             start with a letter or underscore.",
+            name
+        );
+    }
+
     let project_dir = PathBuf::from(name);
 
     // Check if directory already exists
@@ -657,11 +667,12 @@ fn cmd_new(name: &str) -> Result<()> {
         .into_diagnostic()
         .wrap_err("Failed to create project directory")?;
 
-    // Create sage.toml
+    // Create sage.toml (with entry field per RFC-0013)
     let sage_toml = format!(
         r#"[project]
 name = "{name}"
 version = "0.1.0"
+entry = "src/main.sg"
 "#
     );
     std::fs::write(project_dir.join("sage.toml"), sage_toml)
@@ -684,6 +695,48 @@ run Main;
         .into_diagnostic()
         .wrap_err("Failed to write src/main.sg")?;
 
+    // Create .gitignore (RFC-0013)
+    let gitignore = r#"# Build artifacts
+/target/
+/.sage/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+"#;
+    std::fs::write(project_dir.join(".gitignore"), gitignore)
+        .into_diagnostic()
+        .wrap_err("Failed to write .gitignore")?;
+
+    // Create README.md (RFC-0013)
+    let readme = format!(
+        r#"# {name}
+
+A Sage project.
+
+## Getting Started
+
+```bash
+sage run .
+```
+
+## Project Structure
+
+- `sage.toml` - Project configuration
+- `src/main.sg` - Main entry point
+"#
+    );
+    std::fs::write(project_dir.join("README.md"), readme)
+        .into_diagnostic()
+        .wrap_err("Failed to write README.md")?;
+
     // Print success message
     print_banner();
     println!(
@@ -694,6 +747,8 @@ run Main;
     );
     println!();
     println!("  {}", style(format!("{}/", name)).dim());
+    println!("  ├── {}", style(".gitignore").dim());
+    println!("  ├── {}", style("README.md").yellow());
     println!("  ├── {}", style("sage.toml").yellow());
     println!("  └── {}", style("src/").dim());
     println!("      └── {}", style("main.sg").yellow());
@@ -714,6 +769,23 @@ run Main;
     );
 
     Ok(())
+}
+
+/// Validate a project name (RFC-0013).
+/// Valid names contain only alphanumeric characters, hyphens, and underscores,
+/// and must start with a letter or underscore.
+fn is_valid_project_name(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let mut chars = name.chars();
+    // First character must be a letter or underscore
+    let first = chars.next().unwrap();
+    if !first.is_ascii_alphabetic() && first != '_' {
+        return false;
+    }
+    // Rest must be alphanumeric, hyphen, or underscore
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 // =============================================================================

@@ -4,9 +4,9 @@
 
 use crate::ast::{
     AgentDecl, BeliefDecl, BinOp, Block, ClosureParam, ConstDecl, ElseBranch, EnumDecl, EventKind,
-    Expr, FieldInit, FnDecl, HandlerDecl, Literal, MapEntry, MatchArm, ModDecl, Param, Pattern,
-    Program, RecordDecl, RecordField, Stmt, StringPart, StringTemplate, ToolDecl, ToolFnDecl,
-    UnaryOp, UseDecl, UseKind,
+    Expr, FieldInit, FnDecl, HandlerDecl, InterpExpr, Literal, MapEntry, MatchArm, ModDecl, Param,
+    Pattern, Program, RecordDecl, RecordField, Stmt, StringPart, StringTemplate, ToolDecl,
+    ToolFnDecl, UnaryOp, UseDecl, UseKind,
 };
 use chumsky::prelude::*;
 use chumsky::BoxedParser;
@@ -1259,10 +1259,11 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
         let unary = try_expr.or(unary).boxed();
 
         // Binary operators with precedence levels
-        // Level 7: * /
+        // Level 7: * / %
         let mul_div_op = just(Token::Star)
             .to(BinOp::Mul)
-            .or(just(Token::Slash).to(BinOp::Div));
+            .or(just(Token::Slash).to(BinOp::Div))
+            .or(just(Token::Percent).to(BinOp::Rem));
 
         let mul_div = unary
             .clone()
@@ -1837,7 +1838,8 @@ fn string_template_parser(
     })
 }
 
-/// Parse a string into template parts, handling `{ident}` interpolations.
+/// Parse a string into template parts, handling `{expr}` interpolations.
+/// Supports field access chains: `{name}`, `{person.name}`, `{pair.0}`
 fn parse_string_template(s: &str, span: &Span) -> Vec<StringPart> {
     let mut parts = Vec::new();
     let mut current = String::new();
@@ -1849,21 +1851,20 @@ fn parse_string_template(s: &str, span: &Span) -> Vec<StringPart> {
                 parts.push(StringPart::Literal(std::mem::take(&mut current)));
             }
 
-            let mut ident_name = String::new();
+            // Collect the full interpolation expression
+            let mut expr_str = String::new();
             while let Some(&c) = chars.peek() {
                 if c == '}' {
                     chars.next();
                     break;
                 }
-                ident_name.push(c);
+                expr_str.push(c);
                 chars.next();
             }
 
-            if !ident_name.is_empty() {
-                parts.push(StringPart::Interpolation(Ident::new(
-                    ident_name,
-                    span.clone(),
-                )));
+            if !expr_str.is_empty() {
+                let interp_expr = parse_interp_expr(&expr_str, span);
+                parts.push(StringPart::Interpolation(interp_expr));
             }
         } else if ch == '\\' {
             if let Some(escaped) = chars.next() {
@@ -1892,6 +1893,35 @@ fn parse_string_template(s: &str, span: &Span) -> Vec<StringPart> {
     }
 
     parts
+}
+
+/// Parse an interpolation expression string like "person.name" or "pair.0".
+fn parse_interp_expr(s: &str, span: &Span) -> InterpExpr {
+    let segments: Vec<&str> = s.split('.').collect();
+
+    // Start with the base identifier
+    let mut expr = InterpExpr::Ident(Ident::new(segments[0].to_string(), span.clone()));
+
+    // Add field accesses or tuple indices for subsequent segments
+    for segment in &segments[1..] {
+        if let Ok(index) = segment.parse::<usize>() {
+            // Numeric: tuple index
+            expr = InterpExpr::TupleIndex {
+                base: Box::new(expr),
+                index,
+                span: span.clone(),
+            };
+        } else {
+            // Non-numeric: field access
+            expr = InterpExpr::FieldAccess {
+                base: Box::new(expr),
+                field: Ident::new(segment.to_string(), span.clone()),
+                span: span.clone(),
+            };
+        }
+    }
+
+    expr
 }
 
 // =============================================================================
@@ -3448,6 +3478,92 @@ mod tests {
             }
         } else {
             panic!("expected let statement");
+        }
+    }
+
+    #[test]
+    fn parse_string_interp_with_field_access() {
+        let source = r#"
+            record Person { name: String }
+            agent Main {
+                on start {
+                    let p = Person { name: "Alice" };
+                    print("Hello, {p.name}!");
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        // Find the print statement with interpolation
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Expr { expr, .. } = &handler.body.stmts[1] {
+            if let Expr::Call { args, .. } = expr {
+                if let Expr::StringInterp { template, .. } = &args[0] {
+                    assert!(template.has_interpolations());
+                    let interps: Vec<_> = template.interpolations().collect();
+                    assert_eq!(interps.len(), 1);
+                    // Should be a field access: p.name
+                    match interps[0] {
+                        InterpExpr::FieldAccess { base, field, .. } => {
+                            assert_eq!(base.base_ident().name, "p");
+                            assert_eq!(field.name, "name");
+                        }
+                        _ => panic!("expected FieldAccess, got {:?}", interps[0]),
+                    }
+                } else {
+                    panic!("expected StringInterp");
+                }
+            } else {
+                panic!("expected Call");
+            }
+        } else {
+            panic!("expected Expr statement");
+        }
+    }
+
+    #[test]
+    fn parse_string_interp_with_tuple_index() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let pair = (1, 2);
+                    print("First: {pair.0}");
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Expr { expr, .. } = &handler.body.stmts[1] {
+            if let Expr::Call { args, .. } = expr {
+                if let Expr::StringInterp { template, .. } = &args[0] {
+                    let interps: Vec<_> = template.interpolations().collect();
+                    assert_eq!(interps.len(), 1);
+                    match interps[0] {
+                        InterpExpr::TupleIndex { base, index, .. } => {
+                            assert_eq!(base.base_ident().name, "pair");
+                            assert_eq!(*index, 0);
+                        }
+                        _ => panic!("expected TupleIndex, got {:?}", interps[0]),
+                    }
+                } else {
+                    panic!("expected StringInterp");
+                }
+            } else {
+                panic!("expected Call");
+            }
+        } else {
+            panic!("expected Expr statement");
         }
     }
 }

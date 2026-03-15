@@ -3,10 +3,42 @@
 use crate::emit::Emitter;
 use sage_loader::ModuleTree;
 use sage_parser::{
-    AgentDecl, BinOp, Block, ConstDecl, EnumDecl, EventKind, Expr, FnDecl, Literal, Program,
-    RecordDecl, Stmt, StringPart, UnaryOp,
+    AgentDecl, BinOp, Block, ConstDecl, EnumDecl, EventKind, Expr, FnDecl, InterpExpr, Literal,
+    Program, RecordDecl, Stmt, StringPart, UnaryOp,
 };
 use sage_types::TypeExpr;
+
+/// How to specify the sage-runtime dependency in generated Cargo.toml.
+#[derive(Debug, Clone)]
+pub enum RuntimeDep {
+    /// Use the published crates.io version.
+    CratesIo { version: String },
+    /// Use a local path (for development).
+    Path { path: String },
+}
+
+impl Default for RuntimeDep {
+    fn default() -> Self {
+        // Default to crates.io with the current version
+        Self::CratesIo {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    }
+}
+
+impl RuntimeDep {
+    /// Generate the Cargo.toml dependency line.
+    fn to_cargo_dep(&self) -> String {
+        match self {
+            RuntimeDep::CratesIo { version } => {
+                format!("sage-runtime = \"{version}\"")
+            }
+            RuntimeDep::Path { path } => {
+                format!("sage-runtime = {{ path = \"{path}\" }}")
+            }
+        }
+    }
+}
 
 /// Generated Rust project files.
 pub struct GeneratedProject {
@@ -18,7 +50,16 @@ pub struct GeneratedProject {
 
 /// Generate Rust code from a Sage program (single file).
 pub fn generate(program: &Program, project_name: &str) -> GeneratedProject {
-    let mut gen = Generator::new();
+    generate_with_config(program, project_name, RuntimeDep::default())
+}
+
+/// Generate Rust code from a Sage program with custom runtime dependency.
+pub fn generate_with_config(
+    program: &Program,
+    project_name: &str,
+    runtime_dep: RuntimeDep,
+) -> GeneratedProject {
+    let mut gen = Generator::new(runtime_dep);
     let main_rs = gen.generate_program(program);
     let cargo_toml = gen.generate_cargo_toml(project_name);
     GeneratedProject {
@@ -32,7 +73,16 @@ pub fn generate(program: &Program, project_name: &str) -> GeneratedProject {
 /// This flattens all modules into a single Rust file, generating all agents
 /// and functions with appropriate visibility modifiers.
 pub fn generate_module_tree(tree: &ModuleTree, project_name: &str) -> GeneratedProject {
-    let mut gen = Generator::new();
+    generate_module_tree_with_config(tree, project_name, RuntimeDep::default())
+}
+
+/// Generate Rust code from a module tree with custom runtime dependency.
+pub fn generate_module_tree_with_config(
+    tree: &ModuleTree,
+    project_name: &str,
+    runtime_dep: RuntimeDep,
+) -> GeneratedProject {
+    let mut gen = Generator::new(runtime_dep);
     let main_rs = gen.generate_module_tree(tree);
     let cargo_toml = gen.generate_cargo_toml(project_name);
     GeneratedProject {
@@ -43,12 +93,14 @@ pub fn generate_module_tree(tree: &ModuleTree, project_name: &str) -> GeneratedP
 
 struct Generator {
     emit: Emitter,
+    runtime_dep: RuntimeDep,
 }
 
 impl Generator {
-    fn new() -> Self {
+    fn new(runtime_dep: RuntimeDep) -> Self {
         Self {
             emit: Emitter::new(),
+            runtime_dep,
         }
     }
 
@@ -197,8 +249,7 @@ impl Generator {
     }
 
     fn generate_cargo_toml(&self, name: &str) -> String {
-        // Use a relative path that works from target/sage/<project>/
-        // This assumes the standard project layout
+        let runtime_dep = self.runtime_dep.to_cargo_dep();
         format!(
             r#"[package]
 name = "{name}"
@@ -206,7 +257,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sage-runtime = {{ path = "../../../crates/sage-runtime" }}
+{runtime_dep}
 tokio = {{ version = "1", features = ["full"] }}
 serde = {{ version = "1", features = ["derive"] }}
 serde_json = "1"
@@ -449,9 +500,14 @@ serde_json = "1"
             self.emit.writeln("});");
         } else {
             // Simple case: no error handler
-            self.emit.write("let handle = sage_runtime::spawn(|mut ctx| ");
+            // Use async move to ensure ctx ownership is moved into the future
+            self.emit
+                .writeln("let handle = sage_runtime::spawn(|mut ctx| async move {");
+            self.emit.indent();
             self.emit.write(&agent_construct);
-            self.emit.writeln(".on_start(&mut ctx));");
+            self.emit.writeln(".on_start(&mut ctx).await");
+            self.emit.dedent();
+            self.emit.writeln("});");
         }
 
         self.emit.writeln("let result = handle.result().await?;");
@@ -604,7 +660,12 @@ serde_json = "1"
             }
 
             Expr::Var { name, .. } => {
-                self.emit.write(&name.name);
+                // Handle builtin constants (RFC-0013)
+                match name.name.as_str() {
+                    "PI" => self.emit.write("std::f64::consts::PI"),
+                    "E" => self.emit.write("std::f64::consts::E"),
+                    _ => self.emit.write(&name.name),
+                }
             }
 
             Expr::Binary {
@@ -651,6 +712,331 @@ serde_json = "1"
                         self.generate_expr(&args[0]);
                         self.emit.write(".len() as i64");
                     }
+
+                    // RFC-0013: String functions
+                    "split" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".split(&*");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(").map(str::to_string).collect::<Vec<_>>()");
+                    }
+                    "trim" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".trim().to_string()");
+                    }
+                    "trim_start" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".trim_start().to_string()");
+                    }
+                    "trim_end" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".trim_end().to_string()");
+                    }
+                    "starts_with" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".starts_with(&*");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "ends_with" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".ends_with(&*");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "replace" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".replace(&*");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(", &*");
+                        self.generate_expr(&args[2]);
+                        self.emit.write(")");
+                    }
+                    "replace_first" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".replacen(&*");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(", &*");
+                        self.generate_expr(&args[2]);
+                        self.emit.write(", 1)");
+                    }
+                    "to_upper" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".to_uppercase()");
+                    }
+                    "to_lower" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".to_lowercase()");
+                    }
+                    "str_len" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".chars().count() as i64");
+                    }
+                    "str_slice" => {
+                        self.emit.write("sage_runtime::stdlib::str_slice(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(", ");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(", ");
+                        self.generate_expr(&args[2]);
+                        self.emit.write(")");
+                    }
+                    "str_index_of" => {
+                        self.emit.write("sage_runtime::stdlib::str_index_of(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(", &");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "str_repeat" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".repeat(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(" as usize)");
+                    }
+                    "str_pad_start" => {
+                        self.emit.write("sage_runtime::stdlib::str_pad_start(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(", ");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(", &");
+                        self.generate_expr(&args[2]);
+                        self.emit.write(")");
+                    }
+                    "str_pad_end" => {
+                        self.emit.write("sage_runtime::stdlib::str_pad_end(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(", ");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(", &");
+                        self.generate_expr(&args[2]);
+                        self.emit.write(")");
+                    }
+
+                    // RFC-0013: Math functions
+                    "abs" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".abs()");
+                    }
+                    "abs_float" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".abs()");
+                    }
+                    "min" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".min(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "max" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".max(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "min_float" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".min(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "max_float" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".max(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "clamp" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".clamp(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(", ");
+                        self.generate_expr(&args[2]);
+                        self.emit.write(")");
+                    }
+                    "clamp_float" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".clamp(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(", ");
+                        self.generate_expr(&args[2]);
+                        self.emit.write(")");
+                    }
+                    "floor" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".floor() as i64");
+                    }
+                    "ceil" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".ceil() as i64");
+                    }
+                    "round" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".round() as i64");
+                    }
+                    "floor_float" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".floor()");
+                    }
+                    "ceil_float" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".ceil()");
+                    }
+                    "pow" => {
+                        // Safe power: handle negative exponents by returning 0
+                        self.emit.write("{ let __base = ");
+                        self.generate_expr(&args[0]);
+                        self.emit.write("; let __exp = ");
+                        self.generate_expr(&args[1]);
+                        self.emit.write("; if __exp < 0 { 0 } else { __base.pow(__exp as u32) } }");
+                    }
+                    "pow_float" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".powf(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "sqrt" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".sqrt()");
+                    }
+                    "int_to_float" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(" as f64");
+                    }
+                    "float_to_int" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(" as i64");
+                    }
+
+                    // RFC-0013: Parsing functions
+                    "parse_int" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".trim().parse::<i64>().map_err(|e| e.to_string())");
+                    }
+                    "parse_float" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".trim().parse::<f64>().map_err(|e| e.to_string())");
+                    }
+                    "parse_bool" => {
+                        self.emit.write("sage_runtime::stdlib::parse_bool(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(")");
+                    }
+                    "float_to_str" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".to_string()");
+                    }
+                    "bool_to_str" => {
+                        self.emit.write("if ");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(" { \"true\".to_string() } else { \"false\".to_string() }");
+                    }
+
+                    // RFC-0013: List Higher-Order Functions
+                    "map" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".into_iter().map(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(").collect::<Vec<_>>()");
+                    }
+                    "filter" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".into_iter().filter(|__x| (");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")((__x).clone())).collect::<Vec<_>>()");
+                    }
+                    "reduce" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".into_iter().fold(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(", ");
+                        self.generate_expr(&args[2]);
+                        self.emit.write(")");
+                    }
+                    "any" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".into_iter().any(|__x| (");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")((__x).clone()))");
+                    }
+                    "all" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".into_iter().all(|__x| (");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")((__x).clone()))");
+                    }
+                    "find" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".into_iter().find(|__x| (");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")((__x).clone()))");
+                    }
+                    "flat_map" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".into_iter().flat_map(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(").collect::<Vec<_>>()");
+                    }
+                    "zip" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".into_iter().zip(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(".into_iter()).collect::<Vec<_>>()");
+                    }
+                    "sort_by" => {
+                        self.emit.write("{ let mut __v = ");
+                        self.generate_expr(&args[0]);
+                        self.emit.write("; __v.sort_by(|__a, __b| { let __cmp = (");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")((__a).clone(), (__b).clone()); if __cmp < 0 { std::cmp::Ordering::Less } else if __cmp > 0 { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Equal } }); __v }");
+                    }
+                    "enumerate" => {
+                        self.generate_expr(&args[0]);
+                        self.emit
+                            .write(".into_iter().enumerate().map(|(__i, __x)| (__i as i64, __x)).collect::<Vec<_>>()");
+                    }
+                    "take" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".into_iter().take(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(" as usize).collect::<Vec<_>>()");
+                    }
+                    "drop" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".into_iter().skip(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(" as usize).collect::<Vec<_>>()");
+                    }
+                    "flatten" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".into_iter().flatten().collect::<Vec<_>>()");
+                    }
+                    "reverse" => {
+                        self.emit.write("{ let mut __v = ");
+                        self.generate_expr(&args[0]);
+                        self.emit.write("; __v.reverse(); __v }");
+                    }
+                    "unique" => {
+                        self.emit.write("{ let mut __seen = std::collections::HashSet::new(); ");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".into_iter().filter(|__x| __seen.insert(format!(\"{:?}\", __x))).collect::<Vec<_>>() }");
+                    }
+                    "count_where" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".into_iter().filter(|__x| (");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")((__x).clone())).count() as i64");
+                    }
+                    "sum" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".iter().sum::<i64>()");
+                    }
+                    "sum_floats" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".iter().sum::<f64>()");
+                    }
+
                     _ => {
                         self.emit.write(fn_name);
                         self.emit.write("(");
@@ -1023,12 +1409,31 @@ serde_json = "1"
 
         // Add the interpolation args
         for part in &template.parts {
-            if let StringPart::Interpolation(ident) = part {
+            if let StringPart::Interpolation(interp_expr) = part {
                 self.emit.write(", ");
-                self.emit.write(&ident.name);
+                self.emit_interp_expr(interp_expr);
             }
         }
         self.emit.write(")");
+    }
+
+    /// Emit code for an interpolation expression (RFC-0013).
+    fn emit_interp_expr(&mut self, expr: &InterpExpr) {
+        match expr {
+            InterpExpr::Ident(ident) => {
+                self.emit.write(&ident.name);
+            }
+            InterpExpr::FieldAccess { base, field, .. } => {
+                self.emit_interp_expr(base);
+                self.emit.write(".");
+                self.emit.write(&field.name);
+            }
+            InterpExpr::TupleIndex { base, index, .. } => {
+                self.emit_interp_expr(base);
+                self.emit.write(".");
+                self.emit.write(&index.to_string());
+            }
+        }
     }
 
     fn emit_type(&mut self, ty: &TypeExpr) {
@@ -1116,6 +1521,7 @@ serde_json = "1"
             BinOp::Sub => "-",
             BinOp::Mul => "*",
             BinOp::Div => "/",
+            BinOp::Rem => "%",
             BinOp::Eq => "==",
             BinOp::Ne => "!=",
             BinOp::Lt => "<",

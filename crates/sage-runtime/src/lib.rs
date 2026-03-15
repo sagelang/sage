@@ -14,6 +14,7 @@
 mod agent;
 mod error;
 mod llm;
+pub mod stdlib;
 pub mod tools;
 
 pub use agent::{spawn, AgentContext, AgentHandle};
