@@ -1,0 +1,428 @@
+// Comprehensive standard library tests for Sage v1.0
+// Run with: sage test tests/
+
+// ============================================================================
+// STRING MODULE
+// ============================================================================
+
+test "lines splits string by newlines" {
+    let text = "hello\nworld\nfoo";
+    let result = lines(text);
+    assert_eq(len(result), 3);
+}
+
+test "chars splits string into characters" {
+    let text = "abc";
+    let result = chars(text);
+    assert_eq(len(result), 3);
+}
+
+test "join combines list with separator" {
+    let parts = ["a", "b", "c"];
+    assert_eq(join(parts, "-"), "a-b-c");
+    assert_eq(join(parts, ""), "abc");
+}
+
+test "str_slice extracts substring" {
+    assert_eq(str_slice("hello world", 0, 5), "hello");
+    assert_eq(str_slice("hello world", 6, 11), "world");
+}
+
+test "str_index_of finds substring" {
+    let idx = str_index_of("hello world", "world");
+    assert_true(is_some(idx));
+    assert_eq(unwrap(idx), 6);
+    assert_true(is_none(str_index_of("hello world", "xyz")));
+}
+
+test "str_pad_start pads to length" {
+    assert_eq(str_pad_start("5", 3, "0"), "005");
+    assert_eq(str_pad_start("hello", 3, "0"), "hello");
+}
+
+test "str_pad_end pads to length" {
+    assert_eq(str_pad_end("5", 3, "0"), "500");
+}
+
+test "str_repeat repeats string" {
+    assert_eq(str_repeat("ab", 3), "ababab");
+    assert_eq(str_repeat("x", 0), "");
+}
+
+test "trim removes whitespace" {
+    assert_eq(trim("  hello  "), "hello");
+    assert_eq(trim_start("  hello  "), "hello  ");
+    assert_eq(trim_end("  hello  "), "  hello");
+}
+
+test "split divides string" {
+    let parts = split("a,b,c", ",");
+    assert_eq(len(parts), 3);
+}
+
+test "replace substitutes all occurrences" {
+    assert_eq(replace("hello world", "o", "0"), "hell0 w0rld");
+}
+
+test "replace_first substitutes first occurrence" {
+    assert_eq(replace_first("hello world", "o", "0"), "hell0 world");
+}
+
+test "case conversion works" {
+    assert_eq(to_upper("Hello"), "HELLO");
+    assert_eq(to_lower("Hello"), "hello");
+}
+
+test "string predicates work" {
+    assert_true(starts_with("hello", "hel"));
+    assert_false(starts_with("hello", "xyz"));
+    assert_true(ends_with("hello", "llo"));
+    assert_true(str_contains("hello", "ell"));
+}
+
+// ============================================================================
+// LIST MODULE
+// ============================================================================
+
+test "range generates integer sequence" {
+    let r = range(0, 5);
+    assert_eq(len(r), 5);
+}
+
+test "range_step generates stepped sequence" {
+    let r = range_step(0, 10, 2);
+    assert_eq(len(r), 5);
+}
+
+test "first returns first element" {
+    let f = first([1, 2, 3]);
+    assert_true(is_some(f));
+    assert_eq(unwrap(f), 1);
+}
+
+test "last returns last element" {
+    let l = last([1, 2, 3]);
+    assert_true(is_some(l));
+    assert_eq(unwrap(l), 3);
+}
+
+test "get returns element at index" {
+    let list = ["a", "b", "c"];
+    assert_true(is_some(get(list, 0)));
+    assert_true(is_some(get(list, 2)));
+    assert_true(is_none(get(list, 10)));
+}
+
+test "list_contains checks membership" {
+    let list = [1, 2, 3, 4, 5];
+    assert_true(list_contains(list, 3));
+    assert_false(list_contains(list, 10));
+}
+
+test "sort orders elements" {
+    let list = [3, 1, 4, 1, 5, 9, 2, 6];
+    let sorted = sort(list);
+    let f = first(sorted);
+    assert_true(is_some(f));
+    assert_eq(unwrap(f), 1);
+}
+
+test "list_slice extracts sublist" {
+    let list = [0, 1, 2, 3, 4, 5];
+    let sliced = list_slice(list, 1, 4);
+    assert_eq(len(sliced), 3);
+}
+
+test "chunk divides list" {
+    let list = [1, 2, 3, 4, 5];
+    let chunks = chunk(list, 2);
+    assert_eq(len(chunks), 3);
+}
+
+test "push appends element" {
+    let list = [1, 2];
+    let result = push(list, 3);
+    assert_eq(len(result), 3);
+}
+
+test "pop removes last element" {
+    let list = [1, 2, 3];
+    let popped = pop(list);
+    assert_true(is_some(popped));
+    assert_eq(unwrap(popped), 3);
+}
+
+test "concat joins lists" {
+    let a = [1, 2];
+    let b = [3, 4];
+    let result = concat(a, b);
+    assert_eq(len(result), 4);
+}
+
+test "take_while takes matching prefix" {
+    let list = [1, 2, 3, 4, 5];
+    let result = take_while(list, |x: Int| x < 4);
+    assert_eq(len(result), 3);
+}
+
+test "drop_while skips matching prefix" {
+    let list = [1, 2, 3, 4, 5];
+    let result = drop_while(list, |x: Int| x < 4);
+    assert_eq(len(result), 2);
+}
+
+test "map transforms elements" {
+    let list = [1, 2, 3];
+    let result = map(list, |x: Int| x * 2);
+    assert_eq(len(result), 3);
+}
+
+test "filter selects elements" {
+    let list = [1, 2, 3, 4, 5];
+    let evens = filter(list, |x: Int| x % 2 == 0);
+    assert_eq(len(evens), 2);
+}
+
+test "reduce accumulates value" {
+    let list = [1, 2, 3, 4];
+    let total = reduce(list, 0, |acc: Int, x: Int| acc + x);
+    assert_eq(total, 10);
+}
+
+test "any checks for match" {
+    assert_true(any([1, 2, 3, 4, 5], |x: Int| x > 4));
+    assert_false(any([1, 2, 3, 4, 5], |x: Int| x > 10));
+}
+
+test "all checks all match" {
+    assert_true(all([2, 4, 6, 8], |x: Int| x % 2 == 0));
+    assert_false(all([2, 4, 6, 8], |x: Int| x < 5));
+}
+
+test "find locates element" {
+    let found = find([1, 2, 3, 4, 5], |x: Int| x > 3);
+    assert_true(is_some(found));
+    assert_eq(unwrap(found), 4);
+    assert_true(is_none(find([1, 2, 3, 4, 5], |x: Int| x > 10)));
+}
+
+test "sum adds integers" {
+    assert_eq(sum([1, 2, 3, 4, 5]), 15);
+}
+
+test "reverse reverses list" {
+    let list = [1, 2, 3];
+    let rev = reverse(list);
+    assert_eq(len(rev), 3);
+}
+
+test "unique removes duplicates" {
+    let list = [1, 2, 2, 3, 3, 3];
+    let uniq = unique(list);
+    assert_eq(len(uniq), 3);
+}
+
+test "enumerate adds indices" {
+    let list = ["a", "b", "c"];
+    let result = enumerate(list);
+    assert_eq(len(result), 3);
+}
+
+test "take gets first n elements" {
+    let list = [1, 2, 3, 4, 5];
+    let taken = take(list, 3);
+    assert_eq(len(taken), 3);
+}
+
+test "drop skips first n elements" {
+    let list = [1, 2, 3, 4, 5];
+    let dropped = drop(list, 2);
+    assert_eq(len(dropped), 3);
+}
+
+// ============================================================================
+// OPTION UTILITIES
+// ============================================================================
+
+test "is_some and is_none work" {
+    let some_val = first([42]);
+    let out_of_bounds = get([1], 10);
+
+    assert_true(is_some(some_val));
+    assert_false(is_none(some_val));
+    assert_true(is_none(out_of_bounds));
+}
+
+test "unwrap extracts value" {
+    let val = first([42]);
+    assert_eq(unwrap(val), 42);
+}
+
+test "unwrap_or provides default" {
+    let some_val = first([42]);
+    let none_val = get([1], 10);
+
+    assert_eq(unwrap_or(some_val, 0), 42);
+    assert_eq(unwrap_or(none_val, 99), 99);
+}
+
+test "unwrap_or_else computes default lazily" {
+    let none_val = get([1], 10);
+    let result = unwrap_or_else(none_val, || 100);
+    assert_eq(result, 100);
+}
+
+test "map_option transforms value" {
+    let val = first([5]);
+    let doubled = map_option(val, |x: Int| x * 2);
+    assert_true(is_some(doubled));
+    assert_eq(unwrap(doubled), 10);
+}
+
+test "map_option preserves None" {
+    let none_val = get([1], 10);
+    let still_none = map_option(none_val, |x: Int| x * 2);
+    assert_true(is_none(still_none));
+}
+
+test "or_option provides fallback" {
+    let none_val = get([1], 10);
+    let some_val = first([42]);
+    let fallback = first([99]);
+
+    assert_eq(unwrap(or_option(some_val, fallback)), 42);
+    assert_eq(unwrap(or_option(none_val, fallback)), 99);
+}
+
+// ============================================================================
+// TIME MODULE
+// ============================================================================
+
+test "now_ms returns timestamp" {
+    let t1 = now_ms();
+    sleep_ms(10);
+    let t2 = now_ms();
+    assert_gt(t2, t1);
+}
+
+test "now_s returns timestamp in seconds" {
+    let t = now_s();
+    assert_gt(t, 1700000000);
+}
+
+test "format_timestamp formats correctly" {
+    let ts = 1705315800000;
+    assert_eq(format_timestamp(ts, "%Y-%m-%d"), "2024-01-15");
+    assert_eq(format_timestamp(ts, "%H:%M:%S"), "10:50:00");
+}
+
+test "time constants are correct" {
+    assert_eq(MS_PER_SECOND, 1000);
+    assert_eq(MS_PER_MINUTE, 60000);
+    assert_eq(MS_PER_HOUR, 3600000);
+    assert_eq(MS_PER_DAY, 86400000);
+}
+
+// ============================================================================
+// JSON UTILITIES
+// ============================================================================
+
+test "json_get extracts string field" {
+    let json = "\{\"name\": \"Alice\", \"age\": 30\}";
+    let name = json_get(json, "name");
+    assert_true(is_some(name));
+    assert_eq(unwrap(name), "Alice");
+    assert_true(is_none(json_get(json, "missing")));
+}
+
+test "json_get_int extracts integer field" {
+    let json = "\{\"count\": 42\}";
+    let count = json_get_int(json, "count");
+    assert_true(is_some(count));
+    assert_eq(unwrap(count), 42);
+}
+
+test "json_get_float extracts float field" {
+    let json = "\{\"value\": 3.14\}";
+    let result = json_get_float(json, "value");
+    assert_true(is_some(result));
+}
+
+test "json_get_bool extracts boolean field" {
+    let json = "\{\"active\": true, \"deleted\": false\}";
+    let active = json_get_bool(json, "active");
+    let deleted = json_get_bool(json, "deleted");
+    assert_true(is_some(active));
+    assert_true(is_some(deleted));
+    assert_eq(unwrap(active), true);
+    assert_eq(unwrap(deleted), false);
+}
+
+test "json_get_list extracts array field" {
+    let json = "\{\"items\": [\"a\", \"b\", \"c\"]\}";
+    let items = json_get_list(json, "items");
+    assert_true(is_some(items));
+    let list = unwrap(items);
+    assert_eq(len(list), 3);
+}
+
+test "json_stringify converts to json" {
+    let s = json_stringify("hello");
+    assert_eq(s, "\"hello\"");
+}
+
+// ============================================================================
+// MATH FUNCTIONS
+// ============================================================================
+
+test "abs returns absolute value" {
+    assert_eq(abs(-5), 5);
+    assert_eq(abs(5), 5);
+}
+
+test "min and max work" {
+    assert_eq(min(3, 7), 3);
+    assert_eq(max(3, 7), 7);
+}
+
+test "clamp constrains value" {
+    assert_eq(clamp(5, 0, 10), 5);
+    assert_eq(clamp(-5, 0, 10), 0);
+    assert_eq(clamp(15, 0, 10), 10);
+}
+
+test "floor ceil round work" {
+    assert_eq(floor(3.7), 3);
+    assert_eq(ceil(3.2), 4);
+    assert_eq(round(3.5), 4);
+    assert_eq(round(3.4), 3);
+}
+
+test "pow computes power" {
+    assert_eq(pow(2, 10), 1024);
+    assert_eq(pow(3, 0), 1);
+}
+
+// ============================================================================
+// TYPE CONVERSIONS
+// ============================================================================
+
+test "int_to_str converts integer" {
+    assert_eq(int_to_str(42), "42");
+    assert_eq(int_to_str(-10), "-10");
+}
+
+test "float_to_str converts float" {
+    let s = float_to_str(3.14);
+    assert_true(str_contains(s, "3.14"));
+}
+
+test "bool_to_str converts boolean" {
+    assert_eq(bool_to_str(true), "true");
+    assert_eq(bool_to_str(false), "false");
+}
+
+test "int_to_float converts integer to float" {
+    let f = int_to_float(42);
+    assert_eq(float_to_int(f), 42);
+}

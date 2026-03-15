@@ -5,7 +5,7 @@ use console::{style, Emoji};
 use indicatif::{ProgressBar, ProgressStyle};
 use miette::{Diagnostic, IntoDiagnostic, Result, Severity, WrapErr};
 use sage_checker::{check_module_tree, Checker};
-use sage_codegen::{generate_module_tree, generate_test_program};
+use sage_codegen::{generate_module_tree, generate_test_program_with_config, RuntimeDep};
 use sage_loader::{
     discover_test_files, load_project, load_project_with_packages, load_test_files, ModuleTree,
 };
@@ -1326,7 +1326,23 @@ fn cmd_test(
             .strip_suffix("_test.sg")
             .unwrap_or(file_name)
             .replace('-', "_");
-        let generated = generate_test_program(&test_file.program, &project_name);
+
+        // Use path dependency if we're in the sage repo (crates/sage-runtime exists)
+        let runtime_dep = if std::env::current_dir()
+            .map(|d| d.join("crates/sage-runtime").exists())
+            .unwrap_or(false)
+        {
+            RuntimeDep::Path {
+                path: std::env::current_dir()
+                    .unwrap()
+                    .join("crates/sage-runtime")
+                    .to_string_lossy()
+                    .to_string(),
+            }
+        } else {
+            RuntimeDep::default()
+        };
+        let generated = generate_test_program_with_config(&test_file.program, &project_name, runtime_dep);
 
         // Write generated code to output directory
         let project_dir = test_output_dir.join(&project_name);

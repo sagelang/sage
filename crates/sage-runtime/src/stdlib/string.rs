@@ -54,9 +54,32 @@ pub fn str_pad_end(s: &str, target_len: i64, pad: &str) -> String {
     result
 }
 
+/// Slice a list by indices (bounds-safe).
+/// Indices are inclusive start, exclusive end.
+#[must_use]
+pub fn list_slice<T: Clone>(list: Vec<T>, start: i64, end: i64) -> Vec<T> {
+    let len = list.len();
+    let start = start.max(0) as usize;
+    let end = end.max(0) as usize;
+    let start = start.min(len);
+    let end = end.min(len);
+    if start >= end {
+        return Vec::new();
+    }
+    list[start..end].to_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_list_slice() {
+        assert_eq!(list_slice(vec![1, 2, 3, 4, 5], 1, 4), vec![2, 3, 4]);
+        assert_eq!(list_slice(vec![1, 2, 3], 0, 10), vec![1, 2, 3]);
+        assert_eq!(list_slice(vec![1, 2, 3], -5, 2), vec![1, 2]);
+        assert_eq!(list_slice(vec![1, 2, 3], 5, 10), Vec::<i64>::new());
+    }
 
     #[test]
     fn test_str_index_of() {

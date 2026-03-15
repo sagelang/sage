@@ -2519,6 +2519,438 @@ impl Checker {
                 Type::Error
             }
 
+            // =========================================================================
+            // RFC-0010: List Utilities
+            // =========================================================================
+
+            "first" | "last" | "pop" => {
+                // first/last/pop(List<T>) -> Option<T>
+                if args.len() != 1 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count(builtin.name, 1, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+
+                if let Some(elem_ty) = list_ty.list_element() {
+                    return Type::Option(Box::new(elem_ty.clone()));
+                }
+                if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<T>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "get" => {
+                // get(List<T>, Int) -> Option<T>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("get", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let idx_ty = self.check_expr(&args[1]);
+
+                if idx_ty != Type::Int && !idx_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Int",
+                        idx_ty.to_string(),
+                        args[1].span(),
+                    ));
+                }
+                if let Some(elem_ty) = list_ty.list_element() {
+                    return Type::Option(Box::new(elem_ty.clone()));
+                }
+                if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<T>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "list_contains" => {
+                // list_contains(List<T>, T) -> Bool
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("list_contains", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let elem_ty = self.check_expr(&args[1]);
+
+                if let Some(expected_elem) = list_ty.list_element() {
+                    if !elem_ty.is_compatible_with(expected_elem) {
+                        self.errors.push(CheckError::type_mismatch(
+                            expected_elem.to_string(),
+                            elem_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                    return Type::Bool;
+                }
+                if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<T>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "sort" => {
+                // sort(List<T>) -> List<T>
+                if args.len() != 1 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("sort", 1, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+
+                if list_ty.list_element().is_some() {
+                    return list_ty;
+                }
+                if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<T>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "list_slice" => {
+                // list_slice(List<T>, Int, Int) -> List<T>
+                if args.len() != 3 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("list_slice", 3, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let start_ty = self.check_expr(&args[1]);
+                let end_ty = self.check_expr(&args[2]);
+
+                if start_ty != Type::Int && !start_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Int",
+                        start_ty.to_string(),
+                        args[1].span(),
+                    ));
+                }
+                if end_ty != Type::Int && !end_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Int",
+                        end_ty.to_string(),
+                        args[2].span(),
+                    ));
+                }
+                if list_ty.list_element().is_some() {
+                    return list_ty;
+                }
+                if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<T>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "chunk" => {
+                // chunk(List<T>, Int) -> List<List<T>>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("chunk", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let size_ty = self.check_expr(&args[1]);
+
+                if size_ty != Type::Int && !size_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Int",
+                        size_ty.to_string(),
+                        args[1].span(),
+                    ));
+                }
+                if list_ty.list_element().is_some() {
+                    return Type::List(Box::new(list_ty));
+                }
+                if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<T>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "concat" => {
+                // concat(List<T>, List<T>) -> List<T>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("concat", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list1_ty = self.check_expr(&args[0]);
+                let list2_ty = self.check_expr(&args[1]);
+
+                if let (Some(elem1), Some(elem2)) =
+                    (list1_ty.list_element(), list2_ty.list_element())
+                {
+                    if !elem1.is_compatible_with(elem2) {
+                        self.errors.push(CheckError::type_mismatch(
+                            list1_ty.to_string(),
+                            list2_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                    return list1_ty;
+                }
+                if !list1_ty.is_error() && list1_ty.list_element().is_none() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<T>",
+                        list1_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                if !list2_ty.is_error() && list2_ty.list_element().is_none() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<T>",
+                        list2_ty.to_string(),
+                        args[1].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "take_while" | "drop_while" => {
+                // take_while/drop_while(List<T>, Fn(T)->Bool) -> List<T>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count(builtin.name, 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Some(elem_ty) = list_ty.list_element() {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() == 1
+                            && params[0].is_compatible_with(elem_ty)
+                            && **ret == Type::Bool
+                        {
+                            return list_ty;
+                        }
+                    }
+                    if !fn_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("Fn({elem_ty}) -> Bool"),
+                            fn_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<T>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            // =========================================================================
+            // RFC-0010: Option Utilities
+            // =========================================================================
+
+            "is_some" | "is_none" => {
+                // is_some/is_none(Option<T>) -> Bool
+                if args.len() != 1 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count(builtin.name, 1, args.len(), span));
+                    return Type::Error;
+                }
+                let opt_ty = self.check_expr(&args[0]);
+
+                if opt_ty.option_inner().is_some() || opt_ty.is_error() {
+                    return Type::Bool;
+                }
+                self.errors.push(CheckError::type_mismatch(
+                    "Option<T>",
+                    opt_ty.to_string(),
+                    args[0].span(),
+                ));
+                Type::Error
+            }
+
+            "unwrap" => {
+                // unwrap(Option<T>) -> T (fallible)
+                if args.len() != 1 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("unwrap", 1, args.len(), span));
+                    return Type::Error;
+                }
+                let opt_ty = self.check_expr(&args[0]);
+
+                if let Some(inner_ty) = opt_ty.option_inner() {
+                    return inner_ty.clone();
+                }
+                if !opt_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Option<T>",
+                        opt_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "unwrap_or" => {
+                // unwrap_or(Option<T>, T) -> T
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("unwrap_or", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let opt_ty = self.check_expr(&args[0]);
+                let default_ty = self.check_expr(&args[1]);
+
+                if let Some(inner_ty) = opt_ty.option_inner() {
+                    if !default_ty.is_compatible_with(inner_ty) {
+                        self.errors.push(CheckError::type_mismatch(
+                            inner_ty.to_string(),
+                            default_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                    return inner_ty.clone();
+                }
+                if !opt_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Option<T>",
+                        opt_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "unwrap_or_else" => {
+                // unwrap_or_else(Option<T>, Fn()->T) -> T
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("unwrap_or_else", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let opt_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Some(inner_ty) = opt_ty.option_inner() {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.is_empty() && ret.is_compatible_with(inner_ty) {
+                            return inner_ty.clone();
+                        }
+                    }
+                    if !fn_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("Fn() -> {inner_ty}"),
+                            fn_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !opt_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Option<T>",
+                        opt_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "map_option" => {
+                // map_option(Option<T>, Fn(T)->U) -> Option<U>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("map_option", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let opt_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Some(inner_ty) = opt_ty.option_inner() {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() == 1 && params[0].is_compatible_with(inner_ty) {
+                            return Type::Option(ret.clone());
+                        }
+                    }
+                    if !fn_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("Fn({inner_ty}) -> U"),
+                            fn_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !opt_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Option<T>",
+                        opt_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "or_option" => {
+                // or_option(Option<T>, Option<T>) -> Option<T>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("or_option", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let opt1_ty = self.check_expr(&args[0]);
+                let opt2_ty = self.check_expr(&args[1]);
+
+                if let (Some(inner1), Some(inner2)) =
+                    (opt1_ty.option_inner(), opt2_ty.option_inner())
+                {
+                    if !inner1.is_compatible_with(inner2) {
+                        self.errors.push(CheckError::type_mismatch(
+                            opt1_ty.to_string(),
+                            opt2_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                    return opt1_ty;
+                }
+                if !opt1_ty.is_error() && opt1_ty.option_inner().is_none() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Option<T>",
+                        opt1_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                if !opt2_ty.is_error() && opt2_ty.option_inner().is_none() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Option<T>",
+                        opt2_ty.to_string(),
+                        args[1].span(),
+                    ));
+                }
+                Type::Error
+            }
+
             _ => {
                 // Standard built-in with fixed signature
                 if let Some(ref params) = builtin.params {
@@ -2674,6 +3106,11 @@ impl Checker {
         // Check for builtin constants (RFC-0013)
         if name == "PI" || name == "E" {
             return Type::Float;
+        }
+
+        // Time constants (RFC-0010)
+        if matches!(name, "MS_PER_SECOND" | "MS_PER_MINUTE" | "MS_PER_HOUR" | "MS_PER_DAY") {
+            return Type::Int;
         }
 
         self.errors.push(CheckError::undefined_variable(name, span));
@@ -5335,6 +5772,438 @@ impl<'a> ModuleChecker<'a> {
                 Type::Error
             }
 
+            // =========================================================================
+            // RFC-0010: List Utilities
+            // =========================================================================
+
+            "first" | "last" | "pop" => {
+                // first/last/pop(List<T>) -> Option<T>
+                if args.len() != 1 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count(builtin.name, 1, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+
+                if let Some(elem_ty) = list_ty.list_element() {
+                    return Type::Option(Box::new(elem_ty.clone()));
+                }
+                if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<T>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "get" => {
+                // get(List<T>, Int) -> Option<T>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("get", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let idx_ty = self.check_expr(&args[1]);
+
+                if idx_ty != Type::Int && !idx_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Int",
+                        idx_ty.to_string(),
+                        args[1].span(),
+                    ));
+                }
+                if let Some(elem_ty) = list_ty.list_element() {
+                    return Type::Option(Box::new(elem_ty.clone()));
+                }
+                if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<T>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "list_contains" => {
+                // list_contains(List<T>, T) -> Bool
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("list_contains", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let elem_ty = self.check_expr(&args[1]);
+
+                if let Some(expected_elem) = list_ty.list_element() {
+                    if !elem_ty.is_compatible_with(expected_elem) {
+                        self.errors.push(CheckError::type_mismatch(
+                            expected_elem.to_string(),
+                            elem_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                    return Type::Bool;
+                }
+                if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<T>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "sort" => {
+                // sort(List<T>) -> List<T>
+                if args.len() != 1 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("sort", 1, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+
+                if list_ty.list_element().is_some() {
+                    return list_ty;
+                }
+                if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<T>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "list_slice" => {
+                // list_slice(List<T>, Int, Int) -> List<T>
+                if args.len() != 3 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("list_slice", 3, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let start_ty = self.check_expr(&args[1]);
+                let end_ty = self.check_expr(&args[2]);
+
+                if start_ty != Type::Int && !start_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Int",
+                        start_ty.to_string(),
+                        args[1].span(),
+                    ));
+                }
+                if end_ty != Type::Int && !end_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Int",
+                        end_ty.to_string(),
+                        args[2].span(),
+                    ));
+                }
+                if list_ty.list_element().is_some() {
+                    return list_ty;
+                }
+                if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<T>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "chunk" => {
+                // chunk(List<T>, Int) -> List<List<T>>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("chunk", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let size_ty = self.check_expr(&args[1]);
+
+                if size_ty != Type::Int && !size_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Int",
+                        size_ty.to_string(),
+                        args[1].span(),
+                    ));
+                }
+                if list_ty.list_element().is_some() {
+                    return Type::List(Box::new(list_ty));
+                }
+                if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<T>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "concat" => {
+                // concat(List<T>, List<T>) -> List<T>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("concat", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list1_ty = self.check_expr(&args[0]);
+                let list2_ty = self.check_expr(&args[1]);
+
+                if let (Some(elem1), Some(elem2)) =
+                    (list1_ty.list_element(), list2_ty.list_element())
+                {
+                    if !elem1.is_compatible_with(elem2) {
+                        self.errors.push(CheckError::type_mismatch(
+                            list1_ty.to_string(),
+                            list2_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                    return list1_ty;
+                }
+                if !list1_ty.is_error() && list1_ty.list_element().is_none() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<T>",
+                        list1_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                if !list2_ty.is_error() && list2_ty.list_element().is_none() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<T>",
+                        list2_ty.to_string(),
+                        args[1].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "take_while" | "drop_while" => {
+                // take_while/drop_while(List<T>, Fn(T)->Bool) -> List<T>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count(builtin.name, 2, args.len(), span));
+                    return Type::Error;
+                }
+                let list_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Some(elem_ty) = list_ty.list_element() {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() == 1
+                            && params[0].is_compatible_with(elem_ty)
+                            && **ret == Type::Bool
+                        {
+                            return list_ty;
+                        }
+                    }
+                    if !fn_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("Fn({elem_ty}) -> Bool"),
+                            fn_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !list_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<T>",
+                        list_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            // =========================================================================
+            // RFC-0010: Option Utilities
+            // =========================================================================
+
+            "is_some" | "is_none" => {
+                // is_some/is_none(Option<T>) -> Bool
+                if args.len() != 1 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count(builtin.name, 1, args.len(), span));
+                    return Type::Error;
+                }
+                let opt_ty = self.check_expr(&args[0]);
+
+                if opt_ty.option_inner().is_some() || opt_ty.is_error() {
+                    return Type::Bool;
+                }
+                self.errors.push(CheckError::type_mismatch(
+                    "Option<T>",
+                    opt_ty.to_string(),
+                    args[0].span(),
+                ));
+                Type::Error
+            }
+
+            "unwrap" => {
+                // unwrap(Option<T>) -> T (fallible)
+                if args.len() != 1 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("unwrap", 1, args.len(), span));
+                    return Type::Error;
+                }
+                let opt_ty = self.check_expr(&args[0]);
+
+                if let Some(inner_ty) = opt_ty.option_inner() {
+                    return inner_ty.clone();
+                }
+                if !opt_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Option<T>",
+                        opt_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "unwrap_or" => {
+                // unwrap_or(Option<T>, T) -> T
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("unwrap_or", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let opt_ty = self.check_expr(&args[0]);
+                let default_ty = self.check_expr(&args[1]);
+
+                if let Some(inner_ty) = opt_ty.option_inner() {
+                    if !default_ty.is_compatible_with(inner_ty) {
+                        self.errors.push(CheckError::type_mismatch(
+                            inner_ty.to_string(),
+                            default_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                    return inner_ty.clone();
+                }
+                if !opt_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Option<T>",
+                        opt_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "unwrap_or_else" => {
+                // unwrap_or_else(Option<T>, Fn()->T) -> T
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("unwrap_or_else", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let opt_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Some(inner_ty) = opt_ty.option_inner() {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.is_empty() && ret.is_compatible_with(inner_ty) {
+                            return inner_ty.clone();
+                        }
+                    }
+                    if !fn_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("Fn() -> {inner_ty}"),
+                            fn_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !opt_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Option<T>",
+                        opt_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "map_option" => {
+                // map_option(Option<T>, Fn(T)->U) -> Option<U>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("map_option", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let opt_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Some(inner_ty) = opt_ty.option_inner() {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() == 1 && params[0].is_compatible_with(inner_ty) {
+                            return Type::Option(ret.clone());
+                        }
+                    }
+                    if !fn_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            format!("Fn({inner_ty}) -> U"),
+                            fn_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                } else if !opt_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Option<T>",
+                        opt_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                Type::Error
+            }
+
+            "or_option" => {
+                // or_option(Option<T>, Option<T>) -> Option<T>
+                if args.len() != 2 {
+                    self.errors
+                        .push(CheckError::wrong_arg_count("or_option", 2, args.len(), span));
+                    return Type::Error;
+                }
+                let opt1_ty = self.check_expr(&args[0]);
+                let opt2_ty = self.check_expr(&args[1]);
+
+                if let (Some(inner1), Some(inner2)) =
+                    (opt1_ty.option_inner(), opt2_ty.option_inner())
+                {
+                    if !inner1.is_compatible_with(inner2) {
+                        self.errors.push(CheckError::type_mismatch(
+                            opt1_ty.to_string(),
+                            opt2_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                    return opt1_ty;
+                }
+                if !opt1_ty.is_error() && opt1_ty.option_inner().is_none() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Option<T>",
+                        opt1_ty.to_string(),
+                        args[0].span(),
+                    ));
+                }
+                if !opt2_ty.is_error() && opt2_ty.option_inner().is_none() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Option<T>",
+                        opt2_ty.to_string(),
+                        args[1].span(),
+                    ));
+                }
+                Type::Error
+            }
+
             _ => {
                 if let Some(ref params) = builtin.params {
                     if args.len() != params.len() {
@@ -5447,6 +6316,11 @@ impl<'a> ModuleChecker<'a> {
         // Check for builtin constants (RFC-0013)
         if name == "PI" || name == "E" {
             return Type::Float;
+        }
+
+        // Time constants (RFC-0010)
+        if matches!(name, "MS_PER_SECOND" | "MS_PER_MINUTE" | "MS_PER_HOUR" | "MS_PER_DAY") {
+            return Type::Int;
         }
 
         self.errors.push(CheckError::undefined_variable(name, span));

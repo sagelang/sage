@@ -1150,6 +1150,11 @@ serde_json = "1"
                 match name.name.as_str() {
                     "PI" => self.emit.write("std::f64::consts::PI"),
                     "E" => self.emit.write("std::f64::consts::E"),
+                    // Time constants
+                    "MS_PER_SECOND" => self.emit.write("1000_i64"),
+                    "MS_PER_MINUTE" => self.emit.write("60000_i64"),
+                    "MS_PER_HOUR" => self.emit.write("3600000_i64"),
+                    "MS_PER_DAY" => self.emit.write("86400000_i64"),
                     _ => self.emit.write(&name.name),
                 }
             }
@@ -1206,6 +1211,20 @@ serde_json = "1"
                         self.generate_expr(&args[1]);
                         self.emit.write(").map(str::to_string).collect::<Vec<_>>()");
                     }
+                    "lines" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".lines().map(str::to_string).collect::<Vec<_>>()");
+                    }
+                    "chars" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".chars().map(|c| c.to_string()).collect::<Vec<_>>()");
+                    }
+                    "join" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".join(&*");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
                     "trim" => {
                         self.generate_expr(&args[0]);
                         self.emit.write(".trim().to_string()");
@@ -1227,6 +1246,12 @@ serde_json = "1"
                     "ends_with" => {
                         self.generate_expr(&args[0]);
                         self.emit.write(".ends_with(&*");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "str_contains" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".contains(&*");
                         self.generate_expr(&args[1]);
                         self.emit.write(")");
                     }
@@ -1301,12 +1326,14 @@ serde_json = "1"
 
                     // RFC-0013: Math functions
                     "abs" => {
+                        self.emit.write("(");
                         self.generate_expr(&args[0]);
-                        self.emit.write(".abs()");
+                        self.emit.write(").abs()");
                     }
                     "abs_float" => {
+                        self.emit.write("(");
                         self.generate_expr(&args[0]);
-                        self.emit.write(".abs()");
+                        self.emit.write(").abs()");
                     }
                     "min" => {
                         self.generate_expr(&args[0]);
@@ -1333,16 +1360,18 @@ serde_json = "1"
                         self.emit.write(")");
                     }
                     "clamp" => {
+                        self.emit.write("(");
                         self.generate_expr(&args[0]);
-                        self.emit.write(".clamp(");
+                        self.emit.write(").clamp(");
                         self.generate_expr(&args[1]);
                         self.emit.write(", ");
                         self.generate_expr(&args[2]);
                         self.emit.write(")");
                     }
                     "clamp_float" => {
+                        self.emit.write("(");
                         self.generate_expr(&args[0]);
-                        self.emit.write(".clamp(");
+                        self.emit.write(").clamp(");
                         self.generate_expr(&args[1]);
                         self.emit.write(", ");
                         self.generate_expr(&args[2]);
@@ -1417,6 +1446,11 @@ serde_json = "1"
                         self.emit.write("if ");
                         self.generate_expr(&args[0]);
                         self.emit.write(" { \"true\".to_string() } else { \"false\".to_string() }");
+                    }
+                    "int_to_str" => {
+                        self.emit.write("(");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(").to_string()");
                     }
 
                     // RFC-0013: List Higher-Order Functions
@@ -1521,6 +1555,269 @@ serde_json = "1"
                     "sum_floats" => {
                         self.generate_expr(&args[0]);
                         self.emit.write(".iter().sum::<f64>()");
+                    }
+
+                    // =========================================================================
+                    // RFC-0010: List Utilities
+                    // =========================================================================
+                    "range" => {
+                        self.emit.write("(");
+                        self.generate_expr(&args[0]);
+                        self.emit.write("..");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(").collect::<Vec<_>>()");
+                    }
+                    "range_step" => {
+                        self.emit.write("(");
+                        self.generate_expr(&args[0]);
+                        self.emit.write("..");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(").step_by(");
+                        self.generate_expr(&args[2]);
+                        self.emit.write(" as usize).collect::<Vec<_>>()");
+                    }
+                    "first" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".first().cloned()");
+                    }
+                    "last" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".last().cloned()");
+                    }
+                    "get" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".get(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(" as usize).cloned()");
+                    }
+                    "list_contains" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".contains(&");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "sort" => {
+                        self.emit.write("{ let mut __v = ");
+                        self.generate_expr(&args[0]);
+                        self.emit.write("; __v.sort(); __v }");
+                    }
+                    "list_slice" => {
+                        self.emit.write("sage_runtime::stdlib::list_slice(");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(", ");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(", ");
+                        self.generate_expr(&args[2]);
+                        self.emit.write(")");
+                    }
+                    "chunk" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".chunks(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(" as usize).map(|c| c.to_vec()).collect::<Vec<_>>()");
+                    }
+                    "pop" => {
+                        self.emit.write("{ let mut __v = ");
+                        self.generate_expr(&args[0]);
+                        self.emit.write("; __v.pop() }");
+                    }
+                    "push" => {
+                        self.emit.write("{ let mut __v = ");
+                        self.generate_expr(&args[0]);
+                        self.emit.write("; __v.push(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write("); __v }");
+                    }
+                    "concat" => {
+                        self.emit.write("{ let mut __v = ");
+                        self.generate_expr(&args[0]);
+                        self.emit.write("; __v.extend(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write("); __v }");
+                    }
+                    "take_while" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".into_iter().take_while(|__x| (");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")((__x).clone())).collect::<Vec<_>>()");
+                    }
+                    "drop_while" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".into_iter().skip_while(|__x| (");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")((__x).clone())).collect::<Vec<_>>()");
+                    }
+
+                    // =========================================================================
+                    // RFC-0010: Option Utilities
+                    // =========================================================================
+                    "is_some" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".is_some()");
+                    }
+                    "is_none" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".is_none()");
+                    }
+                    "unwrap" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".expect(\"unwrap called on None\")");
+                    }
+                    "unwrap_or" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".unwrap_or(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "unwrap_or_else" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".unwrap_or_else(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "map_option" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".map(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "or_option" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".or(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+
+                    // =========================================================================
+                    // RFC-0010: I/O Functions
+                    // =========================================================================
+                    "read_file" => {
+                        self.emit.write("sage_runtime::stdlib::read_file(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(").map_err(sage_runtime::SageError::agent)?");
+                    }
+                    "write_file" => {
+                        self.emit.write("sage_runtime::stdlib::write_file(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(", &");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(").map_err(sage_runtime::SageError::agent)?");
+                    }
+                    "append_file" => {
+                        self.emit.write("sage_runtime::stdlib::append_file(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(", &");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(").map_err(sage_runtime::SageError::agent)?");
+                    }
+                    "file_exists" => {
+                        self.emit.write("sage_runtime::stdlib::file_exists(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(")");
+                    }
+                    "delete_file" => {
+                        self.emit.write("sage_runtime::stdlib::delete_file(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(").map_err(sage_runtime::SageError::agent)?");
+                    }
+                    "list_dir" => {
+                        self.emit.write("sage_runtime::stdlib::list_dir(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(").map_err(sage_runtime::SageError::agent)?");
+                    }
+                    "make_dir" => {
+                        self.emit.write("sage_runtime::stdlib::make_dir(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(").map_err(sage_runtime::SageError::agent)?");
+                    }
+                    "read_line" => {
+                        self.emit.write("sage_runtime::stdlib::read_line().map_err(sage_runtime::SageError::agent)?");
+                    }
+                    "read_all" => {
+                        self.emit.write("sage_runtime::stdlib::read_all().map_err(sage_runtime::SageError::agent)?");
+                    }
+                    "print_err" => {
+                        self.emit.write("eprintln!(\"{}\", ");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(")");
+                    }
+
+                    // =========================================================================
+                    // RFC-0010: Time Functions
+                    // =========================================================================
+                    "now_ms" => {
+                        self.emit.write("sage_runtime::stdlib::now_ms()");
+                    }
+                    "now_s" => {
+                        self.emit.write("sage_runtime::stdlib::now_s()");
+                    }
+                    "sleep_ms" => {
+                        self.emit.write("tokio::time::sleep(std::time::Duration::from_millis(");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(" as u64)).await");
+                    }
+                    "format_timestamp" => {
+                        self.emit.write("sage_runtime::stdlib::format_timestamp(");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(", &");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "parse_timestamp" => {
+                        self.emit.write("sage_runtime::stdlib::parse_timestamp(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(", &");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(").map_err(sage_runtime::SageError::agent)?");
+                    }
+
+                    // =========================================================================
+                    // RFC-0010: JSON Utilities
+                    // =========================================================================
+                    "json_parse" => {
+                        self.emit.write("sage_runtime::stdlib::json_parse(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(").map_err(sage_runtime::SageError::agent)?");
+                    }
+                    "json_get" => {
+                        self.emit.write("sage_runtime::stdlib::json_get(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(", &");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "json_get_int" => {
+                        self.emit.write("sage_runtime::stdlib::json_get_int(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(", &");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "json_get_float" => {
+                        self.emit.write("sage_runtime::stdlib::json_get_float(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(", &");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "json_get_bool" => {
+                        self.emit.write("sage_runtime::stdlib::json_get_bool(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(", &");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "json_get_list" => {
+                        self.emit.write("sage_runtime::stdlib::json_get_list(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(", &");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "json_stringify" => {
+                        self.emit.write("sage_runtime::stdlib::json_stringify_string(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".to_string())");
                     }
 
                     _ => {

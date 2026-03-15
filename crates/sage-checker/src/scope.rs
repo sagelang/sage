@@ -52,6 +52,19 @@ pub struct BuiltinInfo {
     pub params: Option<Vec<Type>>,
     /// Return type.
     pub return_type: Type,
+    /// Whether this function can fail (has `fails` annotation).
+    pub is_fallible: bool,
+}
+
+impl Default for BuiltinInfo {
+    fn default() -> Self {
+        Self {
+            name: "",
+            params: None,
+            return_type: Type::Unit,
+            is_fallible: false,
+        }
+    }
 }
 
 /// Information about a declared record type.
@@ -262,6 +275,7 @@ impl SymbolTable {
                 name: "print",
                 params: Some(vec![Type::String]),
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -272,6 +286,7 @@ impl SymbolTable {
                 name: "len",
                 params: None, // Special handling for generic
                 return_type: Type::Int,
+                is_fallible: false,
             },
         );
 
@@ -282,6 +297,7 @@ impl SymbolTable {
                 name: "push",
                 params: None,
                 return_type: Type::Error, // Determined by first arg
+                is_fallible: false,
             },
         );
 
@@ -292,6 +308,29 @@ impl SymbolTable {
                 name: "join",
                 params: Some(vec![Type::List(Box::new(Type::String)), Type::String]),
                 return_type: Type::String,
+                is_fallible: false,
+            },
+        );
+
+        // lines(String) -> List<String>
+        self.builtins.insert(
+            "lines",
+            BuiltinInfo {
+                name: "lines",
+                params: Some(vec![Type::String]),
+                return_type: Type::List(Box::new(Type::String)),
+                is_fallible: false,
+            },
+        );
+
+        // chars(String) -> List<String>
+        self.builtins.insert(
+            "chars",
+            BuiltinInfo {
+                name: "chars",
+                params: Some(vec![Type::String]),
+                return_type: Type::List(Box::new(Type::String)),
+                is_fallible: false,
             },
         );
 
@@ -302,6 +341,7 @@ impl SymbolTable {
                 name: "str",
                 params: None, // Special handling - accepts any type
                 return_type: Type::String,
+                is_fallible: false,
             },
         );
 
@@ -312,6 +352,7 @@ impl SymbolTable {
                 name: "int_to_str",
                 params: Some(vec![Type::Int]),
                 return_type: Type::String,
+                is_fallible: false,
             },
         );
 
@@ -322,6 +363,7 @@ impl SymbolTable {
                 name: "str_contains",
                 params: Some(vec![Type::String, Type::String]),
                 return_type: Type::Bool,
+                is_fallible: false,
             },
         );
 
@@ -332,6 +374,7 @@ impl SymbolTable {
                 name: "sleep_ms",
                 params: Some(vec![Type::Int]),
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -343,6 +386,7 @@ impl SymbolTable {
                 name: "map_get",
                 params: None, // Special handling for generics
                 return_type: Type::Error, // Determined by first arg
+                is_fallible: false,
             },
         );
 
@@ -353,6 +397,7 @@ impl SymbolTable {
                 name: "map_set",
                 params: None,
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -363,6 +408,7 @@ impl SymbolTable {
                 name: "map_delete",
                 params: None,
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -373,6 +419,7 @@ impl SymbolTable {
                 name: "map_has",
                 params: None,
                 return_type: Type::Bool,
+                is_fallible: false,
             },
         );
 
@@ -383,6 +430,7 @@ impl SymbolTable {
                 name: "map_keys",
                 params: None,
                 return_type: Type::Error, // Determined by first arg
+                is_fallible: false,
             },
         );
 
@@ -393,6 +441,7 @@ impl SymbolTable {
                 name: "map_values",
                 params: None,
                 return_type: Type::Error, // Determined by first arg
+                is_fallible: false,
             },
         );
 
@@ -407,6 +456,7 @@ impl SymbolTable {
                 name: "split",
                 params: Some(vec![Type::String, Type::String]),
                 return_type: Type::List(Box::new(Type::String)),
+                is_fallible: false,
             },
         );
 
@@ -417,6 +467,7 @@ impl SymbolTable {
                 name: "trim",
                 params: Some(vec![Type::String]),
                 return_type: Type::String,
+                is_fallible: false,
             },
         );
 
@@ -427,6 +478,7 @@ impl SymbolTable {
                 name: "trim_start",
                 params: Some(vec![Type::String]),
                 return_type: Type::String,
+                is_fallible: false,
             },
         );
 
@@ -437,6 +489,7 @@ impl SymbolTable {
                 name: "trim_end",
                 params: Some(vec![Type::String]),
                 return_type: Type::String,
+                is_fallible: false,
             },
         );
 
@@ -447,6 +500,7 @@ impl SymbolTable {
                 name: "starts_with",
                 params: Some(vec![Type::String, Type::String]),
                 return_type: Type::Bool,
+                is_fallible: false,
             },
         );
 
@@ -457,6 +511,7 @@ impl SymbolTable {
                 name: "ends_with",
                 params: Some(vec![Type::String, Type::String]),
                 return_type: Type::Bool,
+                is_fallible: false,
             },
         );
 
@@ -467,6 +522,7 @@ impl SymbolTable {
                 name: "replace",
                 params: Some(vec![Type::String, Type::String, Type::String]),
                 return_type: Type::String,
+                is_fallible: false,
             },
         );
 
@@ -477,6 +533,7 @@ impl SymbolTable {
                 name: "replace_first",
                 params: Some(vec![Type::String, Type::String, Type::String]),
                 return_type: Type::String,
+                is_fallible: false,
             },
         );
 
@@ -487,6 +544,7 @@ impl SymbolTable {
                 name: "to_upper",
                 params: Some(vec![Type::String]),
                 return_type: Type::String,
+                is_fallible: false,
             },
         );
 
@@ -497,6 +555,7 @@ impl SymbolTable {
                 name: "to_lower",
                 params: Some(vec![Type::String]),
                 return_type: Type::String,
+                is_fallible: false,
             },
         );
 
@@ -507,6 +566,7 @@ impl SymbolTable {
                 name: "str_len",
                 params: Some(vec![Type::String]),
                 return_type: Type::Int,
+                is_fallible: false,
             },
         );
 
@@ -517,6 +577,7 @@ impl SymbolTable {
                 name: "str_slice",
                 params: Some(vec![Type::String, Type::Int, Type::Int]),
                 return_type: Type::String,
+                is_fallible: false,
             },
         );
 
@@ -527,6 +588,7 @@ impl SymbolTable {
                 name: "str_index_of",
                 params: Some(vec![Type::String, Type::String]),
                 return_type: Type::Option(Box::new(Type::Int)),
+                is_fallible: false,
             },
         );
 
@@ -537,6 +599,7 @@ impl SymbolTable {
                 name: "str_repeat",
                 params: Some(vec![Type::String, Type::Int]),
                 return_type: Type::String,
+                is_fallible: false,
             },
         );
 
@@ -547,6 +610,7 @@ impl SymbolTable {
                 name: "str_pad_start",
                 params: Some(vec![Type::String, Type::Int, Type::String]),
                 return_type: Type::String,
+                is_fallible: false,
             },
         );
 
@@ -557,6 +621,7 @@ impl SymbolTable {
                 name: "str_pad_end",
                 params: Some(vec![Type::String, Type::Int, Type::String]),
                 return_type: Type::String,
+                is_fallible: false,
             },
         );
 
@@ -571,6 +636,7 @@ impl SymbolTable {
                 name: "abs",
                 params: Some(vec![Type::Int]),
                 return_type: Type::Int,
+                is_fallible: false,
             },
         );
 
@@ -581,6 +647,7 @@ impl SymbolTable {
                 name: "abs_float",
                 params: Some(vec![Type::Float]),
                 return_type: Type::Float,
+                is_fallible: false,
             },
         );
 
@@ -591,6 +658,7 @@ impl SymbolTable {
                 name: "min",
                 params: Some(vec![Type::Int, Type::Int]),
                 return_type: Type::Int,
+                is_fallible: false,
             },
         );
 
@@ -601,6 +669,7 @@ impl SymbolTable {
                 name: "max",
                 params: Some(vec![Type::Int, Type::Int]),
                 return_type: Type::Int,
+                is_fallible: false,
             },
         );
 
@@ -611,6 +680,7 @@ impl SymbolTable {
                 name: "min_float",
                 params: Some(vec![Type::Float, Type::Float]),
                 return_type: Type::Float,
+                is_fallible: false,
             },
         );
 
@@ -621,6 +691,7 @@ impl SymbolTable {
                 name: "max_float",
                 params: Some(vec![Type::Float, Type::Float]),
                 return_type: Type::Float,
+                is_fallible: false,
             },
         );
 
@@ -631,6 +702,7 @@ impl SymbolTable {
                 name: "clamp",
                 params: Some(vec![Type::Int, Type::Int, Type::Int]),
                 return_type: Type::Int,
+                is_fallible: false,
             },
         );
 
@@ -641,6 +713,7 @@ impl SymbolTable {
                 name: "clamp_float",
                 params: Some(vec![Type::Float, Type::Float, Type::Float]),
                 return_type: Type::Float,
+                is_fallible: false,
             },
         );
 
@@ -651,6 +724,7 @@ impl SymbolTable {
                 name: "floor",
                 params: Some(vec![Type::Float]),
                 return_type: Type::Int,
+                is_fallible: false,
             },
         );
 
@@ -661,6 +735,7 @@ impl SymbolTable {
                 name: "ceil",
                 params: Some(vec![Type::Float]),
                 return_type: Type::Int,
+                is_fallible: false,
             },
         );
 
@@ -671,6 +746,7 @@ impl SymbolTable {
                 name: "round",
                 params: Some(vec![Type::Float]),
                 return_type: Type::Int,
+                is_fallible: false,
             },
         );
 
@@ -681,6 +757,7 @@ impl SymbolTable {
                 name: "floor_float",
                 params: Some(vec![Type::Float]),
                 return_type: Type::Float,
+                is_fallible: false,
             },
         );
 
@@ -691,6 +768,7 @@ impl SymbolTable {
                 name: "ceil_float",
                 params: Some(vec![Type::Float]),
                 return_type: Type::Float,
+                is_fallible: false,
             },
         );
 
@@ -701,6 +779,7 @@ impl SymbolTable {
                 name: "pow",
                 params: Some(vec![Type::Int, Type::Int]),
                 return_type: Type::Int,
+                is_fallible: false,
             },
         );
 
@@ -711,6 +790,7 @@ impl SymbolTable {
                 name: "pow_float",
                 params: Some(vec![Type::Float, Type::Float]),
                 return_type: Type::Float,
+                is_fallible: false,
             },
         );
 
@@ -721,6 +801,7 @@ impl SymbolTable {
                 name: "sqrt",
                 params: Some(vec![Type::Float]),
                 return_type: Type::Float,
+                is_fallible: false,
             },
         );
 
@@ -731,6 +812,7 @@ impl SymbolTable {
                 name: "int_to_float",
                 params: Some(vec![Type::Int]),
                 return_type: Type::Float,
+                is_fallible: false,
             },
         );
 
@@ -741,6 +823,7 @@ impl SymbolTable {
                 name: "float_to_int",
                 params: Some(vec![Type::Float]),
                 return_type: Type::Int,
+                is_fallible: false,
             },
         );
 
@@ -755,6 +838,7 @@ impl SymbolTable {
                 name: "parse_int",
                 params: Some(vec![Type::String]),
                 return_type: Type::Result(Box::new(Type::Int), Box::new(Type::String)),
+                is_fallible: false,
             },
         );
 
@@ -765,6 +849,7 @@ impl SymbolTable {
                 name: "parse_float",
                 params: Some(vec![Type::String]),
                 return_type: Type::Result(Box::new(Type::Float), Box::new(Type::String)),
+                is_fallible: false,
             },
         );
 
@@ -775,6 +860,7 @@ impl SymbolTable {
                 name: "parse_bool",
                 params: Some(vec![Type::String]),
                 return_type: Type::Result(Box::new(Type::Bool), Box::new(Type::String)),
+                is_fallible: false,
             },
         );
 
@@ -785,6 +871,7 @@ impl SymbolTable {
                 name: "float_to_str",
                 params: Some(vec![Type::Float]),
                 return_type: Type::String,
+                is_fallible: false,
             },
         );
 
@@ -795,6 +882,7 @@ impl SymbolTable {
                 name: "bool_to_str",
                 params: Some(vec![Type::Bool]),
                 return_type: Type::String,
+                is_fallible: false,
             },
         );
 
@@ -809,6 +897,7 @@ impl SymbolTable {
                 name: "map",
                 params: None, // Generic - special handling
                 return_type: Type::Error,
+                is_fallible: false,
             },
         );
 
@@ -819,6 +908,7 @@ impl SymbolTable {
                 name: "filter",
                 params: None,
                 return_type: Type::Error,
+                is_fallible: false,
             },
         );
 
@@ -829,6 +919,7 @@ impl SymbolTable {
                 name: "reduce",
                 params: None,
                 return_type: Type::Error,
+                is_fallible: false,
             },
         );
 
@@ -839,6 +930,7 @@ impl SymbolTable {
                 name: "any",
                 params: None,
                 return_type: Type::Bool,
+                is_fallible: false,
             },
         );
 
@@ -849,6 +941,7 @@ impl SymbolTable {
                 name: "all",
                 params: None,
                 return_type: Type::Bool,
+                is_fallible: false,
             },
         );
 
@@ -859,6 +952,7 @@ impl SymbolTable {
                 name: "find",
                 params: None,
                 return_type: Type::Error,
+                is_fallible: false,
             },
         );
 
@@ -869,6 +963,7 @@ impl SymbolTable {
                 name: "flat_map",
                 params: None,
                 return_type: Type::Error,
+                is_fallible: false,
             },
         );
 
@@ -879,6 +974,7 @@ impl SymbolTable {
                 name: "zip",
                 params: None,
                 return_type: Type::Error,
+                is_fallible: false,
             },
         );
 
@@ -889,6 +985,7 @@ impl SymbolTable {
                 name: "sort_by",
                 params: None,
                 return_type: Type::Error,
+                is_fallible: false,
             },
         );
 
@@ -899,6 +996,7 @@ impl SymbolTable {
                 name: "enumerate",
                 params: None,
                 return_type: Type::Error,
+                is_fallible: false,
             },
         );
 
@@ -909,6 +1007,7 @@ impl SymbolTable {
                 name: "take",
                 params: None,
                 return_type: Type::Error,
+                is_fallible: false,
             },
         );
 
@@ -919,6 +1018,7 @@ impl SymbolTable {
                 name: "drop",
                 params: None,
                 return_type: Type::Error,
+                is_fallible: false,
             },
         );
 
@@ -929,6 +1029,7 @@ impl SymbolTable {
                 name: "flatten",
                 params: None,
                 return_type: Type::Error,
+                is_fallible: false,
             },
         );
 
@@ -939,6 +1040,7 @@ impl SymbolTable {
                 name: "reverse",
                 params: None,
                 return_type: Type::Error,
+                is_fallible: false,
             },
         );
 
@@ -949,6 +1051,7 @@ impl SymbolTable {
                 name: "unique",
                 params: None,
                 return_type: Type::Error,
+                is_fallible: false,
             },
         );
 
@@ -959,6 +1062,7 @@ impl SymbolTable {
                 name: "count_where",
                 params: None,
                 return_type: Type::Int,
+                is_fallible: false,
             },
         );
 
@@ -969,6 +1073,7 @@ impl SymbolTable {
                 name: "sum",
                 params: Some(vec![Type::List(Box::new(Type::Int))]),
                 return_type: Type::Int,
+                is_fallible: false,
             },
         );
 
@@ -979,6 +1084,478 @@ impl SymbolTable {
                 name: "sum_floats",
                 params: Some(vec![Type::List(Box::new(Type::Float))]),
                 return_type: Type::Float,
+                is_fallible: false,
+            },
+        );
+
+        // =========================================================================
+        // RFC-0010: List Utilities
+        // =========================================================================
+
+        // range(Int, Int) -> List<Int>
+        self.builtins.insert(
+            "range",
+            BuiltinInfo {
+                name: "range",
+                params: Some(vec![Type::Int, Type::Int]),
+                return_type: Type::List(Box::new(Type::Int)),
+                is_fallible: false,
+            },
+        );
+
+        // range_step(Int, Int, Int) -> List<Int>
+        self.builtins.insert(
+            "range_step",
+            BuiltinInfo {
+                name: "range_step",
+                params: Some(vec![Type::Int, Type::Int, Type::Int]),
+                return_type: Type::List(Box::new(Type::Int)),
+                is_fallible: false,
+            },
+        );
+
+        // first(List<T>) -> Option<T> (generic)
+        self.builtins.insert(
+            "first",
+            BuiltinInfo {
+                name: "first",
+                params: None,
+                return_type: Type::Error, // Determined by first arg
+                is_fallible: false,
+            },
+        );
+
+        // last(List<T>) -> Option<T> (generic)
+        self.builtins.insert(
+            "last",
+            BuiltinInfo {
+                name: "last",
+                params: None,
+                return_type: Type::Error,
+                is_fallible: false,
+            },
+        );
+
+        // get(List<T>, Int) -> Option<T> (generic)
+        self.builtins.insert(
+            "get",
+            BuiltinInfo {
+                name: "get",
+                params: None,
+                return_type: Type::Error,
+                is_fallible: false,
+            },
+        );
+
+        // list_contains(List<T>, T) -> Bool (generic)
+        self.builtins.insert(
+            "list_contains",
+            BuiltinInfo {
+                name: "list_contains",
+                params: None,
+                return_type: Type::Bool,
+                is_fallible: false,
+            },
+        );
+
+        // sort(List<T>) -> List<T> (generic, requires Ord)
+        self.builtins.insert(
+            "sort",
+            BuiltinInfo {
+                name: "sort",
+                params: None,
+                return_type: Type::Error,
+                is_fallible: false,
+            },
+        );
+
+        // list_slice(List<T>, Int, Int) -> List<T> (generic)
+        self.builtins.insert(
+            "list_slice",
+            BuiltinInfo {
+                name: "list_slice",
+                params: None,
+                return_type: Type::Error,
+                is_fallible: false,
+            },
+        );
+
+        // chunk(List<T>, Int) -> List<List<T>> (generic)
+        self.builtins.insert(
+            "chunk",
+            BuiltinInfo {
+                name: "chunk",
+                params: None,
+                return_type: Type::Error,
+                is_fallible: false,
+            },
+        );
+
+        // pop(List<T>) -> Option<T> (generic)
+        self.builtins.insert(
+            "pop",
+            BuiltinInfo {
+                name: "pop",
+                params: None,
+                return_type: Type::Error,
+                is_fallible: false,
+            },
+        );
+
+        // concat(List<T>, List<T>) -> List<T> (generic)
+        self.builtins.insert(
+            "concat",
+            BuiltinInfo {
+                name: "concat",
+                params: None,
+                return_type: Type::Error,
+                is_fallible: false,
+            },
+        );
+
+        // take_while(List<T>, Fn(T)->Bool) -> List<T> (generic)
+        self.builtins.insert(
+            "take_while",
+            BuiltinInfo {
+                name: "take_while",
+                params: None,
+                return_type: Type::Error,
+                is_fallible: false,
+            },
+        );
+
+        // drop_while(List<T>, Fn(T)->Bool) -> List<T> (generic)
+        self.builtins.insert(
+            "drop_while",
+            BuiltinInfo {
+                name: "drop_while",
+                params: None,
+                return_type: Type::Error,
+                is_fallible: false,
+            },
+        );
+
+        // =========================================================================
+        // RFC-0010: I/O Functions
+        // =========================================================================
+
+        // read_file(String) -> String fails
+        self.builtins.insert(
+            "read_file",
+            BuiltinInfo {
+                name: "read_file",
+                params: Some(vec![Type::String]),
+                return_type: Type::String,
+                is_fallible: true,
+            },
+        );
+
+        // write_file(String, String) -> Unit fails
+        self.builtins.insert(
+            "write_file",
+            BuiltinInfo {
+                name: "write_file",
+                params: Some(vec![Type::String, Type::String]),
+                return_type: Type::Unit,
+                is_fallible: true,
+            },
+        );
+
+        // append_file(String, String) -> Unit fails
+        self.builtins.insert(
+            "append_file",
+            BuiltinInfo {
+                name: "append_file",
+                params: Some(vec![Type::String, Type::String]),
+                return_type: Type::Unit,
+                is_fallible: true,
+            },
+        );
+
+        // file_exists(String) -> Bool
+        self.builtins.insert(
+            "file_exists",
+            BuiltinInfo {
+                name: "file_exists",
+                params: Some(vec![Type::String]),
+                return_type: Type::Bool,
+                is_fallible: false,
+            },
+        );
+
+        // delete_file(String) -> Unit fails
+        self.builtins.insert(
+            "delete_file",
+            BuiltinInfo {
+                name: "delete_file",
+                params: Some(vec![Type::String]),
+                return_type: Type::Unit,
+                is_fallible: true,
+            },
+        );
+
+        // list_dir(String) -> List<String> fails
+        self.builtins.insert(
+            "list_dir",
+            BuiltinInfo {
+                name: "list_dir",
+                params: Some(vec![Type::String]),
+                return_type: Type::List(Box::new(Type::String)),
+                is_fallible: true,
+            },
+        );
+
+        // make_dir(String) -> Unit fails
+        self.builtins.insert(
+            "make_dir",
+            BuiltinInfo {
+                name: "make_dir",
+                params: Some(vec![Type::String]),
+                return_type: Type::Unit,
+                is_fallible: true,
+            },
+        );
+
+        // read_line() -> String fails
+        self.builtins.insert(
+            "read_line",
+            BuiltinInfo {
+                name: "read_line",
+                params: Some(vec![]),
+                return_type: Type::String,
+                is_fallible: true,
+            },
+        );
+
+        // read_all() -> String fails
+        self.builtins.insert(
+            "read_all",
+            BuiltinInfo {
+                name: "read_all",
+                params: Some(vec![]),
+                return_type: Type::String,
+                is_fallible: true,
+            },
+        );
+
+        // print_err(T) -> Unit (generic)
+        self.builtins.insert(
+            "print_err",
+            BuiltinInfo {
+                name: "print_err",
+                params: None, // Generic - accepts any type
+                return_type: Type::Unit,
+                is_fallible: false,
+            },
+        );
+
+        // =========================================================================
+        // RFC-0010: Time Functions
+        // =========================================================================
+
+        // now_ms() -> Int
+        self.builtins.insert(
+            "now_ms",
+            BuiltinInfo {
+                name: "now_ms",
+                params: Some(vec![]),
+                return_type: Type::Int,
+                is_fallible: false,
+            },
+        );
+
+        // now_s() -> Int
+        self.builtins.insert(
+            "now_s",
+            BuiltinInfo {
+                name: "now_s",
+                params: Some(vec![]),
+                return_type: Type::Int,
+                is_fallible: false,
+            },
+        );
+
+        // format_timestamp(Int, String) -> String
+        self.builtins.insert(
+            "format_timestamp",
+            BuiltinInfo {
+                name: "format_timestamp",
+                params: Some(vec![Type::Int, Type::String]),
+                return_type: Type::String,
+                is_fallible: false,
+            },
+        );
+
+        // parse_timestamp(String, String) -> Int fails
+        self.builtins.insert(
+            "parse_timestamp",
+            BuiltinInfo {
+                name: "parse_timestamp",
+                params: Some(vec![Type::String, Type::String]),
+                return_type: Type::Int,
+                is_fallible: true,
+            },
+        );
+
+        // =========================================================================
+        // RFC-0010: JSON Utilities
+        // =========================================================================
+
+        // json_parse(String) -> String fails
+        self.builtins.insert(
+            "json_parse",
+            BuiltinInfo {
+                name: "json_parse",
+                params: Some(vec![Type::String]),
+                return_type: Type::String,
+                is_fallible: true,
+            },
+        );
+
+        // json_get(String, String) -> Option<String>
+        self.builtins.insert(
+            "json_get",
+            BuiltinInfo {
+                name: "json_get",
+                params: Some(vec![Type::String, Type::String]),
+                return_type: Type::Option(Box::new(Type::String)),
+                is_fallible: false,
+            },
+        );
+
+        // json_get_int(String, String) -> Option<Int>
+        self.builtins.insert(
+            "json_get_int",
+            BuiltinInfo {
+                name: "json_get_int",
+                params: Some(vec![Type::String, Type::String]),
+                return_type: Type::Option(Box::new(Type::Int)),
+                is_fallible: false,
+            },
+        );
+
+        // json_get_float(String, String) -> Option<Float>
+        self.builtins.insert(
+            "json_get_float",
+            BuiltinInfo {
+                name: "json_get_float",
+                params: Some(vec![Type::String, Type::String]),
+                return_type: Type::Option(Box::new(Type::Float)),
+                is_fallible: false,
+            },
+        );
+
+        // json_get_bool(String, String) -> Option<Bool>
+        self.builtins.insert(
+            "json_get_bool",
+            BuiltinInfo {
+                name: "json_get_bool",
+                params: Some(vec![Type::String, Type::String]),
+                return_type: Type::Option(Box::new(Type::Bool)),
+                is_fallible: false,
+            },
+        );
+
+        // json_get_list(String, String) -> Option<List<String>>
+        self.builtins.insert(
+            "json_get_list",
+            BuiltinInfo {
+                name: "json_get_list",
+                params: Some(vec![Type::String, Type::String]),
+                return_type: Type::Option(Box::new(Type::List(Box::new(Type::String)))),
+                is_fallible: false,
+            },
+        );
+
+        // json_stringify(T) -> String (generic)
+        self.builtins.insert(
+            "json_stringify",
+            BuiltinInfo {
+                name: "json_stringify",
+                params: None, // Generic - accepts any type
+                return_type: Type::String,
+                is_fallible: false,
+            },
+        );
+
+        // =========================================================================
+        // RFC-0010: Option Utilities
+        // =========================================================================
+
+        // is_some(Option<T>) -> Bool (generic)
+        self.builtins.insert(
+            "is_some",
+            BuiltinInfo {
+                name: "is_some",
+                params: None,
+                return_type: Type::Bool,
+                is_fallible: false,
+            },
+        );
+
+        // is_none(Option<T>) -> Bool (generic)
+        self.builtins.insert(
+            "is_none",
+            BuiltinInfo {
+                name: "is_none",
+                params: None,
+                return_type: Type::Bool,
+                is_fallible: false,
+            },
+        );
+
+        // unwrap(Option<T>) -> T fails (generic)
+        self.builtins.insert(
+            "unwrap",
+            BuiltinInfo {
+                name: "unwrap",
+                params: None,
+                return_type: Type::Error, // Determined by first arg
+                is_fallible: false,
+            },
+        );
+
+        // unwrap_or(Option<T>, T) -> T (generic)
+        self.builtins.insert(
+            "unwrap_or",
+            BuiltinInfo {
+                name: "unwrap_or",
+                params: None,
+                return_type: Type::Error,
+                is_fallible: false,
+            },
+        );
+
+        // unwrap_or_else(Option<T>, Fn()->T) -> T (generic)
+        self.builtins.insert(
+            "unwrap_or_else",
+            BuiltinInfo {
+                name: "unwrap_or_else",
+                params: None,
+                return_type: Type::Error,
+                is_fallible: false,
+            },
+        );
+
+        // map_option(Option<T>, Fn(T)->U) -> Option<U> (generic)
+        self.builtins.insert(
+            "map_option",
+            BuiltinInfo {
+                name: "map_option",
+                params: None,
+                return_type: Type::Error,
+                is_fallible: false,
+            },
+        );
+
+        // or_option(Option<T>, Option<T>) -> Option<T> (generic)
+        self.builtins.insert(
+            "or_option",
+            BuiltinInfo {
+                name: "or_option",
+                params: None,
+                return_type: Type::Error,
+                is_fallible: false,
             },
         );
 
@@ -994,6 +1571,7 @@ impl SymbolTable {
                 name: "assert",
                 params: Some(vec![Type::Bool]),
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -1004,6 +1582,7 @@ impl SymbolTable {
                 name: "assert_eq",
                 params: None, // Generic - special handling
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -1014,6 +1593,7 @@ impl SymbolTable {
                 name: "assert_neq",
                 params: None,
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -1024,6 +1604,7 @@ impl SymbolTable {
                 name: "assert_gt",
                 params: None,
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -1034,6 +1615,7 @@ impl SymbolTable {
                 name: "assert_lt",
                 params: None,
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -1044,6 +1626,7 @@ impl SymbolTable {
                 name: "assert_gte",
                 params: None,
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -1054,6 +1637,7 @@ impl SymbolTable {
                 name: "assert_lte",
                 params: None,
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -1064,6 +1648,7 @@ impl SymbolTable {
                 name: "assert_true",
                 params: Some(vec![Type::Bool]),
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -1074,6 +1659,7 @@ impl SymbolTable {
                 name: "assert_false",
                 params: Some(vec![Type::Bool]),
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -1084,6 +1670,7 @@ impl SymbolTable {
                 name: "assert_contains",
                 params: Some(vec![Type::String, Type::String]),
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -1094,6 +1681,7 @@ impl SymbolTable {
                 name: "assert_not_contains",
                 params: Some(vec![Type::String, Type::String]),
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -1104,6 +1692,7 @@ impl SymbolTable {
                 name: "assert_empty",
                 params: Some(vec![Type::String]),
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -1114,6 +1703,7 @@ impl SymbolTable {
                 name: "assert_not_empty",
                 params: Some(vec![Type::String]),
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -1124,6 +1714,7 @@ impl SymbolTable {
                 name: "assert_starts_with",
                 params: Some(vec![Type::String, Type::String]),
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -1134,6 +1725,7 @@ impl SymbolTable {
                 name: "assert_ends_with",
                 params: Some(vec![Type::String, Type::String]),
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -1144,6 +1736,7 @@ impl SymbolTable {
                 name: "assert_len",
                 params: None, // Generic
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -1154,6 +1747,7 @@ impl SymbolTable {
                 name: "assert_empty_list",
                 params: None, // Generic
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -1164,6 +1758,7 @@ impl SymbolTable {
                 name: "assert_not_empty_list",
                 params: None, // Generic
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
 
@@ -1174,6 +1769,7 @@ impl SymbolTable {
                 name: "assert_fails",
                 params: None, // Generic
                 return_type: Type::Unit,
+                is_fallible: false,
             },
         );
     }

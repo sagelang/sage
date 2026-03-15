@@ -76,6 +76,15 @@ impl Type {
         }
     }
 
+    /// Get the inner type if this is an Option, otherwise None.
+    #[must_use]
+    pub fn option_inner(&self) -> Option<&Type> {
+        match self {
+            Type::Option(inner) => Some(inner),
+            _ => None,
+        }
+    }
+
     /// Get the key and value types if this is a Map, otherwise None.
     #[must_use]
     pub fn map_key_value(&self) -> Option<(&Type, &Type)> {
