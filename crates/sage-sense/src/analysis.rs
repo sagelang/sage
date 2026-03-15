@@ -77,7 +77,7 @@ run Main;
 
     #[test]
     fn analyse_lex_error() {
-        let source = "let @ = 42";
+        let source = "let # = 42";
         let diagnostics = analyse(source);
         assert!(!diagnostics.is_empty());
         assert!(diagnostics[0].message.contains("invalid token"));

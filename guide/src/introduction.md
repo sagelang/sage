@@ -52,6 +52,8 @@ run Coordinator;
 
 **Concurrent by default.** Spawned agents run concurrently. The runtime handles scheduling and message passing.
 
+**Built-in testing with LLM mocking.** Test your agents with deterministic mocks — no network calls, fast feedback, reliable CI.
+
 ## What You'll Learn
 
 This guide covers:
@@ -61,6 +63,7 @@ This guide covers:
 3. **Agents** — State, handlers, spawning, and messaging
 4. **LLM Integration** — Using `infer` to call language models
 5. **Tools** — Built-in tools like HTTP for external services
-6. **Reference** — CLI commands, environment variables, error codes
+6. **Testing** — Write tests with first-class LLM mocking
+7. **Reference** — CLI commands, environment variables, error codes
 
 Let's get started with [installation](./getting-started/installation.md).

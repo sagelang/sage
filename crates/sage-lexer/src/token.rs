@@ -133,6 +133,14 @@ pub enum Token {
     #[token("tool")]
     KwTool,
 
+    /// RFC-0012: Test declaration keyword.
+    #[token("test")]
+    KwTest,
+
+    /// RFC-0012: Mock keyword for LLM mocking.
+    #[token("mock")]
+    KwMock,
+
     // =========================================================================
     // Type keywords
     // =========================================================================
@@ -242,6 +250,10 @@ pub enum Token {
 
     #[token("=>")]
     FatArrow,
+
+    /// Annotation marker for test attributes.
+    #[token("@")]
+    At,
 
     // =========================================================================
     // Operators
@@ -456,6 +468,8 @@ impl std::fmt::Display for Token {
             Token::KwCatch => write!(f, "catch"),
             Token::KwError => write!(f, "error"),
             Token::KwTool => write!(f, "tool"),
+            Token::KwTest => write!(f, "test"),
+            Token::KwMock => write!(f, "mock"),
 
             // Type keywords
             Token::TyInt => write!(f, "Int"),
@@ -494,6 +508,7 @@ impl std::fmt::Display for Token {
             Token::Dot => write!(f, "."),
             Token::Arrow => write!(f, "->"),
             Token::FatArrow => write!(f, "=>"),
+            Token::At => write!(f, "@"),
 
             // Operators
             Token::Eq => write!(f, "="),

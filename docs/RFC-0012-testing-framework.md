@@ -1,6 +1,6 @@
 # RFC-0012: Built-In Testing Framework
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Created:** 2026-03-14
 - **Author:** Sage Contributors
 - **Depends on:** RFC-0001 (POC), RFC-0005 (User-Defined Types), RFC-0007 (Error Handling)

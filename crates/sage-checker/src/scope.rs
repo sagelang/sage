@@ -981,6 +981,201 @@ impl SymbolTable {
                 return_type: Type::Float,
             },
         );
+
+        // =========================================================================
+        // RFC-0012: Testing Framework - Assertion Builtins
+        // These are only valid in _test.sg files (enforced by checker)
+        // =========================================================================
+
+        // assert(Bool) -> Unit
+        self.builtins.insert(
+            "assert",
+            BuiltinInfo {
+                name: "assert",
+                params: Some(vec![Type::Bool]),
+                return_type: Type::Unit,
+            },
+        );
+
+        // assert_eq(T, T) -> Unit (generic)
+        self.builtins.insert(
+            "assert_eq",
+            BuiltinInfo {
+                name: "assert_eq",
+                params: None, // Generic - special handling
+                return_type: Type::Unit,
+            },
+        );
+
+        // assert_neq(T, T) -> Unit (generic)
+        self.builtins.insert(
+            "assert_neq",
+            BuiltinInfo {
+                name: "assert_neq",
+                params: None,
+                return_type: Type::Unit,
+            },
+        );
+
+        // assert_gt(T, T) -> Unit (generic - requires ordering)
+        self.builtins.insert(
+            "assert_gt",
+            BuiltinInfo {
+                name: "assert_gt",
+                params: None,
+                return_type: Type::Unit,
+            },
+        );
+
+        // assert_lt(T, T) -> Unit
+        self.builtins.insert(
+            "assert_lt",
+            BuiltinInfo {
+                name: "assert_lt",
+                params: None,
+                return_type: Type::Unit,
+            },
+        );
+
+        // assert_gte(T, T) -> Unit
+        self.builtins.insert(
+            "assert_gte",
+            BuiltinInfo {
+                name: "assert_gte",
+                params: None,
+                return_type: Type::Unit,
+            },
+        );
+
+        // assert_lte(T, T) -> Unit
+        self.builtins.insert(
+            "assert_lte",
+            BuiltinInfo {
+                name: "assert_lte",
+                params: None,
+                return_type: Type::Unit,
+            },
+        );
+
+        // assert_true(Bool) -> Unit
+        self.builtins.insert(
+            "assert_true",
+            BuiltinInfo {
+                name: "assert_true",
+                params: Some(vec![Type::Bool]),
+                return_type: Type::Unit,
+            },
+        );
+
+        // assert_false(Bool) -> Unit
+        self.builtins.insert(
+            "assert_false",
+            BuiltinInfo {
+                name: "assert_false",
+                params: Some(vec![Type::Bool]),
+                return_type: Type::Unit,
+            },
+        );
+
+        // assert_contains(String, String) -> Unit
+        self.builtins.insert(
+            "assert_contains",
+            BuiltinInfo {
+                name: "assert_contains",
+                params: Some(vec![Type::String, Type::String]),
+                return_type: Type::Unit,
+            },
+        );
+
+        // assert_not_contains(String, String) -> Unit
+        self.builtins.insert(
+            "assert_not_contains",
+            BuiltinInfo {
+                name: "assert_not_contains",
+                params: Some(vec![Type::String, Type::String]),
+                return_type: Type::Unit,
+            },
+        );
+
+        // assert_empty(String) -> Unit
+        self.builtins.insert(
+            "assert_empty",
+            BuiltinInfo {
+                name: "assert_empty",
+                params: Some(vec![Type::String]),
+                return_type: Type::Unit,
+            },
+        );
+
+        // assert_not_empty(String) -> Unit
+        self.builtins.insert(
+            "assert_not_empty",
+            BuiltinInfo {
+                name: "assert_not_empty",
+                params: Some(vec![Type::String]),
+                return_type: Type::Unit,
+            },
+        );
+
+        // assert_starts_with(String, String) -> Unit
+        self.builtins.insert(
+            "assert_starts_with",
+            BuiltinInfo {
+                name: "assert_starts_with",
+                params: Some(vec![Type::String, Type::String]),
+                return_type: Type::Unit,
+            },
+        );
+
+        // assert_ends_with(String, String) -> Unit
+        self.builtins.insert(
+            "assert_ends_with",
+            BuiltinInfo {
+                name: "assert_ends_with",
+                params: Some(vec![Type::String, Type::String]),
+                return_type: Type::Unit,
+            },
+        );
+
+        // assert_len(List<T>, Int) -> Unit
+        self.builtins.insert(
+            "assert_len",
+            BuiltinInfo {
+                name: "assert_len",
+                params: None, // Generic
+                return_type: Type::Unit,
+            },
+        );
+
+        // assert_empty_list(List<T>) -> Unit
+        self.builtins.insert(
+            "assert_empty_list",
+            BuiltinInfo {
+                name: "assert_empty_list",
+                params: None, // Generic
+                return_type: Type::Unit,
+            },
+        );
+
+        // assert_not_empty_list(List<T>) -> Unit
+        self.builtins.insert(
+            "assert_not_empty_list",
+            BuiltinInfo {
+                name: "assert_not_empty_list",
+                params: None, // Generic
+                return_type: Type::Unit,
+            },
+        );
+
+        // assert_fails(T) -> Unit (for testing expected failures)
+        self.builtins.insert(
+            "assert_fails",
+            BuiltinInfo {
+                name: "assert_fails",
+                params: None, // Generic
+                return_type: Type::Unit,
+            },
+        );
     }
 
     /// Define an agent.
@@ -1108,6 +1303,33 @@ impl SymbolTable {
     /// Iterate over all constants.
     pub fn iter_consts(&self) -> impl Iterator<Item = (&String, &ConstInfo)> {
         self.consts.iter()
+    }
+
+    /// Check if a builtin is a test-only assertion (only valid in _test.sg files).
+    #[must_use]
+    pub fn is_test_assertion(&self, name: &str) -> bool {
+        matches!(
+            name,
+            "assert"
+                | "assert_eq"
+                | "assert_neq"
+                | "assert_gt"
+                | "assert_lt"
+                | "assert_gte"
+                | "assert_lte"
+                | "assert_true"
+                | "assert_false"
+                | "assert_contains"
+                | "assert_not_contains"
+                | "assert_empty"
+                | "assert_not_empty"
+                | "assert_starts_with"
+                | "assert_ends_with"
+                | "assert_len"
+                | "assert_empty_list"
+                | "assert_not_empty_list"
+                | "assert_fails"
+        )
     }
 }
 

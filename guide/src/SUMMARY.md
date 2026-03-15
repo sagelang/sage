@@ -34,6 +34,13 @@
 - [Built-in Tools](./tools/overview.md)
 - [HTTP Client](./tools/http.md)
 
+# Testing
+
+- [Overview](./testing/overview.md)
+- [Writing Tests](./testing/writing-tests.md)
+- [Assertions](./testing/assertions.md)
+- [Mocking LLMs](./testing/mocking.md)
+
 # Editors
 
 - [Overview](./editors/overview.md)

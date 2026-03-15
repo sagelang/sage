@@ -19,6 +19,7 @@ mod emit;
 mod generator;
 
 pub use generator::{
-    generate, generate_module_tree, generate_module_tree_with_config, generate_with_config,
-    GeneratedProject, RuntimeDep,
+    generate, generate_module_tree, generate_module_tree_with_config, generate_test_program,
+    generate_test_program_with_config, generate_with_config, GeneratedProject,
+    GeneratedTestProject, RuntimeDep,
 };

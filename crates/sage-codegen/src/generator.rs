@@ -4,7 +4,7 @@ use crate::emit::Emitter;
 use sage_loader::ModuleTree;
 use sage_parser::{
     AgentDecl, BinOp, Block, ConstDecl, EnumDecl, EventKind, Expr, FnDecl, InterpExpr, Literal,
-    Program, RecordDecl, Stmt, StringPart, UnaryOp,
+    MockValue, Program, RecordDecl, Stmt, StringPart, TestDecl, UnaryOp,
 };
 use sage_types::TypeExpr;
 
@@ -86,6 +86,34 @@ pub fn generate_module_tree_with_config(
     let main_rs = gen.generate_module_tree(tree);
     let cargo_toml = gen.generate_cargo_toml(project_name);
     GeneratedProject {
+        main_rs,
+        cargo_toml,
+    }
+}
+
+/// Generated test project files (RFC-0012).
+pub struct GeneratedTestProject {
+    /// The test main.rs content.
+    pub main_rs: String,
+    /// The Cargo.toml content.
+    pub cargo_toml: String,
+}
+
+/// Generate a test binary from a Sage test file (RFC-0012).
+pub fn generate_test_program(program: &Program, test_name: &str) -> GeneratedTestProject {
+    generate_test_program_with_config(program, test_name, RuntimeDep::default())
+}
+
+/// Generate a test binary with custom runtime dependency.
+pub fn generate_test_program_with_config(
+    program: &Program,
+    test_name: &str,
+    runtime_dep: RuntimeDep,
+) -> GeneratedTestProject {
+    let mut gen = Generator::new(runtime_dep);
+    let main_rs = gen.generate_test_binary(program);
+    let cargo_toml = gen.generate_test_cargo_toml(test_name);
+    GeneratedTestProject {
         main_rs,
         cargo_toml,
     }
@@ -266,6 +294,386 @@ serde_json = "1"
 [workspace]
 "#
         )
+    }
+
+    // =========================================================================
+    // RFC-0012: Test generation
+    // =========================================================================
+
+    fn generate_test_binary(&mut self, program: &Program) -> String {
+        // Test prelude
+        self.emit
+            .writeln("//! Generated test file by Sage compiler. Do not edit.");
+        self.emit.blank_line();
+        self.emit.writeln("use sage_runtime::prelude::*;");
+        self.emit.blank_line();
+
+        // Constants (test files may import types/constants from main code)
+        for const_decl in &program.consts {
+            self.generate_const(const_decl);
+            self.emit.blank_line();
+        }
+
+        // Enums
+        for enum_decl in &program.enums {
+            self.generate_enum(enum_decl);
+            self.emit.blank_line();
+        }
+
+        // Records
+        for record in &program.records {
+            self.generate_record(record);
+            self.emit.blank_line();
+        }
+
+        // Functions
+        for func in &program.functions {
+            self.generate_function(func);
+            self.emit.blank_line();
+        }
+
+        // Agents (test files may define helper agents)
+        for agent in &program.agents {
+            self.generate_agent(agent);
+            self.emit.blank_line();
+        }
+
+        // Separate serial and concurrent tests
+        let (serial_tests, concurrent_tests): (Vec<_>, Vec<_>) =
+            program.tests.iter().partition(|t| t.is_serial);
+
+        // Generate concurrent test functions
+        for test in &concurrent_tests {
+            self.generate_test_function(test);
+            self.emit.blank_line();
+        }
+
+        // Generate serial test functions (marked with #[serial])
+        for test in &serial_tests {
+            self.generate_test_function(test);
+            self.emit.blank_line();
+        }
+
+        // Generate an empty main function (required for bin crates)
+        self.emit.writeln("fn main() {}");
+
+        std::mem::take(&mut self.emit).finish()
+    }
+
+    fn generate_test_cargo_toml(&self, name: &str) -> String {
+        let runtime_dep = self.runtime_dep.to_cargo_dep();
+        format!(
+            r#"[package]
+name = "{name}"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+{runtime_dep}
+tokio = {{ version = "1", features = ["full"] }}
+serde = {{ version = "1", features = ["derive"] }}
+serde_json = "1"
+
+# Standalone project, not part of parent workspace
+[workspace]
+"#
+        )
+    }
+
+    fn generate_test_function(&mut self, test: &TestDecl) {
+        // Collect mock infer statements from the test body
+        let mocks = self.collect_mock_infers(&test.body);
+
+        // Generate test function
+        self.emit.writeln("#[tokio::test]");
+        // Convert test name to valid Rust identifier
+        let test_fn_name = self.sanitize_test_name(&test.name);
+        self.emit.write("async fn ");
+        self.emit.write(&test_fn_name);
+        self.emit.writeln("() {");
+        self.emit.indent();
+
+        // Generate mock client if there are mocks
+        if !mocks.is_empty() {
+            self.emit.writeln("let _mock_client = MockLlmClient::with_responses(vec![");
+            self.emit.indent();
+            for mock in &mocks {
+                match mock {
+                    MockValue::Value(expr) => {
+                        self.emit.write("MockResponse::value(");
+                        self.generate_expr(expr);
+                        self.emit.writeln("),");
+                    }
+                    MockValue::Fail(expr) => {
+                        self.emit.write("MockResponse::fail(");
+                        self.generate_expr(expr);
+                        self.emit.writeln("),");
+                    }
+                }
+            }
+            self.emit.dedent();
+            self.emit.writeln("]);");
+            self.emit.blank_line();
+        }
+
+        // Generate test body (excluding mock infer statements)
+        self.generate_test_block(&test.body);
+
+        self.emit.dedent();
+        self.emit.writeln("}");
+    }
+
+    fn collect_mock_infers(&self, block: &Block) -> Vec<MockValue> {
+        let mut mocks = Vec::new();
+        for stmt in &block.stmts {
+            if let Stmt::MockInfer { value, .. } = stmt {
+                mocks.push(value.clone());
+            }
+        }
+        mocks
+    }
+
+    fn generate_test_block(&mut self, block: &Block) {
+        for stmt in &block.stmts {
+            // Skip mock infer statements - they were collected separately
+            if matches!(stmt, Stmt::MockInfer { .. }) {
+                continue;
+            }
+            self.generate_test_stmt(stmt);
+        }
+    }
+
+    fn generate_test_stmt(&mut self, stmt: &Stmt) {
+        match stmt {
+            // Handle assertion builtins specially
+            Stmt::Expr { expr, .. } => {
+                if let Expr::Call { name, args, .. } = expr {
+                    if self.is_assertion_builtin(&name.name) {
+                        self.generate_assertion(&name.name, args);
+                        return;
+                    }
+                }
+                // Regular expression statement
+                self.generate_expr(expr);
+                self.emit.writeln(";");
+            }
+            // For other statements, use the normal generation
+            _ => self.generate_stmt(stmt),
+        }
+    }
+
+    fn is_assertion_builtin(&self, name: &str) -> bool {
+        matches!(
+            name,
+            "assert"
+                | "assert_eq"
+                | "assert_neq"
+                | "assert_gt"
+                | "assert_lt"
+                | "assert_gte"
+                | "assert_lte"
+                | "assert_true"
+                | "assert_false"
+                | "assert_contains"
+                | "assert_not_contains"
+                | "assert_empty"
+                | "assert_not_empty"
+                | "assert_starts_with"
+                | "assert_ends_with"
+                | "assert_len"
+                | "assert_empty_list"
+                | "assert_not_empty_list"
+                | "assert_fails"
+        )
+    }
+
+    fn generate_assertion(&mut self, name: &str, args: &[Expr]) {
+        match name {
+            "assert" | "assert_true" => {
+                self.emit.write("assert!(");
+                if !args.is_empty() {
+                    self.generate_expr(&args[0]);
+                }
+                self.emit.writeln(");");
+            }
+            "assert_false" => {
+                self.emit.write("assert!(!");
+                if !args.is_empty() {
+                    self.generate_expr(&args[0]);
+                }
+                self.emit.writeln(");");
+            }
+            "assert_eq" => {
+                self.emit.write("assert_eq!(");
+                if args.len() >= 2 {
+                    self.generate_expr(&args[0]);
+                    self.emit.write(", ");
+                    self.generate_expr(&args[1]);
+                }
+                self.emit.writeln(");");
+            }
+            "assert_neq" => {
+                self.emit.write("assert_ne!(");
+                if args.len() >= 2 {
+                    self.generate_expr(&args[0]);
+                    self.emit.write(", ");
+                    self.generate_expr(&args[1]);
+                }
+                self.emit.writeln(");");
+            }
+            "assert_gt" => {
+                self.emit.write("assert!(");
+                if args.len() >= 2 {
+                    self.generate_expr(&args[0]);
+                    self.emit.write(" > ");
+                    self.generate_expr(&args[1]);
+                }
+                self.emit.writeln(");");
+            }
+            "assert_lt" => {
+                self.emit.write("assert!(");
+                if args.len() >= 2 {
+                    self.generate_expr(&args[0]);
+                    self.emit.write(" < ");
+                    self.generate_expr(&args[1]);
+                }
+                self.emit.writeln(");");
+            }
+            "assert_gte" => {
+                self.emit.write("assert!(");
+                if args.len() >= 2 {
+                    self.generate_expr(&args[0]);
+                    self.emit.write(" >= ");
+                    self.generate_expr(&args[1]);
+                }
+                self.emit.writeln(");");
+            }
+            "assert_lte" => {
+                self.emit.write("assert!(");
+                if args.len() >= 2 {
+                    self.generate_expr(&args[0]);
+                    self.emit.write(" <= ");
+                    self.generate_expr(&args[1]);
+                }
+                self.emit.writeln(");");
+            }
+            "assert_contains" => {
+                self.emit.write("assert!(");
+                if args.len() >= 2 {
+                    self.generate_expr(&args[0]);
+                    self.emit.write(".contains(&");
+                    self.generate_expr(&args[1]);
+                    self.emit.write(")");
+                }
+                self.emit.writeln(");");
+            }
+            "assert_not_contains" => {
+                self.emit.write("assert!(!");
+                if args.len() >= 2 {
+                    self.generate_expr(&args[0]);
+                    self.emit.write(".contains(&");
+                    self.generate_expr(&args[1]);
+                    self.emit.write(")");
+                }
+                self.emit.writeln(");");
+            }
+            "assert_empty" => {
+                self.emit.write("assert!(");
+                if !args.is_empty() {
+                    self.generate_expr(&args[0]);
+                }
+                self.emit.writeln(".is_empty());");
+            }
+            "assert_not_empty" => {
+                self.emit.write("assert!(!");
+                if !args.is_empty() {
+                    self.generate_expr(&args[0]);
+                }
+                self.emit.writeln(".is_empty());");
+            }
+            "assert_starts_with" => {
+                self.emit.write("assert!(");
+                if args.len() >= 2 {
+                    self.generate_expr(&args[0]);
+                    self.emit.write(".starts_with(&");
+                    self.generate_expr(&args[1]);
+                    self.emit.write(")");
+                }
+                self.emit.writeln(");");
+            }
+            "assert_ends_with" => {
+                self.emit.write("assert!(");
+                if args.len() >= 2 {
+                    self.generate_expr(&args[0]);
+                    self.emit.write(".ends_with(&");
+                    self.generate_expr(&args[1]);
+                    self.emit.write(")");
+                }
+                self.emit.writeln(");");
+            }
+            "assert_len" => {
+                self.emit.write("assert_eq!(");
+                if args.len() >= 2 {
+                    self.generate_expr(&args[0]);
+                    self.emit.write(".len() as i64, ");
+                    self.generate_expr(&args[1]);
+                }
+                self.emit.writeln(");");
+            }
+            "assert_empty_list" => {
+                self.emit.write("assert!(");
+                if !args.is_empty() {
+                    self.generate_expr(&args[0]);
+                }
+                self.emit.writeln(".is_empty());");
+            }
+            "assert_not_empty_list" => {
+                self.emit.write("assert!(!");
+                if !args.is_empty() {
+                    self.generate_expr(&args[0]);
+                }
+                self.emit.writeln(".is_empty());");
+            }
+            "assert_fails" => {
+                // assert_fails expects an expression that should fail
+                self.emit.writeln("{");
+                self.emit.indent();
+                self.emit.write("let result = ");
+                if !args.is_empty() {
+                    self.generate_expr(&args[0]);
+                }
+                self.emit.writeln(";");
+                self.emit.writeln("assert!(result.is_err(), \"Expected operation to fail but it succeeded\");");
+                self.emit.dedent();
+                self.emit.writeln("}");
+            }
+            _ => {
+                // Unknown assertion - just call it as a regular function
+                self.emit.write(name);
+                self.emit.write("(");
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        self.emit.write(", ");
+                    }
+                    self.generate_expr(arg);
+                }
+                self.emit.writeln(");");
+            }
+        }
+    }
+
+    fn sanitize_test_name(&self, name: &str) -> String {
+        // Convert test name to valid Rust identifier
+        name.chars()
+            .map(|c| {
+                if c.is_alphanumeric() {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>()
+            .to_lowercase()
     }
 
     fn generate_const(&mut self, const_decl: &ConstDecl) {
@@ -648,6 +1056,24 @@ serde_json = "1"
                 }
                 self.emit.write(") = ");
                 self.generate_expr(value);
+                self.emit.writeln(";");
+            }
+
+            // RFC-0012: mock infer - codegen will be handled in test harness generation
+            Stmt::MockInfer { value, .. } => {
+                // Mock statements are collected during test codegen, not emitted inline
+                // This placeholder ensures the match is exhaustive
+                self.emit.write("// mock infer: ");
+                match value {
+                    sage_parser::MockValue::Value(expr) => {
+                        self.generate_expr(expr);
+                    }
+                    sage_parser::MockValue::Fail(expr) => {
+                        self.emit.write("fail(");
+                        self.generate_expr(expr);
+                        self.emit.write(")");
+                    }
+                }
                 self.emit.writeln(";");
             }
         }

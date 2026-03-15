@@ -25,6 +25,17 @@ pub struct ModuleTree {
     pub external_roots: HashMap<String, PathBuf>,
 }
 
+/// A discovered test file with its parsed contents.
+#[derive(Debug)]
+pub struct TestFile {
+    /// The file path on disk.
+    pub file_path: PathBuf,
+    /// The source code.
+    pub source: Arc<str>,
+    /// The parsed AST.
+    pub program: Program,
+}
+
 /// A parsed module with its source and AST.
 #[derive(Debug)]
 pub struct ParsedModule {
@@ -229,6 +240,128 @@ pub fn load_project_with_packages(
         },
         installed,
     ))
+}
+
+/// Discover all `*_test.sg` files in a project.
+///
+/// Walks the source directory and collects all files ending in `_test.sg`.
+/// Files in `hearth/` (build output) are excluded.
+pub fn discover_test_files(project_path: &Path) -> Result<Vec<PathBuf>, Vec<LoadError>> {
+    let project_root = if project_path.is_file() {
+        project_path.parent().unwrap_or(Path::new(".")).to_path_buf()
+    } else {
+        project_path.to_path_buf()
+    };
+
+    let src_dir = project_root.join("src");
+    let search_dir = if src_dir.exists() { src_dir } else { project_root };
+
+    let mut test_files = Vec::new();
+    collect_test_files(&search_dir, &mut test_files)?;
+
+    // Sort for deterministic ordering
+    test_files.sort();
+
+    Ok(test_files)
+}
+
+fn collect_test_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), Vec<LoadError>> {
+    let entries = std::fs::read_dir(dir).map_err(|e| {
+        vec![LoadError::IoError {
+            path: dir.to_path_buf(),
+            source: e,
+        }]
+    })?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| {
+            vec![LoadError::IoError {
+                path: dir.to_path_buf(),
+                source: e,
+            }]
+        })?;
+
+        let path = entry.path();
+
+        // Skip hearth (build output directory)
+        if path.file_name().is_some_and(|n| n == "hearth") {
+            continue;
+        }
+
+        if path.is_dir() {
+            collect_test_files(&path, out)?;
+        } else if path.is_file() {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.ends_with("_test.sg") {
+                    out.push(path);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Load all test files in a project.
+///
+/// Returns a vector of parsed test files. Each test file is parsed independently.
+pub fn load_test_files(project_path: &Path) -> Result<Vec<TestFile>, Vec<LoadError>> {
+    let test_paths = discover_test_files(project_path)?;
+    let mut test_files = Vec::new();
+    let mut errors = Vec::new();
+
+    for path in test_paths {
+        match load_test_file(&path) {
+            Ok(tf) => test_files.push(tf),
+            Err(mut errs) => errors.append(&mut errs),
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(test_files)
+    } else {
+        Err(errors)
+    }
+}
+
+/// Load a single test file.
+fn load_test_file(path: &Path) -> Result<TestFile, Vec<LoadError>> {
+    let source = std::fs::read_to_string(path).map_err(|e| {
+        vec![LoadError::IoError {
+            path: path.to_path_buf(),
+            source: e,
+        }]
+    })?;
+
+    let source_arc: Arc<str> = Arc::from(source.as_str());
+    let lex_result = sage_lexer::lex(&source).map_err(|e| {
+        vec![LoadError::ParseError {
+            file: path.to_path_buf(),
+            errors: vec![format!("{e}")],
+        }]
+    })?;
+
+    let (program, parse_errors) = parse(lex_result.tokens(), Arc::clone(&source_arc));
+
+    if !parse_errors.is_empty() {
+        return Err(vec![LoadError::ParseError {
+            file: path.to_path_buf(),
+            errors: parse_errors.iter().map(|e| format!("{e}")).collect(),
+        }]);
+    }
+
+    let program = program.ok_or_else(|| {
+        vec![LoadError::ParseError {
+            file: path.to_path_buf(),
+            errors: vec!["failed to parse program".to_string()],
+        }]
+    })?;
+
+    Ok(TestFile {
+        file_path: path.to_path_buf(),
+        source: source_arc,
+        program,
+    })
 }
 
 /// Internal loader that tracks state during recursive loading.
@@ -478,5 +611,63 @@ pub agent Worker {
         assert_eq!(tree.modules.len(), 2);
         assert!(tree.modules.contains_key(&vec![]));
         assert!(tree.modules.contains_key(&vec!["agents".to_string()]));
+    }
+
+    #[test]
+    fn discover_test_files_finds_all() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("src")).unwrap();
+
+        // Create main file and test files
+        fs::write(dir.path().join("src/main.sg"), "agent Main { on start { emit(0); } } run Main;").unwrap();
+        fs::write(dir.path().join("src/counter_test.sg"), "test \"counter works\" { assert(true); }").unwrap();
+        fs::write(dir.path().join("src/worker_test.sg"), "test \"worker works\" { assert(true); }").unwrap();
+
+        let test_files = discover_test_files(dir.path()).unwrap();
+        assert_eq!(test_files.len(), 2);
+        assert!(test_files.iter().any(|p| p.ends_with("counter_test.sg")));
+        assert!(test_files.iter().any(|p| p.ends_with("worker_test.sg")));
+    }
+
+    #[test]
+    fn discover_test_files_skips_hearth() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("src")).unwrap();
+        fs::create_dir_all(dir.path().join("hearth")).unwrap();
+
+        fs::write(dir.path().join("src/main.sg"), "agent Main { on start { emit(0); } } run Main;").unwrap();
+        fs::write(dir.path().join("src/counter_test.sg"), "test \"counter\" { assert(true); }").unwrap();
+        // This should be skipped
+        fs::write(dir.path().join("hearth/generated_test.sg"), "test \"gen\" { assert(true); }").unwrap();
+
+        let test_files = discover_test_files(dir.path()).unwrap();
+        assert_eq!(test_files.len(), 1);
+        assert!(test_files[0].ends_with("counter_test.sg"));
+    }
+
+    #[test]
+    fn load_test_files_parses_all() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("src")).unwrap();
+
+        fs::write(dir.path().join("src/main.sg"), "agent Main { on start { emit(0); } } run Main;").unwrap();
+        fs::write(
+            dir.path().join("src/math_test.sg"),
+            r#"
+test "addition works" {
+    let x = 1 + 2;
+    assert(x == 3);
+}
+
+test "subtraction works" {
+    let y = 5 - 3;
+    assert(y == 2);
+}
+"#,
+        ).unwrap();
+
+        let test_files = load_test_files(dir.path()).unwrap();
+        assert_eq!(test_files.len(), 1);
+        assert_eq!(test_files[0].program.tests.len(), 2);
     }
 }

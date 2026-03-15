@@ -29,6 +29,8 @@ pub struct Program {
     pub agents: Vec<AgentDecl>,
     /// Function declarations.
     pub functions: Vec<FnDecl>,
+    /// Test declarations (RFC-0012). Only valid in `_test.sg` files.
+    pub tests: Vec<TestDecl>,
     /// The entry-point agent (from `run AgentName`).
     /// None for library modules that don't have an entry point.
     pub run_agent: Option<Ident>,
@@ -304,6 +306,23 @@ pub struct ClosureParam {
 }
 
 // =============================================================================
+// Test declarations (RFC-0012)
+// =============================================================================
+
+/// A test declaration: `test "description" { ... }` or `@serial test "description" { ... }`
+#[derive(Debug, Clone, PartialEq)]
+pub struct TestDecl {
+    /// The test description (the string after `test`).
+    pub name: String,
+    /// Whether this test must run serially (marked with `@serial`).
+    pub is_serial: bool,
+    /// The test body.
+    pub body: Block,
+    /// Span covering the entire declaration.
+    pub span: Span,
+}
+
+// =============================================================================
 // Blocks and statements
 // =============================================================================
 
@@ -416,6 +435,23 @@ pub enum Stmt {
         /// Span covering the statement.
         span: Span,
     },
+
+    /// RFC-0012: Mock infer statement: `mock infer -> expr;`
+    MockInfer {
+        /// The mock value expression.
+        value: MockValue,
+        /// Span covering the statement.
+        span: Span,
+    },
+}
+
+/// RFC-0012: A mock value for `mock infer -> value`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MockValue {
+    /// A literal value: `mock infer -> "string"` or `mock infer -> SomeRecord { ... }`
+    Value(Expr),
+    /// A failure: `mock infer -> fail("error message")`
+    Fail(Expr),
 }
 
 impl Stmt {
@@ -432,7 +468,8 @@ impl Stmt {
             | Stmt::Loop { span, .. }
             | Stmt::Break { span, .. }
             | Stmt::Expr { span, .. }
-            | Stmt::LetTuple { span, .. } => span,
+            | Stmt::LetTuple { span, .. }
+            | Stmt::MockInfer { span, .. } => span,
         }
     }
 }

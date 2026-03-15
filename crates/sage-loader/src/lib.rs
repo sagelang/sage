@@ -13,8 +13,8 @@ mod manifest;
 mod tree;
 
 pub use error::LoadError;
-pub use manifest::ProjectManifest;
+pub use manifest::{ProjectManifest, TestConfig};
 pub use tree::{
-    load_project, load_project_with_packages, load_single_file, ModulePath, ModuleTree,
-    ParsedModule,
+    discover_test_files, load_project, load_project_with_packages, load_single_file,
+    load_test_files, ModulePath, ModuleTree, ParsedModule, TestFile,
 };

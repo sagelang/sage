@@ -121,6 +121,64 @@ sage check hello.sg
 # ✨ No errors in hello.sg
 ```
 
+## sage test
+
+Run tests in a Sage project:
+
+```bash
+sage test .
+```
+
+This discovers all `*_test.sg` files, compiles them, and runs the tests.
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--filter <pattern>` | Only run tests matching the pattern |
+| `--file <path>` | Run only tests in the specified file |
+| `--serial` | Run all tests sequentially (not in parallel) |
+| `-v, --verbose` | Show detailed failure output |
+| `--no-colour` | Disable colored output |
+
+### Examples
+
+```bash
+# Run all tests in the project
+sage test .
+
+# Run tests matching "auth"
+sage test . --filter auth
+
+# Run tests in a specific file
+sage test . --file src/utils_test.sg
+
+# Run tests sequentially (useful for debugging)
+sage test . --serial
+
+# Verbose output with failure details
+sage test . --verbose
+```
+
+### Output
+
+```
+🦉 Ward Running 3 tests from 2 files
+
+  PASS auth_test.sg::login succeeds with valid credentials
+  PASS auth_test.sg::login fails with invalid password
+  FAIL utils_test.sg::parse handles empty input
+
+🦉 Ward test result: FAILED. 2 passed, 1 failed, 0 skipped [1.23s]
+```
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | All tests passed |
+| 1 | One or more tests failed |
+
 ## sage sense
 
 Start the Language Server Protocol (LSP) server for editor integration:

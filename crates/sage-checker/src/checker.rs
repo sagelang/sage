@@ -54,6 +54,10 @@ pub struct Checker {
     current_agent_tools: HashSet<String>,
     /// RFC-0011: Reference to scope for tool lookups.
     scope: Scope,
+    /// RFC-0012: Whether this is a test file (_test.sg).
+    is_test_file: bool,
+    /// RFC-0012: Whether we're inside a test block.
+    in_test_block: bool,
 }
 
 impl Checker {
@@ -76,6 +80,32 @@ impl Checker {
             in_error_handling: false,
             current_agent_tools: HashSet::new(),
             scope: Scope::with_builtins(),
+            is_test_file: false,
+            in_test_block: false,
+        }
+    }
+
+    /// Create a new type checker for a test file.
+    #[must_use]
+    pub fn for_test_file() -> Self {
+        Self {
+            symbols: SymbolTable::new(),
+            scopes: vec![Scope::new()],
+            errors: Vec::new(),
+            current_agent: None,
+            in_function: false,
+            expected_return: None,
+            used_beliefs: HashSet::new(),
+            current_module: vec![],
+            in_loop: false,
+            receives_type: None,
+            in_fallible_context: false,
+            agent_has_error_handler: false,
+            in_error_handling: false,
+            current_agent_tools: HashSet::new(),
+            scope: Scope::with_builtins(),
+            is_test_file: true,
+            in_test_block: false,
         }
     }
 
@@ -98,6 +128,8 @@ impl Checker {
             in_error_handling: false,
             current_agent_tools: HashSet::new(),
             scope: Scope::with_builtins(),
+            is_test_file: false,
+            in_test_block: false,
         }
     }
 
@@ -120,12 +152,52 @@ impl Checker {
             self.check_const(const_decl);
         }
 
-        // Validate the entry agent
-        self.validate_entry_agent(program);
+        // RFC-0012: Check tests (if any)
+        self.check_tests(program);
+
+        // Validate the entry agent (only for non-test files)
+        if !self.is_test_file {
+            self.validate_entry_agent(program);
+        } else if let Some(run_agent) = &program.run_agent {
+            // E051: run statement in test file
+            self.errors.push(CheckError::run_in_test_file(&run_agent.span));
+        }
 
         CheckResult {
             symbols: self.symbols,
             errors: self.errors,
+        }
+    }
+
+    /// RFC-0012: Check test declarations.
+    fn check_tests(&mut self, program: &Program) {
+        // E050: Test blocks outside test files
+        if !self.is_test_file && !program.tests.is_empty() {
+            for test in &program.tests {
+                self.errors
+                    .push(CheckError::test_outside_test_file(&test.span));
+            }
+            return;
+        }
+
+        // Check for duplicate test names (E055)
+        let mut seen_names: HashMap<&str, &sage_parser::TestDecl> = HashMap::new();
+        for test in &program.tests {
+            if let Some(_existing) = seen_names.get(test.name.as_str()) {
+                self.errors
+                    .push(CheckError::duplicate_test_name(&test.name, &test.span));
+            } else {
+                seen_names.insert(&test.name, test);
+            }
+        }
+
+        // Type check each test block
+        for test in &program.tests {
+            self.in_test_block = true;
+            self.push_scope();
+            self.check_block(&test.body);
+            self.pop_scope();
+            self.in_test_block = false;
         }
     }
 
@@ -602,6 +674,27 @@ impl Checker {
                             value_ty.to_string(),
                             span,
                         ));
+                    }
+                }
+            }
+
+            // RFC-0012: mock infer statement - type check the mock value
+            Stmt::MockInfer { value, span } => {
+                // E056: mock infer outside test block
+                if !self.in_test_block {
+                    self.errors.push(CheckError::mock_infer_outside_test(span));
+                }
+
+                match value {
+                    sage_parser::MockValue::Value(expr) => {
+                        self.check_expr(expr);
+                    }
+                    sage_parser::MockValue::Fail(expr) => {
+                        let ty = self.check_expr(expr);
+                        if !ty.is_compatible_with(&Type::String) {
+                            self.errors
+                                .push(CheckError::mock_fail_not_string(ty.to_string(), expr.span()));
+                        }
                     }
                 }
             }
@@ -1657,6 +1750,12 @@ impl Checker {
         args: &[Expr],
         span: &sage_types::Span,
     ) -> Type {
+        // RFC-0012: E050 - assertion builtins only valid in test files
+        if self.symbols.is_test_assertion(builtin.name) && !self.is_test_file {
+            self.errors.push(CheckError::test_outside_test_file(span));
+            return Type::Unit;
+        }
+
         match builtin.name {
             "len" => {
                 if args.len() != 1 {
@@ -2984,6 +3083,10 @@ struct ModuleChecker<'a> {
     agent_has_error_handler: bool,
     /// RFC-0007: Whether we're inside a try or catch expression (for E013 enforcement).
     in_error_handling: bool,
+    /// RFC-0012: Whether this is a test file (_test.sg).
+    is_test_file: bool,
+    /// RFC-0012: Whether we're inside a test block.
+    in_test_block: bool,
 }
 
 impl<'a> ModuleChecker<'a> {
@@ -3008,6 +3111,8 @@ impl<'a> ModuleChecker<'a> {
             in_fallible_context: false,
             agent_has_error_handler: false,
             in_error_handling: false,
+            is_test_file: false,
+            in_test_block: false,
         }
     }
 
@@ -3305,6 +3410,27 @@ impl<'a> ModuleChecker<'a> {
                             value_ty.to_string(),
                             span,
                         ));
+                    }
+                }
+            }
+
+            // RFC-0012: mock infer statement - type check the mock value
+            Stmt::MockInfer { value, span } => {
+                // E056: mock infer outside test block
+                if !self.in_test_block {
+                    self.errors.push(CheckError::mock_infer_outside_test(span));
+                }
+
+                match value {
+                    sage_parser::MockValue::Value(expr) => {
+                        self.check_expr(expr);
+                    }
+                    sage_parser::MockValue::Fail(expr) => {
+                        let ty = self.check_expr(expr);
+                        if !ty.is_compatible_with(&Type::String) {
+                            self.errors
+                                .push(CheckError::mock_fail_not_string(ty.to_string(), expr.span()));
+                        }
                     }
                 }
             }
@@ -4304,6 +4430,12 @@ impl<'a> ModuleChecker<'a> {
         args: &[Expr],
         span: &sage_types::Span,
     ) -> Type {
+        // RFC-0012: E050 - assertion builtins only valid in test files
+        if self.symbols.is_test_assertion(builtin.name) && !self.is_test_file {
+            self.errors.push(CheckError::test_outside_test_file(span));
+            return Type::Unit;
+        }
+
         match builtin.name {
             "len" => {
                 if args.len() != 1 {

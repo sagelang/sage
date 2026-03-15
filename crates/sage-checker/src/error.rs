@@ -454,6 +454,52 @@ pub enum CheckError {
         #[label("wrong number of arguments")]
         span: SourceSpan,
     },
+
+    // =========================================================================
+    // RFC-0012: Testing framework errors
+    // =========================================================================
+    #[error("test constructs are only available in `_test.sg` files")]
+    #[diagnostic(
+        code(sage::E050),
+        help("Oswyn explains: `test` blocks and assertions only work in test files")
+    )]
+    TestOutsideTestFile {
+        #[label("not in a test file")]
+        span: SourceSpan,
+    },
+
+    #[error("`run` statement not allowed in test files")]
+    #[diagnostic(
+        code(sage::E051),
+        help("Oswyn suggests: test files use `test` blocks, not `run` statements")
+    )]
+    RunInTestFile {
+        #[label("cannot use `run` in test file")]
+        span: SourceSpan,
+    },
+
+    #[error("duplicate test name `{name}`")]
+    #[diagnostic(code(sage::E055))]
+    DuplicateTestName {
+        name: String,
+        #[label("test with this name already exists")]
+        span: SourceSpan,
+    },
+
+    #[error("`mock infer` is only valid inside a `test` block")]
+    #[diagnostic(code(sage::E056))]
+    MockInferOutsideTest {
+        #[label("must be inside a test block")]
+        span: SourceSpan,
+    },
+
+    #[error("`fail` argument must be a String")]
+    #[diagnostic(code(sage::E058))]
+    MockFailNotString {
+        found: String,
+        #[label("expected String, found `{found}`")]
+        span: SourceSpan,
+    },
 }
 
 impl CheckError {
@@ -886,6 +932,50 @@ impl CheckError {
             function: function.into(),
             expected,
             found,
+            span: to_source_span(span),
+        }
+    }
+
+    // =========================================================================
+    // RFC-0012: Testing framework helpers
+    // =========================================================================
+
+    /// Create a test-outside-test-file error (E050).
+    #[must_use]
+    pub fn test_outside_test_file(span: &Span) -> Self {
+        Self::TestOutsideTestFile {
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a run-in-test-file error (E051).
+    #[must_use]
+    pub fn run_in_test_file(span: &Span) -> Self {
+        Self::RunInTestFile {
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a duplicate test name error (E055).
+    pub fn duplicate_test_name(name: impl Into<String>, span: &Span) -> Self {
+        Self::DuplicateTestName {
+            name: name.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a mock-infer-outside-test error (E056).
+    #[must_use]
+    pub fn mock_infer_outside_test(span: &Span) -> Self {
+        Self::MockInferOutsideTest {
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a mock-fail-not-string error (E058).
+    pub fn mock_fail_not_string(found: impl Into<String>, span: &Span) -> Self {
+        Self::MockFailNotString {
+            found: found.into(),
             span: to_source_span(span),
         }
     }

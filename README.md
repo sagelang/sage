@@ -64,11 +64,11 @@ run Coordinator;
 
 ## Status
 
-**v0.5.1 released** — Editor support with Language Server Protocol (LSP).
+**v0.5.2 released** — Built-in testing framework with LLM mocking.
 
 | | |
 |---|---|
-| **Latest** | [v0.5.1](https://github.com/sagelang/sage/releases/tag/v0.5.1) |
+| **Latest** | [v0.5.2](https://github.com/sagelang/sage/releases/tag/v0.5.2) |
 | **Extension** | `.sg` |
 | **Platforms** | macOS (ARM), Linux (x86_64, ARM) |
 | **Build time** | ~0.5s |
@@ -439,6 +439,50 @@ run Fetcher;
 
 Tool calls are fallible and must be wrapped in `try` or `catch`.
 
+### Testing
+
+Sage has a built-in testing framework with first-class LLM mocking:
+
+**src/main_test.sg:**
+```sage
+test "addition works" {
+    assert_eq(1 + 1, 2);
+}
+
+test "agent returns expected output" {
+    mock infer -> "Mocked LLM response";
+
+    let result = await spawn Summariser { topic: "test" };
+    assert_eq(result, "Mocked LLM response");
+}
+
+@serial test "runs in isolation" {
+    // This test won't run concurrently with others
+    assert_true(true);
+}
+```
+
+Run tests:
+```bash
+sage test .              # Run all tests in project
+sage test . --filter add # Run tests matching "add"
+sage test . --verbose    # Show failure details
+```
+
+**Test files** must end in `_test.sg` and are automatically discovered.
+
+**Assertions available:**
+- `assert(expr)` — assert expression is true
+- `assert_eq(a, b)` — assert equality
+- `assert_neq(a, b)` — assert inequality
+- `assert_gt`, `assert_lt`, `assert_gte`, `assert_lte` — comparisons
+- `assert_contains(str, substr)` — string contains
+- `assert_starts_with`, `assert_ends_with` — string prefix/suffix
+- `assert_empty`, `assert_not_empty` — collection checks
+- `assert_fails(expr)` — assert expression returns an error
+
+**Mock LLM responses** with `mock infer -> value;`. Mocks are consumed in order.
+
 ### Expressions
 
 | Operator | Description |
@@ -688,6 +732,7 @@ sage/
 │   ├── RFC-0009-*.md      # First-class functions
 │   ├── RFC-0010-*.md      # Maps, tuples, enum payloads
 │   ├── RFC-0011-*.md      # First-class tool support (Http)
+│   ├── RFC-0012-*.md      # Built-in testing framework
 │   ├── RFC-0014-*.md      # Editor support / LSP
 │   └── VISION.md          # Roadmap and future direction
 ├── tests/

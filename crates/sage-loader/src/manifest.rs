@@ -12,6 +12,28 @@ pub struct ProjectManifest {
     pub project: ProjectConfig,
     #[serde(default)]
     pub dependencies: toml::Table,
+    #[serde(default)]
+    pub test: TestConfig,
+}
+
+/// The [test] section of sage.toml.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TestConfig {
+    /// Test timeout in milliseconds (default: 10000)
+    #[serde(default = "default_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+impl Default for TestConfig {
+    fn default() -> Self {
+        Self {
+            timeout_ms: default_timeout_ms(),
+        }
+    }
+}
+
+fn default_timeout_ms() -> u64 {
+    10_000 // 10 seconds
 }
 
 /// The [project] section of sage.toml.
@@ -101,5 +123,28 @@ entry = "src/app.sg"
         assert_eq!(manifest.project.name, "research");
         assert_eq!(manifest.project.version, "1.2.3");
         assert_eq!(manifest.project.entry, PathBuf::from("src/app.sg"));
+    }
+
+    #[test]
+    fn parse_test_config_default() {
+        let toml = r#"
+[project]
+name = "test"
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        assert_eq!(manifest.test.timeout_ms, 10_000);
+    }
+
+    #[test]
+    fn parse_test_config_custom_timeout() {
+        let toml = r#"
+[project]
+name = "test"
+
+[test]
+timeout_ms = 30000
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        assert_eq!(manifest.test.timeout_ms, 30_000);
     }
 }

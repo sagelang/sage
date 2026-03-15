@@ -4,9 +4,11 @@ use clap::{Parser, Subcommand};
 use console::{style, Emoji};
 use indicatif::{ProgressBar, ProgressStyle};
 use miette::{Diagnostic, IntoDiagnostic, Result, Severity, WrapErr};
-use sage_checker::check_module_tree;
-use sage_codegen::generate_module_tree;
-use sage_loader::{load_project, load_project_with_packages, ModuleTree};
+use sage_checker::{check_module_tree, Checker};
+use sage_codegen::{generate_module_tree, generate_test_program};
+use sage_loader::{
+    discover_test_files, load_project, load_project_with_packages, load_test_files, ModuleTree,
+};
 use sage_package::{LockFile, PackageCache};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -131,6 +133,33 @@ enum Commands {
 
     /// Start the Sage Language Server (for editor integration)
     Sense,
+
+    /// Run tests in a Sage project (RFC-0012)
+    Test {
+        /// Path to the project directory (default: current directory)
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Only run tests whose name contains this pattern
+        #[arg(long)]
+        filter: Option<String>,
+
+        /// Only run tests in a specific file
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Run all tests serially, regardless of @serial annotation
+        #[arg(long)]
+        serial: bool,
+
+        /// Show output for passing tests as well as failing ones
+        #[arg(short, long)]
+        verbose: bool,
+
+        /// Disable ANSI colour output
+        #[arg(long)]
+        no_colour: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -187,6 +216,14 @@ fn main() -> Result<()> {
             CacheAction::Clean => cmd_cache_clean(),
         },
         Commands::Sense => cmd_sense(),
+        Commands::Test {
+            path,
+            filter,
+            file,
+            serial,
+            verbose,
+            no_colour,
+        } => cmd_test(&path, filter, file, serial, verbose, no_colour),
     }
 }
 
@@ -1099,4 +1136,363 @@ fn cmd_sense() -> Result<()> {
     runtime
         .block_on(sage_sense::run())
         .map_err(|e| miette::miette!("{}", e))
+}
+
+// =============================================================================
+// RFC-0012: Testing framework
+// =============================================================================
+
+/// Run tests in a Sage project.
+fn cmd_test(
+    path: &Path,
+    filter: Option<String>,
+    file: Option<PathBuf>,
+    serial: bool,
+    verbose: bool,
+    no_colour: bool,
+) -> Result<()> {
+    // Discover test files
+    let test_files = if let Some(specific_file) = file {
+        // Run only the specified test file
+        vec![specific_file]
+    } else {
+        discover_test_files(path).map_err(|errs| {
+            let msg = errs.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("\n");
+            miette::miette!("Failed to discover test files: {}", msg)
+        })?
+    };
+
+    if test_files.is_empty() {
+        println!(
+            "{} no test files found (files must end in _test.sg)",
+            style(WARD.to_string()).cyan().bold()
+        );
+        return Ok(());
+    }
+
+    // Load and parse test files
+    let tests = load_test_files(path).map_err(|errs| {
+        let msg = errs.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("\n");
+        miette::miette!("Failed to load test files: {}", msg)
+    })?;
+
+    // Count tests (considering filter)
+    let total_tests: usize = tests.iter().map(|t| {
+        t.program.tests.iter().filter(|test| {
+            filter.as_ref().map_or(true, |p| test.name.contains(p))
+        }).count()
+    }).sum();
+
+    if total_tests == 0 {
+        println!(
+            "{} no tests found in {} file{}",
+            style(WARD.to_string()).cyan().bold(),
+            tests.len(),
+            if tests.len() == 1 { "" } else { "s" }
+        );
+        return Ok(());
+    }
+
+    // Print header
+    if !no_colour {
+        println!(
+            "\n{} Running {} test{} from {} file{}\n",
+            style(WARD.to_string()).cyan().bold(),
+            style(total_tests).bold(),
+            if total_tests == 1 { "" } else { "s" },
+            tests.len(),
+            if tests.len() == 1 { "" } else { "s" }
+        );
+    } else {
+        println!(
+            "\nRunning {} test(s) from {} file(s)\n",
+            total_tests,
+            tests.len()
+        );
+    }
+
+    let start_time = Instant::now();
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut skipped = 0;
+    let mut failed_tests: Vec<(String, String, String)> = Vec::new(); // (file, test, error)
+
+    // Create output directory for test binaries
+    let test_output_dir = PathBuf::from("target/sage-tests");
+    std::fs::create_dir_all(&test_output_dir)
+        .into_diagnostic()
+        .wrap_err("Failed to create test output directory")?;
+
+    for test_file in &tests {
+        let file_name = test_file
+            .file_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+
+        // Skip files with no matching tests
+        let matching_tests: Vec<_> = test_file.program.tests.iter()
+            .filter(|test| filter.as_ref().map_or(true, |p| test.name.contains(p)))
+            .collect();
+
+        if matching_tests.is_empty() {
+            skipped += test_file.program.tests.len();
+            continue;
+        }
+
+        // Type-check the test file
+        let checker = Checker::for_test_file();
+        let check_result = checker.check(&test_file.program);
+
+        if !check_result.errors.is_empty() {
+            // Report type errors
+            for err in &check_result.errors {
+                if err.severity().unwrap_or(Severity::Error) == Severity::Error {
+                    let source_code = miette::NamedSource::new(
+                        file_name,
+                        test_file.source.to_string(),
+                    );
+                    let report = miette::Report::new(err.clone()).with_source_code(source_code);
+                    eprintln!("{report:?}");
+
+                    // Mark all tests in this file as failed
+                    for test in &matching_tests {
+                        failed += 1;
+                        failed_tests.push((
+                            file_name.to_string(),
+                            test.name.clone(),
+                            "Type check failed".to_string(),
+                        ));
+                    }
+                }
+            }
+            continue;
+        }
+
+        // Generate test code
+        let project_name = file_name
+            .strip_suffix("_test.sg")
+            .unwrap_or(file_name)
+            .replace('-', "_");
+        let generated = generate_test_program(&test_file.program, &project_name);
+
+        // Write generated code to output directory
+        let project_dir = test_output_dir.join(&project_name);
+        let src_dir = project_dir.join("src");
+        std::fs::create_dir_all(&src_dir)
+            .into_diagnostic()
+            .wrap_err("Failed to create test source directory")?;
+
+        std::fs::write(src_dir.join("main.rs"), &generated.main_rs)
+            .into_diagnostic()
+            .wrap_err("Failed to write test main.rs")?;
+
+        std::fs::write(project_dir.join("Cargo.toml"), &generated.cargo_toml)
+            .into_diagnostic()
+            .wrap_err("Failed to write test Cargo.toml")?;
+
+        // Build the test binary
+        if verbose {
+            println!("  {} Compiling {}...", style("...").dim(), file_name);
+        }
+
+        let build_status = Command::new("cargo")
+            .args(["build", "--quiet"])
+            .current_dir(&project_dir)
+            .status()
+            .into_diagnostic()
+            .wrap_err("Failed to run cargo build for tests")?;
+
+        if !build_status.success() {
+            // Compilation failed - mark all tests as failed
+            for test in &matching_tests {
+                failed += 1;
+                if !no_colour {
+                    println!(
+                        "  {} {}::{} (compilation failed)",
+                        style("FAIL").red().bold(),
+                        style(file_name).dim(),
+                        test.name
+                    );
+                } else {
+                    println!("  FAIL {}::{} (compilation failed)", file_name, test.name);
+                }
+                failed_tests.push((
+                    file_name.to_string(),
+                    test.name.clone(),
+                    "Compilation failed".to_string(),
+                ));
+            }
+            continue;
+        }
+
+        // Run the test binary with cargo test
+        // Don't use --quiet so we can see individual test results
+        let mut test_args = vec!["test"];
+        if serial {
+            test_args.push("--");
+            test_args.push("--test-threads=1");
+        }
+
+        // Run tests and capture output
+        let test_output = Command::new("cargo")
+            .args(&test_args)
+            .current_dir(&project_dir)
+            .output()
+            .into_diagnostic()
+            .wrap_err("Failed to run cargo test")?;
+
+        let stdout = String::from_utf8_lossy(&test_output.stdout);
+        let stderr = String::from_utf8_lossy(&test_output.stderr);
+        let combined_output = format!("{}\n{}", stdout, stderr);
+
+        // Parse test results from cargo test output
+        // Cargo test output format: "test test_name ... ok" or "test test_name ... FAILED"
+        for test in &matching_tests {
+            let sanitized_name = sanitize_test_name(&test.name);
+
+            // Check for explicit pass/fail markers in output
+            let explicitly_passed = combined_output.contains(&format!("test {} ... ok", sanitized_name));
+            let explicitly_failed = combined_output.contains(&format!("test {} ... FAILED", sanitized_name));
+
+            // A test passes if it's explicitly marked as ok, or if there's no failure marker
+            // and the overall run succeeded
+            let test_passed = explicitly_passed || (!explicitly_failed && test_output.status.success());
+
+            if test_passed && !explicitly_failed {
+                passed += 1;
+                if !no_colour {
+                    println!(
+                        "  {} {}::{}",
+                        style("PASS").green().bold(),
+                        style(file_name).dim(),
+                        test.name
+                    );
+                } else {
+                    println!("  PASS {}::{}", file_name, test.name);
+                }
+            } else {
+                failed += 1;
+                if !no_colour {
+                    println!(
+                        "  {} {}::{}",
+                        style("FAIL").red().bold(),
+                        style(file_name).dim(),
+                        test.name
+                    );
+                } else {
+                    println!("  FAIL {}::{}", file_name, test.name);
+                }
+
+                // Extract error message if available
+                let error_msg = extract_test_error(&stdout, &stderr, &sanitized_name);
+                failed_tests.push((file_name.to_string(), test.name.clone(), error_msg));
+            }
+        }
+    }
+
+    let duration = start_time.elapsed();
+
+    // Print failure details if verbose
+    if verbose && !failed_tests.is_empty() {
+        println!();
+        println!("Failures:");
+        for (file, test, error) in &failed_tests {
+            println!();
+            if !no_colour {
+                println!("  {}::{}", style(file).dim(), style(test).red());
+            } else {
+                println!("  {}::{}", file, test);
+            }
+            if !error.is_empty() {
+                for line in error.lines() {
+                    println!("    {}", line);
+                }
+            }
+        }
+    }
+
+    // Print summary
+    println!();
+    if failed == 0 {
+        if !no_colour {
+            println!(
+                "{} test result: {}. {} passed, {} failed, {} skipped [{:.2}s]",
+                style(WARD.to_string()).cyan().bold(),
+                style("ok").green().bold(),
+                passed,
+                failed,
+                skipped,
+                duration.as_secs_f64()
+            );
+        } else {
+            println!(
+                "test result: ok. {} passed, {} failed, {} skipped [{:.2}s]",
+                passed,
+                failed,
+                skipped,
+                duration.as_secs_f64()
+            );
+        }
+        Ok(())
+    } else {
+        if !no_colour {
+            println!(
+                "{} test result: {}. {} passed, {} failed, {} skipped [{:.2}s]",
+                style(WARD.to_string()).cyan().bold(),
+                style("FAILED").red().bold(),
+                passed,
+                failed,
+                skipped,
+                duration.as_secs_f64()
+            );
+        } else {
+            println!(
+                "test result: FAILED. {} passed, {} failed, {} skipped [{:.2}s]",
+                passed,
+                failed,
+                skipped,
+                duration.as_secs_f64()
+            );
+        }
+        Err(miette::miette!("{} test{} failed", failed, if failed == 1 { "" } else { "s" }))
+    }
+}
+
+/// Sanitize a test name to match the Rust function name generated by codegen.
+fn sanitize_test_name(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect::<String>()
+        .to_lowercase()
+}
+
+/// Extract error message from test output for a specific test.
+fn extract_test_error(stdout: &str, stderr: &str, test_name: &str) -> String {
+    let mut error_lines = Vec::new();
+    let combined = format!("{}\n{}", stdout, stderr);
+
+    // Look for panic messages or assertion failures
+    let mut in_failure = false;
+    for line in combined.lines() {
+        if line.contains(test_name) && line.contains("FAILED") {
+            in_failure = true;
+            continue;
+        }
+        if in_failure {
+            if line.starts_with("test ") || line.trim().is_empty() {
+                break;
+            }
+            error_lines.push(line.trim());
+        }
+    }
+
+    // Also look for panicked messages
+    for line in combined.lines() {
+        if line.contains("panicked at") || line.contains("assertion failed") {
+            error_lines.push(line.trim());
+        }
+    }
+
+    error_lines.join("\n")
 }

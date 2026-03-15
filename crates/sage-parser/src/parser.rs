@@ -4,9 +4,9 @@
 
 use crate::ast::{
     AgentDecl, BeliefDecl, BinOp, Block, ClosureParam, ConstDecl, ElseBranch, EnumDecl, EventKind,
-    Expr, FieldInit, FnDecl, HandlerDecl, InterpExpr, Literal, MapEntry, MatchArm, ModDecl, Param,
-    Pattern, Program, RecordDecl, RecordField, Stmt, StringPart, StringTemplate, ToolDecl,
-    ToolFnDecl, UnaryOp, UseDecl, UseKind,
+    Expr, FieldInit, FnDecl, HandlerDecl, InterpExpr, Literal, MapEntry, MatchArm, MockValue,
+    ModDecl, Param, Pattern, Program, RecordDecl, RecordField, Stmt, StringPart, StringTemplate,
+    TestDecl, ToolDecl, ToolFnDecl, UnaryOp, UseDecl, UseKind,
 };
 use chumsky::prelude::*;
 use chumsky::BoxedParser;
@@ -60,6 +60,7 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
         .or(tool_parser(source.clone()))
         .or(agent_parser(source.clone()))
         .or(fn_parser(source.clone()))
+        .or(test_parser(source.clone()))
         .recover_with(skip_then_retry_until([
             Token::KwMod,
             Token::KwUse,
@@ -71,6 +72,7 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
             Token::KwAgent,
             Token::KwFn,
             Token::KwRun,
+            Token::KwTest,
         ]));
 
     let run_stmt = just(Token::KwRun)
@@ -88,6 +90,7 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
             let mut tools = Vec::new();
             let mut agents = Vec::new();
             let mut functions = Vec::new();
+            let mut tests = Vec::new();
 
             for item in items {
                 match item {
@@ -99,6 +102,7 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
                     TopLevel::Tool(t) => tools.push(t),
                     TopLevel::Agent(a) => agents.push(a),
                     TopLevel::Function(f) => functions.push(f),
+                    TopLevel::Test(t) => tests.push(t),
                 }
             }
 
@@ -111,6 +115,7 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
                 tools,
                 agents,
                 functions,
+                tests,
                 run_agent,
                 span: make_span(&src2, span),
             }
@@ -128,6 +133,7 @@ enum TopLevel {
     Tool(ToolDecl),
     Agent(AgentDecl),
     Function(FnDecl),
+    Test(TestDecl),
 }
 
 // =============================================================================
@@ -406,6 +412,51 @@ fn tool_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseEr
                 name,
                 functions,
                 span: make_span(&src3, span),
+            })
+        })
+}
+
+// =============================================================================
+// Test parsers (RFC-0012)
+// =============================================================================
+
+/// Parser for a test declaration: `test "name" { ... }` or `@serial test "name" { ... }`
+#[allow(clippy::needless_pass_by_value)]
+fn test_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseError> {
+    let src = source.clone();
+    let src2 = source.clone();
+
+    // Parse @serial annotation (@ followed by identifier "serial")
+    // For now, we'll use a simple approach: look for @ then ident
+    let serial_annotation = just(Token::At)
+        .then(filter(|t: &Token| matches!(t, Token::Ident)))
+        .or_not()
+        .map(|opt| opt.is_some());
+
+    // Parse test name (string literal)
+    let test_name = filter_map(|span: Range<usize>, tok: Token| match tok {
+        Token::StringLit => Ok(()),
+        _ => Err(Simple::expected_input_found(span, [], Some(tok))),
+    })
+    .map_with_span(move |_, span: Range<usize>| {
+        // Extract the string content without quotes
+        let s = &src[span.clone()];
+        s.trim_matches('"').to_string()
+    });
+
+    // Test body - use the statement parser
+    let body = block_parser(src2.clone());
+
+    serial_annotation
+        .then_ignore(just(Token::KwTest))
+        .then(test_name)
+        .then(body)
+        .map_with_span(move |((is_serial, name), body), span: Range<usize>| {
+            TopLevel::Test(TestDecl {
+                name,
+                is_serial,
+                body,
+                span: make_span(&src2, span),
             })
         })
 }
@@ -721,6 +772,36 @@ fn stmt_parser(
             span: make_span(&src9, span),
         });
 
+    // RFC-0012: mock infer -> value; or mock infer -> fail("msg");
+    let src11 = source.clone();
+    let src12 = source.clone();
+    let mock_infer_stmt = just(Token::KwMock)
+        .ignore_then(just(Token::KwInfer))
+        .ignore_then(just(Token::Arrow))
+        .ignore_then(
+            // Check for fail(...) pattern
+            filter(|t: &Token| matches!(t, Token::Ident))
+                .then(
+                    expr_parser(src11.clone())
+                        .delimited_by(just(Token::LParen), just(Token::RParen)),
+                )
+                .try_map(move |(_, arg), span: Range<usize>| {
+                    // We expect "fail" identifier - check by examining the source
+                    let ident_text = &src11[span.clone()];
+                    if ident_text.starts_with("fail") {
+                        Ok(MockValue::Fail(arg))
+                    } else {
+                        Err(Simple::custom(span, "expected 'fail' or a value"))
+                    }
+                })
+                .or(expr_parser(src12.clone()).map(MockValue::Value)),
+        )
+        .then_ignore(just(Token::Semicolon))
+        .map_with_span(move |value, span: Range<usize>| Stmt::MockInfer {
+            value,
+            span: make_span(&src12, span),
+        });
+
     let assign_stmt = ident_token_parser(src5.clone())
         .then_ignore(just(Token::Eq))
         .then(expr_parser(src5.clone()))
@@ -746,6 +827,7 @@ fn stmt_parser(
         .or(while_stmt)
         .or(loop_stmt)
         .or(break_stmt)
+        .or(mock_infer_stmt)
         .or(assign_stmt)
         .or(expr_stmt)
 }

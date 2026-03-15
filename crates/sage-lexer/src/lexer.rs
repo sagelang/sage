@@ -271,26 +271,26 @@ mod tests {
 
     #[test]
     fn lex_error_invalid_char() {
-        let err = lex("let @ = 42").unwrap_err();
+        let err = lex("let # = 42").unwrap_err();
 
         assert_eq!(err.errors.len(), 1);
-        assert_eq!(err.errors[0].text, "@");
+        assert_eq!(err.errors[0].text, "#");
         assert_eq!(err.errors[0].start, 4);
         assert_eq!(err.errors[0].end, 5);
     }
 
     #[test]
     fn lex_error_multiple_invalid() {
-        let err = lex("let @ x $ y").unwrap_err();
+        let err = lex("let # x $ y").unwrap_err();
 
         assert_eq!(err.errors.len(), 2);
-        assert_eq!(err.errors[0].text, "@");
+        assert_eq!(err.errors[0].text, "#");
         assert_eq!(err.errors[1].text, "$");
     }
 
     #[test]
     fn lex_partial_with_errors() {
-        let (tokens, errors) = lex_partial("let @ x = 42");
+        let (tokens, errors) = lex_partial("let # x = 42");
 
         // Should have valid tokens
         assert_eq!(tokens.len(), 4); // let, x, =, 42
@@ -298,7 +298,7 @@ mod tests {
 
         // And the error
         assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].text, "@");
+        assert_eq!(errors[0].text, "#");
     }
 
     #[test]
@@ -349,7 +349,7 @@ run Researcher
 
     #[test]
     fn lex_error_display() {
-        let err = lex("@").unwrap_err();
+        let err = lex("#").unwrap_err();
         let display = format!("{err}");
         assert!(display.contains("failed to lex"));
     }
@@ -398,7 +398,7 @@ run Researcher
 
     #[test]
     fn lex_error_with_filename() {
-        let err = lex("@").unwrap_err().with_filename("test.sg");
+        let err = lex("#").unwrap_err().with_filename("test.sg");
         // The error should still work
         assert_eq!(err.errors.len(), 1);
     }
@@ -407,7 +407,7 @@ run Researcher
     fn lex_error_is_diagnostic() {
         use miette::Diagnostic;
 
-        let err = lex("@").unwrap_err();
+        let err = lex("#").unwrap_err();
 
         // Check that Diagnostic trait methods work
         assert!(err.code().is_some());
