@@ -1,6 +1,8 @@
 //! Analysis pipeline for the LSP server.
 
-use crate::convert::{check_error_to_diagnostic, lex_error_to_diagnostic, parse_error_to_diagnostic};
+use crate::convert::{
+    check_error_to_diagnostic, lex_error_to_diagnostic, parse_error_to_diagnostic,
+};
 use std::sync::Arc;
 use tower_lsp::lsp_types::Diagnostic;
 
@@ -57,7 +59,11 @@ agent Main {
 run Main;
 "#;
         let diagnostics = analyse(source);
-        assert!(diagnostics.is_empty(), "Expected no errors: {:?}", diagnostics);
+        assert!(
+            diagnostics.is_empty(),
+            "Expected no errors: {:?}",
+            diagnostics
+        );
     }
 
     #[test]

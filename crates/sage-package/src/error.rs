@@ -47,7 +47,10 @@ pub enum PackageError {
 
     /// E034: use references a package not declared in dependencies.
     #[error("package '{package}' not found in dependencies")]
-    #[diagnostic(code(E034), help("Oswyn suggests: add it with `sage add {package} --git <url>`"))]
+    #[diagnostic(
+        code(E034),
+        help("Oswyn suggests: add it with `sage add {package} --git <url>`")
+    )]
     PackageNotFound { package: String },
 
     /// E035: Git clone/fetch operation failed.
@@ -88,7 +91,10 @@ pub enum PackageError {
 
     /// Lock file is stale (sage.toml changed).
     #[error("sage.lock is out of date")]
-    #[diagnostic(code(sage::package::stale_lock), help("Oswyn suggests: run `sage install` to update"))]
+    #[diagnostic(
+        code(sage::package::stale_lock),
+        help("Oswyn suggests: run `sage install` to update")
+    )]
     StaleLockFile,
 
     /// Failed to parse lock file.

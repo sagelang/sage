@@ -26,8 +26,9 @@ pub enum TypeExpr {
     Inferred(Box<TypeExpr>),
     /// Agent handle: `Agent<AgentName>`.
     Agent(Ident),
-    /// Named type (agent name or future user-defined types).
-    Named(Ident),
+    /// Named type with optional type arguments (e.g., `Point`, `Pair<Int, String>`).
+    /// The Vec is empty for non-generic types.
+    Named(Ident, Vec<TypeExpr>),
     /// Function type: `Fn(A, B) -> C`.
     /// The Vec holds parameter types; the Box holds the return type.
     Fn(Vec<TypeExpr>, Box<TypeExpr>),
@@ -95,7 +96,20 @@ impl fmt::Display for TypeExpr {
             TypeExpr::Option(inner) => write!(f, "Option<{inner}>"),
             TypeExpr::Inferred(inner) => write!(f, "Inferred<{inner}>"),
             TypeExpr::Agent(name) => write!(f, "Agent<{name}>"),
-            TypeExpr::Named(name) => write!(f, "{name}"),
+            TypeExpr::Named(name, type_args) => {
+                write!(f, "{name}")?;
+                if !type_args.is_empty() {
+                    write!(f, "<")?;
+                    for (i, arg) in type_args.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{arg}")?;
+                    }
+                    write!(f, ">")?;
+                }
+                Ok(())
+            }
             TypeExpr::Fn(params, ret) => {
                 write!(f, "Fn(")?;
                 for (i, param) in params.iter().enumerate() {

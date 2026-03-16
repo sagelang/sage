@@ -22,10 +22,10 @@ static CHECK: Emoji<'_, '_> = Emoji("✓ ", "v ");
 static ROCKET: Emoji<'_, '_> = Emoji("🚀 ", ">> ");
 
 // Character names with emojis - the voices of Sage
-static WARD: Emoji<'_, '_> = Emoji("🦉 Ward", "Ward");     // The owl - compiler & type-checker
-static GROVE: Emoji<'_, '_> = Emoji("🌲 Grove", "Grove");  // The evergreen - package manager
+static WARD: Emoji<'_, '_> = Emoji("🦉 Ward", "Ward"); // The owl - compiler & type-checker
+static GROVE: Emoji<'_, '_> = Emoji("🌲 Grove", "Grove"); // The evergreen - package manager
 #[allow(dead_code)]
-static OSWYN: Emoji<'_, '_> = Emoji("👻 Oswyn", "Oswyn");  // The wisp - explainer & helper (for sage explain)
+static OSWYN: Emoji<'_, '_> = Emoji("👻 Oswyn", "Oswyn"); // The wisp - explainer & helper (for sage explain)
 
 /// Ward the owl - Sage's mascot
 const WARD_ASCII: &str = r#"
@@ -383,8 +383,7 @@ fn run_file(
     let output_dir = PathBuf::from("target/sage");
     let binary_path = build_file(path, release, &output_dir, false, quiet)?;
 
-    let binary_path =
-        binary_path.ok_or_else(|| miette::miette!("Build did not produce binary"))?;
+    let binary_path = binary_path.ok_or_else(|| miette::miette!("Build did not produce binary"))?;
 
     // Run the compiled binary
     if !quiet {
@@ -699,7 +698,10 @@ fn build_file(
 
     if installed_packages && !quiet {
         if let Some(ref sp) = spinner {
-            sp.set_message(format!("{} installed packages, {} is loading...", GROVE, WARD));
+            sp.set_message(format!(
+                "{} installed packages, {} is loading...",
+                GROVE, WARD
+            ));
         }
     }
 
@@ -943,20 +945,9 @@ sage run .
     println!("  └── {}", style("src/").dim());
     println!("      └── {}", style("main.sg").yellow());
     println!();
-    println!(
-        "{}Get started with:",
-        style("  ").dim()
-    );
-    println!(
-        "    {} {}",
-        style("cd").cyan(),
-        style(name).white()
-    );
-    println!(
-        "    {} {}",
-        style("sage run").cyan(),
-        style(".").white()
-    );
+    println!("{}Get started with:", style("  ").dim());
+    println!("    {} {}", style("cd").cyan(), style(name).white());
+    println!("    {} {}", style("sage run").cyan(), style(".").white());
 
     Ok(())
 }
@@ -1147,7 +1138,10 @@ fn cmd_install() -> Result<()> {
         return Ok(());
     }
 
-    println!("{} is installing dependencies...", style(GROVE.to_string()).cyan().bold());
+    println!(
+        "{} is installing dependencies...",
+        style(GROVE.to_string()).cyan().bold()
+    );
 
     let project_root = PathBuf::from(".");
     let lock_path = project_root.join("sage.lock");
@@ -1211,9 +1205,16 @@ fn cmd_update(package: Option<&str>) -> Result<()> {
         if !deps.contains_key(pkg) {
             miette::bail!("Package '{}' not found in dependencies", pkg);
         }
-        println!("{} is updating {}...", style(GROVE.to_string()).cyan().bold(), style(pkg).yellow());
+        println!(
+            "{} is updating {}...",
+            style(GROVE.to_string()).cyan().bold(),
+            style(pkg).yellow()
+        );
     } else {
-        println!("{} is updating all dependencies...", style(GROVE.to_string()).cyan().bold());
+        println!(
+            "{} is updating all dependencies...",
+            style(GROVE.to_string()).cyan().bold()
+        );
     }
 
     let project_root = PathBuf::from(".");
@@ -1244,7 +1245,10 @@ fn cmd_cache_list() -> Result<()> {
         return Ok(());
     }
 
-    println!("{}'s cached packages:", style(GROVE.to_string()).cyan().bold());
+    println!(
+        "{}'s cached packages:",
+        style(GROVE.to_string()).cyan().bold()
+    );
     println!();
 
     for (name, rev, path) in &packages {
@@ -1337,7 +1341,11 @@ fn cmd_test(
         vec![specific_file]
     } else {
         discover_test_files(path).map_err(|errs| {
-            let msg = errs.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("\n");
+            let msg = errs
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
             miette::miette!("Failed to discover test files: {}", msg)
         })?
     };
@@ -1352,16 +1360,25 @@ fn cmd_test(
 
     // Load and parse test files
     let tests = load_test_files(path).map_err(|errs| {
-        let msg = errs.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("\n");
+        let msg = errs
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
         miette::miette!("Failed to load test files: {}", msg)
     })?;
 
     // Count tests (considering filter)
-    let total_tests: usize = tests.iter().map(|t| {
-        t.program.tests.iter().filter(|test| {
-            filter.as_ref().map_or(true, |p| test.name.contains(p))
-        }).count()
-    }).sum();
+    let total_tests: usize = tests
+        .iter()
+        .map(|t| {
+            t.program
+                .tests
+                .iter()
+                .filter(|test| filter.as_ref().map_or(true, |p| test.name.contains(p)))
+                .count()
+        })
+        .sum();
 
     if total_tests == 0 {
         println!(
@@ -1411,7 +1428,10 @@ fn cmd_test(
             .unwrap_or("unknown");
 
         // Skip files with no matching tests
-        let matching_tests: Vec<_> = test_file.program.tests.iter()
+        let matching_tests: Vec<_> = test_file
+            .program
+            .tests
+            .iter()
             .filter(|test| filter.as_ref().map_or(true, |p| test.name.contains(p)))
             .collect();
 
@@ -1428,10 +1448,8 @@ fn cmd_test(
             // Report type errors
             for err in &check_result.errors {
                 if err.severity().unwrap_or(Severity::Error) == Severity::Error {
-                    let source_code = miette::NamedSource::new(
-                        file_name,
-                        test_file.source.to_string(),
-                    );
+                    let source_code =
+                        miette::NamedSource::new(file_name, test_file.source.to_string());
                     let report = miette::Report::new(err.clone()).with_source_code(source_code);
                     eprintln!("{report:?}");
 
@@ -1470,7 +1488,8 @@ fn cmd_test(
         } else {
             RuntimeDep::default()
         };
-        let generated = generate_test_program_with_config(&test_file.program, &project_name, runtime_dep);
+        let generated =
+            generate_test_program_with_config(&test_file.program, &project_name, runtime_dep);
 
         // Write generated code to output directory
         let project_dir = test_output_dir.join(&project_name);
@@ -1548,12 +1567,15 @@ fn cmd_test(
             let sanitized_name = sanitize_test_name(&test.name);
 
             // Check for explicit pass/fail markers in output
-            let explicitly_passed = combined_output.contains(&format!("test {} ... ok", sanitized_name));
-            let explicitly_failed = combined_output.contains(&format!("test {} ... FAILED", sanitized_name));
+            let explicitly_passed =
+                combined_output.contains(&format!("test {} ... ok", sanitized_name));
+            let explicitly_failed =
+                combined_output.contains(&format!("test {} ... FAILED", sanitized_name));
 
             // A test passes if it's explicitly marked as ok, or if there's no failure marker
             // and the overall run succeeded
-            let test_passed = explicitly_passed || (!explicitly_failed && test_output.status.success());
+            let test_passed =
+                explicitly_passed || (!explicitly_failed && test_output.status.success());
 
             if test_passed && !explicitly_failed {
                 passed += 1;
@@ -1651,7 +1673,11 @@ fn cmd_test(
                 duration.as_secs_f64()
             );
         }
-        Err(miette::miette!("{} test{} failed", failed, if failed == 1 { "" } else { "s" }))
+        Err(miette::miette!(
+            "{} test{} failed",
+            failed,
+            if failed == 1 { "" } else { "s" }
+        ))
     }
 }
 
@@ -2096,12 +2122,7 @@ fn cmd_trace_pretty(file: &Path) -> Result<()> {
             "infer.complete" => {
                 let dur = event.duration_ms.unwrap_or(0);
                 let len = event.response_len.unwrap_or(0);
-                format!(
-                    "{} complete ({}ms, {} chars)",
-                    style("✓").green(),
-                    dur,
-                    len
-                )
+                format!("{} complete ({}ms, {} chars)", style("✓").green(), dur, len)
             }
             "infer.error" => {
                 let msg = event
@@ -2172,45 +2193,21 @@ fn cmd_trace_summary(file: &Path) -> Result<()> {
     println!("{}", style("═".repeat(50)).dim());
     println!();
 
-    println!(
-        "  {} {}ms",
-        style("Total duration:").bold(),
-        total_duration
-    );
-    println!(
-        "  {} {}",
-        style("Total events:").bold(),
-        events.len()
-    );
+    println!("  {} {}ms", style("Total duration:").bold(), total_duration);
+    println!("  {} {}", style("Total events:").bold(), events.len());
     println!();
 
     println!("{}", style("Agents").cyan());
-    println!(
-        "  {} {}",
-        style("Spawned:").bold(),
-        agent_spawns
-    );
+    println!("  {} {}", style("Spawned:").bold(), agent_spawns);
     if agent_errors > 0 {
-        println!(
-            "  {} {}",
-            style("Errors:").red().bold(),
-            agent_errors
-        );
+        println!("  {} {}", style("Errors:").red().bold(), agent_errors);
     }
     println!();
 
     println!("{}", style("LLM Inference").cyan());
-    println!(
-        "  {} {}",
-        style("Calls:").bold(),
-        infer_calls
-    );
+    println!("  {} {}", style("Calls:").bold(), infer_calls);
     if infer_errors > 0 {
-        println!(
-            "  {} {}",
-            style("Errors:").red().bold(),
-            infer_errors
-        );
+        println!("  {} {}", style("Errors:").red().bold(), infer_errors);
     }
     println!(
         "  {} {}ms",
@@ -2265,23 +2262,18 @@ fn cmd_trace_filter(file: &Path, agent_name: &str) -> Result<()> {
         let time = format_relative_time(event.t, base_ts);
         let details = match event.kind.as_str() {
             "agent.spawn" => "spawned".to_string(),
-            "agent.emit" => format!(
-                "emitted {}",
-                event.value_type.as_deref().unwrap_or("?")
-            ),
+            "agent.emit" => format!("emitted {}", event.value_type.as_deref().unwrap_or("?")),
             "agent.stop" => format!("stopped ({}ms)", event.duration_ms.unwrap_or(0)),
             "agent.error" => format!(
                 "error: {}",
-                event.error.as_ref().map(|e| e.message.as_str()).unwrap_or("?")
+                event
+                    .error
+                    .as_ref()
+                    .map(|e| e.message.as_str())
+                    .unwrap_or("?")
             ),
-            "infer.start" => format!(
-                "infer started ({} chars)",
-                event.prompt_len.unwrap_or(0)
-            ),
-            "infer.complete" => format!(
-                "infer complete ({}ms)",
-                event.duration_ms.unwrap_or(0)
-            ),
+            "infer.start" => format!("infer started ({} chars)", event.prompt_len.unwrap_or(0)),
+            "infer.complete" => format!("infer complete ({}ms)", event.duration_ms.unwrap_or(0)),
             "infer.error" => "infer error".to_string(),
             _ => event.kind.clone(),
         };
@@ -2297,10 +2289,7 @@ fn cmd_trace_infer(file: &Path) -> Result<()> {
     let events = load_trace_events(file)?;
 
     // Pair up infer.start and infer.complete events
-    let starts: Vec<_> = events
-        .iter()
-        .filter(|e| e.kind == "infer.start")
-        .collect();
+    let starts: Vec<_> = events.iter().filter(|e| e.kind == "infer.start").collect();
     let completes: Vec<_> = events
         .iter()
         .filter(|e| e.kind == "infer.complete" || e.kind == "infer.error")
@@ -2335,9 +2324,9 @@ fn cmd_trace_infer(file: &Path) -> Result<()> {
         let model = start.model.as_deref().unwrap_or("-");
 
         // Find matching complete/error
-        let complete = completes.iter().find(|c| {
-            c.agent == start.agent && c.id == start.id && c.t >= start.t
-        });
+        let complete = completes
+            .iter()
+            .find(|c| c.agent == start.agent && c.id == start.id && c.t >= start.t);
 
         let (duration, response, is_error) = match complete {
             Some(c) if c.kind == "infer.complete" => {
@@ -2361,11 +2350,7 @@ fn cmd_trace_infer(file: &Path) -> Result<()> {
         } else {
             println!(
                 "{:12} {:16} {:>10} {:>10} {:>12}",
-                time,
-                agent,
-                model,
-                duration,
-                response
+                time, agent, model, duration, response
             );
         }
     }
@@ -2399,10 +2384,7 @@ fn cmd_trace_infer(file: &Path) -> Result<()> {
 fn cmd_trace_cost(file: &Path) -> Result<()> {
     let events = load_trace_events(file)?;
 
-    let infer_starts: Vec<_> = events
-        .iter()
-        .filter(|e| e.kind == "infer.start")
-        .collect();
+    let infer_starts: Vec<_> = events.iter().filter(|e| e.kind == "infer.start").collect();
     let infer_completes: Vec<_> = events
         .iter()
         .filter(|e| e.kind == "infer.complete")
@@ -2416,14 +2398,8 @@ fn cmd_trace_cost(file: &Path) -> Result<()> {
     // Rough token estimation: ~4 chars per token (common approximation)
     const CHARS_PER_TOKEN: f64 = 4.0;
 
-    let total_prompt_chars: usize = infer_starts
-        .iter()
-        .filter_map(|e| e.prompt_len)
-        .sum();
-    let total_response_chars: usize = infer_completes
-        .iter()
-        .filter_map(|e| e.response_len)
-        .sum();
+    let total_prompt_chars: usize = infer_starts.iter().filter_map(|e| e.prompt_len).sum();
+    let total_response_chars: usize = infer_completes.iter().filter_map(|e| e.response_len).sum();
 
     let prompt_tokens = (total_prompt_chars as f64 / CHARS_PER_TOKEN).ceil() as usize;
     let response_tokens = (total_response_chars as f64 / CHARS_PER_TOKEN).ceil() as usize;
@@ -2478,16 +2454,8 @@ fn cmd_trace_cost(file: &Path) -> Result<()> {
     println!();
 
     println!("{}", style("Cost Breakdown").cyan());
-    println!(
-        "  {} ${:.6}",
-        style("Input cost:").bold(),
-        input_cost
-    );
-    println!(
-        "  {} ${:.6}",
-        style("Output cost:").bold(),
-        output_cost
-    );
+    println!("  {} ${:.6}", style("Input cost:").bold(), input_cost);
+    println!("  {} ${:.6}", style("Output cost:").bold(), output_cost);
     println!("{}", style("─".repeat(30)).dim());
     println!(
         "  {} {}",

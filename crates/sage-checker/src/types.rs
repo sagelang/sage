@@ -28,6 +28,12 @@ pub enum Type {
     Agent(String),
     /// User-defined type (record or enum) by name.
     Named(String),
+    /// Generic type with type arguments: `Pair<Int, String>`.
+    /// First field is the type name, second is the type arguments.
+    Generic(String, Vec<Type>),
+    /// Type parameter reference (e.g., `T` in `fn identity<T>(x: T) -> T`).
+    /// Used during type checking of generic definitions.
+    TypeParam(String),
     /// Function type: parameter types and return type.
     Fn(Vec<Type>, Box<Type>),
     /// Map type: `Map<K, V>`.
@@ -103,6 +109,21 @@ impl Type {
         }
     }
 
+    /// Check if this is a type parameter.
+    #[must_use]
+    pub fn is_type_param(&self) -> bool {
+        matches!(self, Type::TypeParam(_))
+    }
+
+    /// Get the type parameter name if this is a TypeParam.
+    #[must_use]
+    pub fn type_param_name(&self) -> Option<&str> {
+        match self {
+            Type::TypeParam(name) => Some(name),
+            _ => None,
+        }
+    }
+
     /// Check if two types are compatible for assignment/comparison.
     /// Inferred<T> is compatible with T.
     #[must_use]
@@ -122,6 +143,23 @@ impl Type {
             // Inferred<T> is compatible with T
             (Type::Inferred(inner), other) | (other, Type::Inferred(inner)) => {
                 inner.as_ref().is_compatible_with(other)
+            }
+            // Type parameters are compatible with any concrete type during inference
+            // (actual compatibility is checked during unification)
+            (Type::TypeParam(_), _) | (_, Type::TypeParam(_)) => true,
+            // Generic types are compatible if names match and all type args are compatible
+            (Type::Generic(name1, args1), Type::Generic(name2, args2)) => {
+                name1 == name2
+                    && args1.len() == args2.len()
+                    && args1
+                        .iter()
+                        .zip(args2.iter())
+                        .all(|(a1, a2)| a1.is_compatible_with(a2))
+            }
+            // Generic<T> is compatible with Named if it has no type args (non-generic)
+            (Type::Generic(name1, args), Type::Named(name2))
+            | (Type::Named(name2), Type::Generic(name1, args)) => {
+                name1 == name2 && args.is_empty()
             }
             // Function types are compatible if params and return types are pairwise compatible
             (Type::Fn(params1, ret1), Type::Fn(params2, ret2)) => {
@@ -152,6 +190,10 @@ impl Type {
             (Type::Result(ok1, err1), Type::Result(ok2, err2)) => {
                 ok1.is_compatible_with(ok2) && err1.is_compatible_with(err2)
             }
+            // List types are compatible if element types are compatible
+            (Type::List(elem1), Type::List(elem2)) => elem1.is_compatible_with(elem2),
+            // Option types are compatible if inner types are compatible
+            (Type::Option(inner1), Type::Option(inner2)) => inner1.is_compatible_with(inner2),
             _ => false,
         }
     }
@@ -179,6 +221,102 @@ impl Type {
     pub fn is_fn(&self) -> bool {
         matches!(self, Type::Fn(_, _))
     }
+
+    /// Substitute type parameters with concrete types.
+    /// `bindings` maps type parameter names to their concrete types.
+    #[must_use]
+    pub fn substitute(&self, bindings: &std::collections::HashMap<String, Type>) -> Type {
+        match self {
+            // Type parameter: look up in bindings, or keep as-is if not found
+            Type::TypeParam(name) => bindings.get(name).cloned().unwrap_or_else(|| self.clone()),
+
+            // Compound types: substitute recursively
+            Type::List(elem) => Type::List(Box::new(elem.substitute(bindings))),
+            Type::Option(inner) => Type::Option(Box::new(inner.substitute(bindings))),
+            Type::Inferred(inner) => Type::Inferred(Box::new(inner.substitute(bindings))),
+            Type::Map(key, value) => Type::Map(
+                Box::new(key.substitute(bindings)),
+                Box::new(value.substitute(bindings)),
+            ),
+            Type::Tuple(elems) => {
+                Type::Tuple(elems.iter().map(|e| e.substitute(bindings)).collect())
+            }
+            Type::Result(ok, err) => Type::Result(
+                Box::new(ok.substitute(bindings)),
+                Box::new(err.substitute(bindings)),
+            ),
+            Type::Fn(params, ret) => Type::Fn(
+                params.iter().map(|p| p.substitute(bindings)).collect(),
+                Box::new(ret.substitute(bindings)),
+            ),
+            Type::Generic(name, args) => Type::Generic(
+                name.clone(),
+                args.iter().map(|a| a.substitute(bindings)).collect(),
+            ),
+
+            // Leaf types: return as-is
+            Type::Int
+            | Type::Float
+            | Type::Bool
+            | Type::String
+            | Type::Unit
+            | Type::Agent(_)
+            | Type::Named(_)
+            | Type::Never
+            | Type::Error => self.clone(),
+        }
+    }
+
+    /// Check if this type contains any type parameters.
+    #[must_use]
+    pub fn has_type_params(&self) -> bool {
+        match self {
+            Type::TypeParam(_) => true,
+            Type::List(elem) | Type::Option(elem) | Type::Inferred(elem) => elem.has_type_params(),
+            Type::Map(key, value) | Type::Result(key, value) => {
+                key.has_type_params() || value.has_type_params()
+            }
+            Type::Tuple(elems) => elems.iter().any(Type::has_type_params),
+            Type::Fn(params, ret) => {
+                params.iter().any(Type::has_type_params) || ret.has_type_params()
+            }
+            Type::Generic(_, args) => args.iter().any(Type::has_type_params),
+            _ => false,
+        }
+    }
+
+    /// Collect all type parameter names in this type.
+    pub fn collect_type_params(&self, params: &mut std::collections::HashSet<String>) {
+        match self {
+            Type::TypeParam(name) => {
+                params.insert(name.clone());
+            }
+            Type::List(elem) | Type::Option(elem) | Type::Inferred(elem) => {
+                elem.collect_type_params(params);
+            }
+            Type::Map(key, value) | Type::Result(key, value) => {
+                key.collect_type_params(params);
+                value.collect_type_params(params);
+            }
+            Type::Tuple(elems) => {
+                for elem in elems {
+                    elem.collect_type_params(params);
+                }
+            }
+            Type::Fn(param_types, ret) => {
+                for param in param_types {
+                    param.collect_type_params(params);
+                }
+                ret.collect_type_params(params);
+            }
+            Type::Generic(_, args) => {
+                for arg in args {
+                    arg.collect_type_params(params);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 impl fmt::Display for Type {
@@ -194,6 +332,17 @@ impl fmt::Display for Type {
             Type::Inferred(inner) => write!(f, "Inferred<{inner}>"),
             Type::Agent(name) => write!(f, "Agent<{name}>"),
             Type::Named(name) => write!(f, "{name}"),
+            Type::Generic(name, args) => {
+                write!(f, "{name}<")?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{arg}")?;
+                }
+                write!(f, ">")
+            }
+            Type::TypeParam(name) => write!(f, "{name}"),
             Type::Fn(params, ret) => {
                 write!(f, "Fn(")?;
                 for (i, param) in params.iter().enumerate() {

@@ -16,7 +16,10 @@ pub fn str_index_of(haystack: &str, needle: &str) -> Option<i64> {
 pub fn str_slice(s: &str, start: i64, end: i64) -> String {
     let start = start.max(0) as usize;
     let end = end.max(0) as usize;
-    s.chars().skip(start).take(end.saturating_sub(start)).collect()
+    s.chars()
+        .skip(start)
+        .take(end.saturating_sub(start))
+        .collect()
 }
 
 /// Pad a string at the start to reach the target length (Unicode-aware).

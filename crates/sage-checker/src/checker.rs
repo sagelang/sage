@@ -2,7 +2,8 @@
 
 use crate::error::CheckError;
 use crate::scope::{
-    resolve_type, AgentInfo, ConstInfo, EnumInfo, FunctionInfo, RecordInfo, Scope, SymbolTable,
+    resolve_type, resolve_type_with_params, AgentInfo, ConstInfo, EnumInfo, FunctionInfo,
+    RecordInfo, Scope, SymbolTable,
 };
 use crate::types::Type;
 use sage_parser::{
@@ -165,7 +166,8 @@ impl Checker {
             self.validate_entry_agent(program);
         } else if let Some(run_agent) = &program.run_agent {
             // E051: run statement in test file
-            self.errors.push(CheckError::run_in_test_file(&run_agent.span));
+            self.errors
+                .push(CheckError::run_in_test_file(&run_agent.span));
         }
 
         CheckResult {
@@ -262,16 +264,26 @@ impl Checker {
                 continue;
             }
 
+            // Build set of type parameters for this function
+            let type_param_names: HashSet<String> =
+                func.type_params.iter().map(|p| p.name.clone()).collect();
+
             let params: Vec<(String, Type)> = func
                 .params
                 .iter()
-                .map(|p| (p.name.name.clone(), resolve_type(&p.ty)))
+                .map(|p| {
+                    (
+                        p.name.name.clone(),
+                        resolve_type_with_params(&p.ty, &type_param_names),
+                    )
+                })
                 .collect();
 
-            let return_type = resolve_type(&func.return_ty);
+            let return_type = resolve_type_with_params(&func.return_ty, &type_param_names);
 
             self.symbols.define_function(FunctionInfo {
                 name: func.name.name.clone(),
+                type_params: func.type_params.iter().map(|p| p.name.clone()).collect(),
                 params,
                 return_type,
                 is_pub: func.is_pub,
@@ -290,16 +302,21 @@ impl Checker {
                 continue;
             }
 
+            // Build set of type parameters for this record
+            let type_param_names: HashSet<String> =
+                record.type_params.iter().map(|p| p.name.clone()).collect();
+
             let mut fields = HashMap::new();
             let mut field_order = Vec::new();
             for field in &record.fields {
-                let ty = resolve_type(&field.ty);
+                let ty = resolve_type_with_params(&field.ty, &type_param_names);
                 fields.insert(field.name.name.clone(), ty);
                 field_order.push(field.name.name.clone());
             }
 
             self.symbols.define_record(RecordInfo {
                 name: record.name.name.clone(),
+                type_params: record.type_params.iter().map(|p| p.name.clone()).collect(),
                 fields,
                 field_order,
                 is_pub: record.is_pub,
@@ -317,17 +334,25 @@ impl Checker {
                 continue;
             }
 
+            // Build set of type parameters for this enum
+            let type_param_names: HashSet<String> =
+                enum_decl.type_params.iter().map(|p| p.name.clone()).collect();
+
             let variants: Vec<(String, Option<Type>)> = enum_decl
                 .variants
                 .iter()
                 .map(|v| {
-                    let payload = v.payload.as_ref().map(resolve_type);
+                    let payload = v
+                        .payload
+                        .as_ref()
+                        .map(|ty| resolve_type_with_params(ty, &type_param_names));
                     (v.name.name.clone(), payload)
                 })
                 .collect();
 
             self.symbols.define_enum(EnumInfo {
                 name: enum_decl.name.name.clone(),
+                type_params: enum_decl.type_params.iter().map(|p| p.name.clone()).collect(),
                 variants,
                 is_pub: enum_decl.is_pub,
                 module_path: self.current_module.clone(),
@@ -705,8 +730,10 @@ impl Checker {
                     sage_parser::MockValue::Fail(expr) => {
                         let ty = self.check_expr(expr);
                         if !ty.is_compatible_with(&Type::String) {
-                            self.errors
-                                .push(CheckError::mock_fail_not_string(ty.to_string(), expr.span()));
+                            self.errors.push(CheckError::mock_fail_not_string(
+                                ty.to_string(),
+                                expr.span(),
+                            ));
                         }
                     }
                 }
@@ -726,8 +753,10 @@ impl Checker {
                     sage_parser::MockValue::Fail(expr) => {
                         let ty = self.check_expr(expr);
                         if !ty.is_compatible_with(&Type::String) {
-                            self.errors
-                                .push(CheckError::mock_fail_not_string(ty.to_string(), expr.span()));
+                            self.errors.push(CheckError::mock_fail_not_string(
+                                ty.to_string(),
+                                expr.span(),
+                            ));
                         }
                     }
                 }
@@ -784,7 +813,12 @@ impl Checker {
                 self.check_unary_op(*op, &operand_ty, span)
             }
 
-            Expr::Call { name, args, span } => self.check_call(&name.name, args, span),
+            Expr::Call {
+                name,
+                type_args,
+                args,
+                span,
+            } => self.check_call(&name.name, type_args, args, span),
 
             Expr::SelfField { field, span } => {
                 let Some(agent_name) = &self.current_agent else {
@@ -884,7 +918,11 @@ impl Checker {
                 Type::Agent(agent.name.clone())
             }
 
-            Expr::Await { handle, timeout, span } => {
+            Expr::Await {
+                handle,
+                timeout,
+                span,
+            } => {
                 let handle_ty = self.check_expr(handle);
 
                 // Check timeout if present (must be Int)
@@ -1068,11 +1106,39 @@ impl Checker {
                 result_ty
             }
 
-            Expr::RecordConstruct { name, fields, span } => {
+            Expr::RecordConstruct {
+                name,
+                type_args,
+                fields,
+                span,
+            } => {
                 let Some(record_info) = self.symbols.get_record(&name.name).cloned() else {
                     self.errors
                         .push(CheckError::undefined_type(&name.name, span));
                     return Type::Error;
+                };
+
+                // RFC-0015: Handle generic records
+                let bindings = if !record_info.type_params.is_empty() {
+                    self.resolve_record_type_bindings(
+                        &record_info.type_params,
+                        type_args,
+                        &record_info.fields,
+                        fields,
+                        span,
+                    )
+                } else {
+                    // Non-generic record: warn if type args provided
+                    if !type_args.is_empty() {
+                        self.errors.push(CheckError::generic(
+                            format!(
+                                "record `{}` is not generic but was constructed with type arguments",
+                                name.name
+                            ),
+                            span,
+                        ));
+                    }
+                    HashMap::new()
                 };
 
                 // Track which fields have been provided
@@ -1088,8 +1154,10 @@ impl Checker {
                     if let Some(expected_ty) = record_info.fields.get(field_name) {
                         provided.insert(field_name.clone(), true);
                         let actual_ty = self.check_expr(&field.value);
+                        // Substitute type params in expected type
+                        let expected_ty = expected_ty.substitute(&bindings);
 
-                        if !actual_ty.is_compatible_with(expected_ty) {
+                        if !actual_ty.is_compatible_with(&expected_ty) {
                             self.errors.push(CheckError::type_mismatch(
                                 expected_ty.to_string(),
                                 actual_ty.to_string(),
@@ -1110,7 +1178,17 @@ impl Checker {
                     }
                 }
 
-                Type::Named(name.name.clone())
+                // Return Generic type if record has type params, otherwise Named
+                if record_info.type_params.is_empty() {
+                    Type::Named(name.name.clone())
+                } else {
+                    let type_args: Vec<Type> = record_info
+                        .type_params
+                        .iter()
+                        .map(|p| bindings.get(p).cloned().unwrap_or(Type::Error))
+                        .collect();
+                    Type::Generic(name.name.clone(), type_args)
+                }
             }
 
             Expr::FieldAccess {
@@ -1382,8 +1460,7 @@ impl Checker {
             }
 
             Expr::Tuple { elements, .. } => {
-                let elem_types: Vec<Type> =
-                    elements.iter().map(|e| self.check_expr(e)).collect();
+                let elem_types: Vec<Type> = elements.iter().map(|e| self.check_expr(e)).collect();
                 Type::Tuple(elem_types)
             }
 
@@ -1451,6 +1528,7 @@ impl Checker {
 
             Expr::VariantConstruct {
                 enum_name,
+                type_args,
                 variant,
                 payload,
                 span,
@@ -1460,6 +1538,30 @@ impl Checker {
                     self.errors
                         .push(CheckError::undefined_type(&enum_name.name, span));
                     return Type::Error;
+                };
+
+                // RFC-0015: Handle generic enums
+                let bindings = if !enum_info.type_params.is_empty() {
+                    self.resolve_enum_type_bindings(
+                        &enum_info.type_params,
+                        type_args,
+                        &enum_info.variants,
+                        &variant.name,
+                        payload.as_deref(),
+                        span,
+                    )
+                } else {
+                    // Non-generic enum: warn if type args provided
+                    if !type_args.is_empty() {
+                        self.errors.push(CheckError::generic(
+                            format!(
+                                "enum `{}` is not generic but was constructed with type arguments",
+                                enum_name.name
+                            ),
+                            span,
+                        ));
+                    }
+                    HashMap::new()
                 };
 
                 // Check if the variant exists and get its expected payload type
@@ -1472,8 +1574,11 @@ impl Checker {
                     return Type::Error;
                 };
 
+                // Substitute type params in expected payload type
+                let expected_payload = expected_payload.map(|ty| ty.substitute(&bindings));
+
                 // Check payload matches expectation
-                match (payload, expected_payload) {
+                match (payload, &expected_payload) {
                     (Some(payload_expr), Some(expected_ty)) => {
                         // Variant expects payload and we have one
                         let payload_ty = self.check_expr(payload_expr);
@@ -1506,8 +1611,17 @@ impl Checker {
                     }
                 }
 
-                // Return the enum type
-                Type::Named(enum_name.name.clone())
+                // Return Generic type if enum has type params, otherwise Named
+                if enum_info.type_params.is_empty() {
+                    Type::Named(enum_name.name.clone())
+                } else {
+                    let resolved_type_args: Vec<Type> = enum_info
+                        .type_params
+                        .iter()
+                        .map(|p| bindings.get(p).cloned().unwrap_or(Type::Error))
+                        .collect();
+                    Type::Generic(enum_name.name.clone(), resolved_type_args)
+                }
             }
 
             // RFC-0011: Tool calls
@@ -1519,22 +1633,24 @@ impl Checker {
             } => {
                 // Check that the agent has declared this tool via `use`
                 if !self.current_agent_tools.contains(&tool.name) {
-                    self.errors.push(CheckError::undeclared_tool_use(&tool.name, span));
+                    self.errors
+                        .push(CheckError::undeclared_tool_use(&tool.name, span));
                     return Type::Error;
                 }
 
                 // Look up the tool in scope and extract function info
                 // (clone to avoid borrow conflicts with check_expr)
                 let fn_lookup = self.scope.lookup_tool(&tool.name).and_then(|t| {
-                    t.functions.get(&function.name).map(|f| {
-                        (f.params.clone(), f.return_ty.clone())
-                    })
+                    t.functions
+                        .get(&function.name)
+                        .map(|f| (f.params.clone(), f.return_ty.clone()))
                 });
                 let tool_exists = self.scope.lookup_tool(&tool.name).is_some();
 
                 if !tool_exists {
                     // Tool not in scope - shouldn't happen for builtins
-                    self.errors.push(CheckError::undeclared_tool_use(&tool.name, span));
+                    self.errors
+                        .push(CheckError::undeclared_tool_use(&tool.name, span));
                     return Type::Error;
                 }
 
@@ -1778,7 +1894,9 @@ impl Checker {
                 // Handle payload binding
                 if let Some(enum_name_str) = enum_name_for_lookup {
                     if let Some(enum_info) = self.symbols.get_enum(&enum_name_str).cloned() {
-                        if let Some(expected_payload_ty) = enum_info.get_variant_payload(&variant.name) {
+                        if let Some(expected_payload_ty) =
+                            enum_info.get_variant_payload(&variant.name)
+                        {
                             match (payload, expected_payload_ty) {
                                 (Some(inner_pattern), Some(payload_ty)) => {
                                     // Recursively check the inner pattern
@@ -1854,7 +1972,13 @@ impl Checker {
         }
     }
 
-    fn check_call(&mut self, name: &str, args: &[Expr], span: &sage_parser::Span) -> Type {
+    fn check_call(
+        &mut self,
+        name: &str,
+        type_args: &[sage_parser::TypeExpr],
+        args: &[Expr],
+        span: &sage_parser::Span,
+    ) -> Type {
         // Check for user-defined function
         if let Some(func) = self.symbols.get_function(name).cloned() {
             // RFC-0007: E013 - fallible functions must be wrapped in try or catch
@@ -1872,18 +1996,37 @@ impl Checker {
                 return Type::Error;
             }
 
+            // RFC-0015: Handle generic functions
+            let bindings = if !func.type_params.is_empty() {
+                self.resolve_type_bindings(&func.type_params, type_args, &func.params, args, span)
+            } else {
+                // Non-generic function: warn if type args provided
+                if !type_args.is_empty() {
+                    self.errors.push(CheckError::generic(
+                        format!(
+                            "function `{}` is not generic but was called with type arguments",
+                            name
+                        ),
+                        span,
+                    ));
+                }
+                HashMap::new()
+            };
+
+            // Check arguments against (possibly substituted) parameter types
             for (arg, (_, param_ty)) in args.iter().zip(func.params.iter()) {
                 let arg_ty = self.check_expr(arg);
-                if !arg_ty.is_compatible_with(param_ty) {
+                let expected_ty = param_ty.substitute(&bindings);
+                if !arg_ty.is_compatible_with(&expected_ty) {
                     self.errors.push(CheckError::type_mismatch(
-                        param_ty.to_string(),
+                        expected_ty.to_string(),
                         arg_ty.to_string(),
                         arg.span(),
                     ));
                 }
             }
 
-            return func.return_type.clone();
+            return func.return_type.substitute(&bindings);
         }
 
         // Check for built-in function
@@ -1893,6 +2036,237 @@ impl Checker {
 
         self.errors.push(CheckError::undefined_function(name, span));
         Type::Error
+    }
+
+    /// Resolve type parameter bindings for a generic record construction.
+    fn resolve_record_type_bindings(
+        &mut self,
+        type_params: &[String],
+        type_args: &[sage_parser::TypeExpr],
+        field_types: &HashMap<String, Type>,
+        fields: &[sage_parser::FieldInit],
+        span: &sage_parser::Span,
+    ) -> HashMap<String, Type> {
+        let mut bindings = HashMap::new();
+
+        if !type_args.is_empty() {
+            // Explicit type arguments via turbofish syntax
+            if type_args.len() != type_params.len() {
+                self.errors.push(CheckError::generic(
+                    format!(
+                        "expected {} type argument(s), found {}",
+                        type_params.len(),
+                        type_args.len()
+                    ),
+                    span,
+                ));
+                return bindings;
+            }
+
+            // Convert TypeExpr to Type and create bindings
+            let empty_params = HashSet::new();
+            for (param, arg) in type_params.iter().zip(type_args.iter()) {
+                let ty = resolve_type_with_params(arg, &empty_params);
+                bindings.insert(param.clone(), ty);
+            }
+        } else {
+            // Infer type arguments from field values
+            for field in fields {
+                let field_name = &field.name.name;
+                if let Some(expected_ty) = field_types.get(field_name) {
+                    let actual_ty = self.check_expr(&field.value);
+                    self.unify_types(expected_ty, &actual_ty, &mut bindings);
+                }
+            }
+
+            // Check all type parameters were inferred
+            for param in type_params {
+                if !bindings.contains_key(param) {
+                    self.errors.push(CheckError::generic(
+                        format!("could not infer type for type parameter `{}`", param),
+                        span,
+                    ));
+                }
+            }
+        }
+
+        bindings
+    }
+
+    /// Resolve type parameter bindings for a generic enum variant construction.
+    fn resolve_enum_type_bindings(
+        &mut self,
+        type_params: &[String],
+        type_args: &[sage_parser::TypeExpr],
+        variants: &[(String, Option<Type>)],
+        variant_name: &str,
+        payload: Option<&Expr>,
+        span: &sage_parser::Span,
+    ) -> HashMap<String, Type> {
+        let mut bindings = HashMap::new();
+
+        if !type_args.is_empty() {
+            // Explicit type arguments via turbofish syntax
+            if type_args.len() != type_params.len() {
+                self.errors.push(CheckError::generic(
+                    format!(
+                        "expected {} type argument(s), found {}",
+                        type_params.len(),
+                        type_args.len()
+                    ),
+                    span,
+                ));
+                return bindings;
+            }
+
+            // Convert TypeExpr to Type and create bindings
+            let empty_params = HashSet::new();
+            for (param, arg) in type_params.iter().zip(type_args.iter()) {
+                let ty = resolve_type_with_params(arg, &empty_params);
+                bindings.insert(param.clone(), ty);
+            }
+        } else {
+            // Infer type arguments from payload
+            if let Some(payload_expr) = payload {
+                // Find the variant's payload type
+                if let Some((_, Some(expected_ty))) =
+                    variants.iter().find(|(name, _)| name == variant_name)
+                {
+                    let actual_ty = self.check_expr(payload_expr);
+                    self.unify_types(expected_ty, &actual_ty, &mut bindings);
+                }
+            }
+
+            // For enum variants, all type params must be inferrable or explicitly provided
+            // since generated Rust code needs concrete types
+            for param in type_params {
+                if !bindings.contains_key(param) {
+                    self.errors.push(CheckError::generic(
+                        format!(
+                            "type parameter `{}` cannot be inferred; use turbofish syntax",
+                            param
+                        ),
+                        span,
+                    ));
+                    // Insert Error to avoid cascading errors
+                    bindings.insert(param.clone(), Type::Error);
+                }
+            }
+        }
+
+        bindings
+    }
+
+    /// Resolve type parameter bindings for a generic function call.
+    /// Uses explicit type arguments (turbofish) if provided, otherwise infers from arguments.
+    fn resolve_type_bindings(
+        &mut self,
+        type_params: &[String],
+        type_args: &[sage_parser::TypeExpr],
+        params: &[(String, Type)],
+        args: &[Expr],
+        span: &sage_parser::Span,
+    ) -> HashMap<String, Type> {
+        let mut bindings = HashMap::new();
+
+        if !type_args.is_empty() {
+            // Explicit type arguments via turbofish syntax
+            if type_args.len() != type_params.len() {
+                self.errors.push(CheckError::generic(
+                    format!(
+                        "expected {} type argument(s), found {}",
+                        type_params.len(),
+                        type_args.len()
+                    ),
+                    span,
+                ));
+                return bindings;
+            }
+
+            // Convert TypeExpr to Type and create bindings
+            let empty_params = HashSet::new();
+            for (param, arg) in type_params.iter().zip(type_args.iter()) {
+                let ty = resolve_type_with_params(arg, &empty_params);
+                bindings.insert(param.clone(), ty);
+            }
+        } else {
+            // Infer type arguments from actual arguments
+            for (arg, (_, param_ty)) in args.iter().zip(params.iter()) {
+                let arg_ty = self.check_expr(arg);
+                self.unify_types(param_ty, &arg_ty, &mut bindings);
+            }
+
+            // Check all type parameters were inferred
+            for param in type_params {
+                if !bindings.contains_key(param) {
+                    self.errors.push(CheckError::generic(
+                        format!("could not infer type for type parameter `{}`", param),
+                        span,
+                    ));
+                }
+            }
+        }
+
+        bindings
+    }
+
+    /// Attempt to unify a pattern type with a concrete type, extracting type parameter bindings.
+    fn unify_types(&mut self, pattern: &Type, concrete: &Type, bindings: &mut HashMap<String, Type>) {
+        match (pattern, concrete) {
+            // Type parameter: bind to concrete type
+            (Type::TypeParam(name), concrete) => {
+                if let Some(existing) = bindings.get(name) {
+                    // Already bound - check consistency
+                    if !existing.is_compatible_with(concrete) {
+                        // Conflicting types for same type parameter - handled elsewhere
+                    }
+                } else {
+                    bindings.insert(name.clone(), concrete.clone());
+                }
+            }
+
+            // Recurse into compound types
+            (Type::List(p_elem), Type::List(c_elem)) => {
+                self.unify_types(p_elem, c_elem, bindings);
+            }
+            (Type::Option(p_inner), Type::Option(c_inner)) => {
+                self.unify_types(p_inner, c_inner, bindings);
+            }
+            (Type::Map(p_k, p_v), Type::Map(c_k, c_v)) => {
+                self.unify_types(p_k, c_k, bindings);
+                self.unify_types(p_v, c_v, bindings);
+            }
+            (Type::Tuple(p_elems), Type::Tuple(c_elems)) if p_elems.len() == c_elems.len() => {
+                for (p, c) in p_elems.iter().zip(c_elems.iter()) {
+                    self.unify_types(p, c, bindings);
+                }
+            }
+            (Type::Result(p_ok, p_err), Type::Result(c_ok, c_err)) => {
+                self.unify_types(p_ok, c_ok, bindings);
+                self.unify_types(p_err, c_err, bindings);
+            }
+            (Type::Fn(p_params, p_ret), Type::Fn(c_params, c_ret))
+                if p_params.len() == c_params.len() =>
+            {
+                for (p, c) in p_params.iter().zip(c_params.iter()) {
+                    self.unify_types(p, c, bindings);
+                }
+                self.unify_types(p_ret, c_ret, bindings);
+            }
+            (Type::Generic(p_name, p_args), Type::Generic(c_name, c_args))
+                if p_name == c_name && p_args.len() == c_args.len() =>
+            {
+                for (p, c) in p_args.iter().zip(c_args.iter()) {
+                    self.unify_types(p, c, bindings);
+                }
+            }
+            (Type::Inferred(p_inner), Type::Inferred(c_inner)) => {
+                self.unify_types(p_inner, c_inner, bindings);
+            }
+
+            // Base types: no unification needed
+            _ => {}
+        }
     }
 
     fn check_builtin_call(
@@ -2041,8 +2415,12 @@ impl Checker {
             "map_delete" => {
                 // map_delete(Map<K, V>, K) -> Unit
                 if args.len() != 2 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count("map_delete", 2, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "map_delete",
+                        2,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let map_ty = self.check_expr(&args[0]);
@@ -2120,8 +2498,12 @@ impl Checker {
             "map_values" => {
                 // map_values(Map<K, V>) -> List<V>
                 if args.len() != 1 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count("map_values", 1, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "map_values",
+                        1,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let map_ty = self.check_expr(&args[0]);
@@ -2143,7 +2525,6 @@ impl Checker {
             // =========================================================================
             // RFC-0013: List Higher-Order Functions
             // =========================================================================
-
             "map" => {
                 // map(List<A>, Fn(A) -> B) -> List<B>
                 if args.len() != 2 {
@@ -2255,8 +2636,12 @@ impl Checker {
                 // any/all(List<A>, Fn(A) -> Bool) -> Bool
                 // count_where(List<A>, Fn(A) -> Bool) -> Int
                 if args.len() != 2 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count(builtin.name, 2, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        builtin.name,
+                        2,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let list_ty = self.check_expr(&args[0]);
@@ -2377,10 +2762,7 @@ impl Checker {
                 if let (Some(elem1), Some(elem2)) =
                     (list1_ty.list_element(), list2_ty.list_element())
                 {
-                    return Type::List(Box::new(Type::Tuple(vec![
-                        elem1.clone(),
-                        elem2.clone(),
-                    ])));
+                    return Type::List(Box::new(Type::Tuple(vec![elem1.clone(), elem2.clone()])));
                 }
                 if !list1_ty.is_error() && list1_ty.list_element().is_none() {
                     self.errors.push(CheckError::type_mismatch(
@@ -2439,8 +2821,12 @@ impl Checker {
             "enumerate" => {
                 // enumerate(List<A>) -> List<(Int, A)>
                 if args.len() != 1 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count("enumerate", 1, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "enumerate",
+                        1,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let list_ty = self.check_expr(&args[0]);
@@ -2461,8 +2847,12 @@ impl Checker {
             "take" | "drop" => {
                 // take/drop(List<A>, Int) -> List<A>
                 if args.len() != 2 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count(builtin.name, 2, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        builtin.name,
+                        2,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let list_ty = self.check_expr(&args[0]);
@@ -2515,8 +2905,12 @@ impl Checker {
             "reverse" | "unique" => {
                 // reverse/unique(List<A>) -> List<A>
                 if args.len() != 1 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count(builtin.name, 1, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        builtin.name,
+                        1,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let list_ty = self.check_expr(&args[0]);
@@ -2537,12 +2931,15 @@ impl Checker {
             // =========================================================================
             // RFC-0010: List Utilities
             // =========================================================================
-
             "first" | "last" | "pop" => {
                 // first/last/pop(List<T>) -> Option<T>
                 if args.len() != 1 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count(builtin.name, 1, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        builtin.name,
+                        1,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let list_ty = self.check_expr(&args[0]);
@@ -2593,8 +2990,12 @@ impl Checker {
             "list_contains" => {
                 // list_contains(List<T>, T) -> Bool
                 if args.len() != 2 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count("list_contains", 2, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "list_contains",
+                        2,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let list_ty = self.check_expr(&args[0]);
@@ -2645,8 +3046,12 @@ impl Checker {
             "list_slice" => {
                 // list_slice(List<T>, Int, Int) -> List<T>
                 if args.len() != 3 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count("list_slice", 3, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "list_slice",
+                        3,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let list_ty = self.check_expr(&args[0]);
@@ -2752,8 +3157,12 @@ impl Checker {
             "take_while" | "drop_while" => {
                 // take_while/drop_while(List<T>, Fn(T)->Bool) -> List<T>
                 if args.len() != 2 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count(builtin.name, 2, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        builtin.name,
+                        2,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let list_ty = self.check_expr(&args[0]);
@@ -2788,12 +3197,15 @@ impl Checker {
             // =========================================================================
             // RFC-0010: Option Utilities
             // =========================================================================
-
             "is_some" | "is_none" => {
                 // is_some/is_none(Option<T>) -> Bool
                 if args.len() != 1 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count(builtin.name, 1, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        builtin.name,
+                        1,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let opt_ty = self.check_expr(&args[0]);
@@ -2834,8 +3246,12 @@ impl Checker {
             "unwrap_or" => {
                 // unwrap_or(Option<T>, T) -> T
                 if args.len() != 2 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count("unwrap_or", 2, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "unwrap_or",
+                        2,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let opt_ty = self.check_expr(&args[0]);
@@ -2864,8 +3280,12 @@ impl Checker {
             "unwrap_or_else" => {
                 // unwrap_or_else(Option<T>, Fn()->T) -> T
                 if args.len() != 2 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count("unwrap_or_else", 2, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "unwrap_or_else",
+                        2,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let opt_ty = self.check_expr(&args[0]);
@@ -2897,8 +3317,12 @@ impl Checker {
             "map_option" => {
                 // map_option(Option<T>, Fn(T)->U) -> Option<U>
                 if args.len() != 2 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count("map_option", 2, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "map_option",
+                        2,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let opt_ty = self.check_expr(&args[0]);
@@ -2930,8 +3354,12 @@ impl Checker {
             "or_option" => {
                 // or_option(Option<T>, Option<T>) -> Option<T>
                 if args.len() != 2 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count("or_option", 2, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "or_option",
+                        2,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let opt1_ty = self.check_expr(&args[0]);
@@ -3064,7 +3492,10 @@ impl Checker {
         }
 
         // Time constants (RFC-0010)
-        if matches!(name, "MS_PER_SECOND" | "MS_PER_MINUTE" | "MS_PER_HOUR" | "MS_PER_DAY") {
+        if matches!(
+            name,
+            "MS_PER_SECOND" | "MS_PER_MINUTE" | "MS_PER_HOUR" | "MS_PER_DAY"
+        ) {
             return Type::Int;
         }
 
@@ -3218,16 +3649,26 @@ impl MultiModuleChecker {
                 continue;
             }
 
+            // Build set of type parameters for this function
+            let type_param_names: HashSet<String> =
+                func.type_params.iter().map(|p| p.name.clone()).collect();
+
             let params: Vec<(String, Type)> = func
                 .params
                 .iter()
-                .map(|p| (p.name.name.clone(), resolve_type(&p.ty)))
+                .map(|p| {
+                    (
+                        p.name.name.clone(),
+                        resolve_type_with_params(&p.ty, &type_param_names),
+                    )
+                })
                 .collect();
 
-            let return_type = resolve_type(&func.return_ty);
+            let return_type = resolve_type_with_params(&func.return_ty, &type_param_names);
 
             self.symbols.define_function(FunctionInfo {
                 name: func.name.name.clone(),
+                type_params: func.type_params.iter().map(|p| p.name.clone()).collect(),
                 params,
                 return_type,
                 is_pub: func.is_pub,
@@ -3246,16 +3687,21 @@ impl MultiModuleChecker {
                 continue;
             }
 
+            // Build set of type parameters for this record
+            let type_param_names: HashSet<String> =
+                record.type_params.iter().map(|p| p.name.clone()).collect();
+
             let mut fields = HashMap::new();
             let mut field_order = Vec::new();
             for field in &record.fields {
-                let ty = resolve_type(&field.ty);
+                let ty = resolve_type_with_params(&field.ty, &type_param_names);
                 fields.insert(field.name.name.clone(), ty);
                 field_order.push(field.name.name.clone());
             }
 
             self.symbols.define_record(RecordInfo {
                 name: record.name.name.clone(),
+                type_params: record.type_params.iter().map(|p| p.name.clone()).collect(),
                 fields,
                 field_order,
                 is_pub: record.is_pub,
@@ -3275,17 +3721,25 @@ impl MultiModuleChecker {
                 continue;
             }
 
+            // Build set of type parameters for this enum
+            let type_param_names: HashSet<String> =
+                enum_decl.type_params.iter().map(|p| p.name.clone()).collect();
+
             let variants: Vec<(String, Option<Type>)> = enum_decl
                 .variants
                 .iter()
                 .map(|v| {
-                    let payload = v.payload.as_ref().map(resolve_type);
+                    let payload = v
+                        .payload
+                        .as_ref()
+                        .map(|p| resolve_type_with_params(p, &type_param_names));
                     (v.name.name.clone(), payload)
                 })
                 .collect();
 
             self.symbols.define_enum(EnumInfo {
                 name: enum_decl.name.name.clone(),
+                type_params: enum_decl.type_params.iter().map(|p| p.name.clone()).collect(),
                 variants,
                 is_pub: enum_decl.is_pub,
                 module_path: module_path.clone(),
@@ -3967,8 +4421,10 @@ impl<'a> ModuleChecker<'a> {
                     sage_parser::MockValue::Fail(expr) => {
                         let ty = self.check_expr(expr);
                         if !ty.is_compatible_with(&Type::String) {
-                            self.errors
-                                .push(CheckError::mock_fail_not_string(ty.to_string(), expr.span()));
+                            self.errors.push(CheckError::mock_fail_not_string(
+                                ty.to_string(),
+                                expr.span(),
+                            ));
                         }
                     }
                 }
@@ -3988,8 +4444,10 @@ impl<'a> ModuleChecker<'a> {
                     sage_parser::MockValue::Fail(expr) => {
                         let ty = self.check_expr(expr);
                         if !ty.is_compatible_with(&Type::String) {
-                            self.errors
-                                .push(CheckError::mock_fail_not_string(ty.to_string(), expr.span()));
+                            self.errors.push(CheckError::mock_fail_not_string(
+                                ty.to_string(),
+                                expr.span(),
+                            ));
                         }
                     }
                 }
@@ -4044,7 +4502,12 @@ impl<'a> ModuleChecker<'a> {
                 self.check_unary_op(*op, &operand_ty, span)
             }
 
-            Expr::Call { name, args, span } => self.check_call(&name.name, args, span),
+            Expr::Call {
+                name,
+                type_args,
+                args,
+                span,
+            } => self.check_call(&name.name, type_args, args, span),
 
             Expr::SelfField { field, span } => {
                 let Some(agent_name) = &self.current_agent else {
@@ -4323,7 +4786,12 @@ impl<'a> ModuleChecker<'a> {
                 result_ty
             }
 
-            Expr::RecordConstruct { name, fields, span } => {
+            Expr::RecordConstruct {
+                name,
+                type_args,
+                fields,
+                span,
+            } => {
                 let record_info = self.lookup_record(&name.name);
                 let Some(record_info) = record_info else {
                     self.errors
@@ -4331,6 +4799,29 @@ impl<'a> ModuleChecker<'a> {
                     return Type::Error;
                 };
                 let record_info = record_info.clone();
+
+                // RFC-0015: Handle generic records
+                let bindings = if !record_info.type_params.is_empty() {
+                    self.resolve_record_type_bindings(
+                        &record_info.type_params,
+                        type_args,
+                        &record_info.fields,
+                        fields,
+                        span,
+                    )
+                } else {
+                    // Non-generic record: warn if type args provided
+                    if !type_args.is_empty() {
+                        self.errors.push(CheckError::generic(
+                            format!(
+                                "record `{}` is not generic but was constructed with type arguments",
+                                name.name
+                            ),
+                            span,
+                        ));
+                    }
+                    HashMap::new()
+                };
 
                 // Track which fields have been provided
                 let mut provided: HashMap<String, bool> = record_info
@@ -4345,8 +4836,10 @@ impl<'a> ModuleChecker<'a> {
                     if let Some(expected_ty) = record_info.fields.get(field_name) {
                         provided.insert(field_name.clone(), true);
                         let actual_ty = self.check_expr(&field.value);
+                        // Substitute type params in expected type
+                        let expected_ty = expected_ty.substitute(&bindings);
 
-                        if !actual_ty.is_compatible_with(expected_ty) {
+                        if !actual_ty.is_compatible_with(&expected_ty) {
                             self.errors.push(CheckError::type_mismatch(
                                 expected_ty.to_string(),
                                 actual_ty.to_string(),
@@ -4367,7 +4860,17 @@ impl<'a> ModuleChecker<'a> {
                     }
                 }
 
-                Type::Named(name.name.clone())
+                // Return Generic type if record has type params, otherwise Named
+                if record_info.type_params.is_empty() {
+                    Type::Named(name.name.clone())
+                } else {
+                    let type_args: Vec<Type> = record_info
+                        .type_params
+                        .iter()
+                        .map(|p| bindings.get(p).cloned().unwrap_or(Type::Error))
+                        .collect();
+                    Type::Generic(name.name.clone(), type_args)
+                }
             }
 
             Expr::FieldAccess {
@@ -4639,8 +5142,7 @@ impl<'a> ModuleChecker<'a> {
             }
 
             Expr::Tuple { elements, .. } => {
-                let elem_types: Vec<Type> =
-                    elements.iter().map(|e| self.check_expr(e)).collect();
+                let elem_types: Vec<Type> = elements.iter().map(|e| self.check_expr(e)).collect();
                 Type::Tuple(elem_types)
             }
 
@@ -4708,6 +5210,7 @@ impl<'a> ModuleChecker<'a> {
 
             Expr::VariantConstruct {
                 enum_name,
+                type_args,
                 variant,
                 payload,
                 span,
@@ -4717,6 +5220,30 @@ impl<'a> ModuleChecker<'a> {
                     self.errors
                         .push(CheckError::undefined_type(&enum_name.name, span));
                     return Type::Error;
+                };
+
+                // RFC-0015: Handle generic enums
+                let bindings = if !enum_info.type_params.is_empty() {
+                    self.resolve_enum_type_bindings(
+                        &enum_info.type_params,
+                        type_args,
+                        &enum_info.variants,
+                        &variant.name,
+                        payload.as_deref(),
+                        span,
+                    )
+                } else {
+                    // Non-generic enum: warn if type args provided
+                    if !type_args.is_empty() {
+                        self.errors.push(CheckError::generic(
+                            format!(
+                                "enum `{}` is not generic but was constructed with type arguments",
+                                enum_name.name
+                            ),
+                            span,
+                        ));
+                    }
+                    HashMap::new()
                 };
 
                 // Check if the variant exists and get its expected payload type
@@ -4729,8 +5256,11 @@ impl<'a> ModuleChecker<'a> {
                     return Type::Error;
                 };
 
+                // Substitute type params in expected payload type
+                let expected_payload = expected_payload.map(|ty| ty.substitute(&bindings));
+
                 // Check payload matches expectation
-                match (payload, expected_payload) {
+                match (payload, &expected_payload) {
                     (Some(payload_expr), Some(expected_ty)) => {
                         // Variant expects payload and we have one
                         let payload_ty = self.check_expr(payload_expr);
@@ -4763,8 +5293,17 @@ impl<'a> ModuleChecker<'a> {
                     }
                 }
 
-                // Return the enum type
-                Type::Named(enum_name.name.clone())
+                // Return Generic type if enum has type params, otherwise Named
+                if enum_info.type_params.is_empty() {
+                    Type::Named(enum_name.name.clone())
+                } else {
+                    let resolved_type_args: Vec<Type> = enum_info
+                        .type_params
+                        .iter()
+                        .map(|p| bindings.get(p).cloned().unwrap_or(Type::Error))
+                        .collect();
+                    Type::Generic(enum_name.name.clone(), resolved_type_args)
+                }
             }
 
             // RFC-0011: Tool calls - just check inner expressions
@@ -4973,7 +5512,9 @@ impl<'a> ModuleChecker<'a> {
                 // Handle payload binding
                 if let Some(enum_name_str) = enum_name_for_lookup {
                     if let Some(enum_info) = self.lookup_enum(&enum_name_str).cloned() {
-                        if let Some(expected_payload_ty) = enum_info.get_variant_payload(&variant.name) {
+                        if let Some(expected_payload_ty) =
+                            enum_info.get_variant_payload(&variant.name)
+                        {
                             match (payload, expected_payload_ty) {
                                 (Some(inner_pattern), Some(payload_ty)) => {
                                     // Recursively check the inner pattern
@@ -5049,13 +5590,19 @@ impl<'a> ModuleChecker<'a> {
         }
     }
 
-    fn check_call(&mut self, name: &str, args: &[Expr], span: &sage_parser::Span) -> Type {
+    fn check_call(
+        &mut self,
+        name: &str,
+        type_args: &[sage_parser::TypeExpr],
+        args: &[Expr],
+        span: &sage_parser::Span,
+    ) -> Type {
         // Check imports first
         if let Some((module_path, original_name)) = self.imports.get(name) {
             // Look up the function in the imported module
             for (_, func) in self.symbols.iter_functions() {
                 if &func.module_path == module_path && func.name == *original_name {
-                    return self.check_function_call(&func.clone(), args, span);
+                    return self.check_function_call(&func.clone(), type_args, args, span);
                 }
             }
         }
@@ -5063,7 +5610,7 @@ impl<'a> ModuleChecker<'a> {
         // Check local functions (in current module)
         for (_, func) in self.symbols.iter_functions() {
             if func.module_path == self.module_path && func.name == name {
-                return self.check_function_call(&func.clone(), args, span);
+                return self.check_function_call(&func.clone(), type_args, args, span);
             }
         }
 
@@ -5079,6 +5626,7 @@ impl<'a> ModuleChecker<'a> {
     fn check_function_call(
         &mut self,
         func: &FunctionInfo,
+        type_args: &[sage_parser::TypeExpr],
         args: &[Expr],
         span: &sage_parser::Span,
     ) -> Type {
@@ -5092,18 +5640,267 @@ impl<'a> ModuleChecker<'a> {
             return Type::Error;
         }
 
+        // RFC-0015: Handle generic functions
+        let bindings = if !func.type_params.is_empty() {
+            self.resolve_type_bindings(&func.type_params, type_args, &func.params, args, span)
+        } else {
+            // Non-generic function: warn if type args provided
+            if !type_args.is_empty() {
+                self.errors.push(CheckError::generic(
+                    format!(
+                        "function `{}` is not generic but was called with type arguments",
+                        func.name
+                    ),
+                    span,
+                ));
+            }
+            HashMap::new()
+        };
+
+        // Check arguments against (possibly substituted) parameter types
         for (arg, (_, param_ty)) in args.iter().zip(func.params.iter()) {
             let arg_ty = self.check_expr(arg);
-            if !arg_ty.is_compatible_with(param_ty) {
+            let expected_ty = param_ty.substitute(&bindings);
+            if !arg_ty.is_compatible_with(&expected_ty) {
                 self.errors.push(CheckError::type_mismatch(
-                    param_ty.to_string(),
+                    expected_ty.to_string(),
                     arg_ty.to_string(),
                     arg.span(),
                 ));
             }
         }
 
-        func.return_type.clone()
+        func.return_type.substitute(&bindings)
+    }
+
+    /// Resolve type parameter bindings for a generic record construction.
+    fn resolve_record_type_bindings(
+        &mut self,
+        type_params: &[String],
+        type_args: &[sage_parser::TypeExpr],
+        field_types: &HashMap<String, Type>,
+        fields: &[sage_parser::FieldInit],
+        span: &sage_parser::Span,
+    ) -> HashMap<String, Type> {
+        let mut bindings = HashMap::new();
+
+        if !type_args.is_empty() {
+            // Explicit type arguments via turbofish syntax
+            if type_args.len() != type_params.len() {
+                self.errors.push(CheckError::generic(
+                    format!(
+                        "expected {} type argument(s), found {}",
+                        type_params.len(),
+                        type_args.len()
+                    ),
+                    span,
+                ));
+                return bindings;
+            }
+
+            // Convert TypeExpr to Type and create bindings
+            let empty_params = HashSet::new();
+            for (param, arg) in type_params.iter().zip(type_args.iter()) {
+                let ty = resolve_type_with_params(arg, &empty_params);
+                bindings.insert(param.clone(), ty);
+            }
+        } else {
+            // Infer type arguments from field values
+            for field in fields {
+                let field_name = &field.name.name;
+                if let Some(expected_ty) = field_types.get(field_name) {
+                    let actual_ty = self.check_expr(&field.value);
+                    self.unify_types(expected_ty, &actual_ty, &mut bindings);
+                }
+            }
+
+            // Check all type parameters were inferred
+            for param in type_params {
+                if !bindings.contains_key(param) {
+                    self.errors.push(CheckError::generic(
+                        format!("could not infer type for type parameter `{}`", param),
+                        span,
+                    ));
+                }
+            }
+        }
+
+        bindings
+    }
+
+    /// Resolve type parameter bindings for a generic enum variant construction.
+    fn resolve_enum_type_bindings(
+        &mut self,
+        type_params: &[String],
+        type_args: &[sage_parser::TypeExpr],
+        variants: &[(String, Option<Type>)],
+        variant_name: &str,
+        payload: Option<&Expr>,
+        span: &sage_parser::Span,
+    ) -> HashMap<String, Type> {
+        let mut bindings = HashMap::new();
+
+        if !type_args.is_empty() {
+            // Explicit type arguments via turbofish syntax
+            if type_args.len() != type_params.len() {
+                self.errors.push(CheckError::generic(
+                    format!(
+                        "expected {} type argument(s), found {}",
+                        type_params.len(),
+                        type_args.len()
+                    ),
+                    span,
+                ));
+                return bindings;
+            }
+
+            // Convert TypeExpr to Type and create bindings
+            let empty_params = HashSet::new();
+            for (param, arg) in type_params.iter().zip(type_args.iter()) {
+                let ty = resolve_type_with_params(arg, &empty_params);
+                bindings.insert(param.clone(), ty);
+            }
+        } else {
+            // Infer type arguments from payload
+            if let Some(payload_expr) = payload {
+                // Find the variant's payload type
+                if let Some((_, Some(expected_ty))) =
+                    variants.iter().find(|(name, _)| name == variant_name)
+                {
+                    let actual_ty = self.check_expr(payload_expr);
+                    self.unify_types(expected_ty, &actual_ty, &mut bindings);
+                }
+            }
+
+            // For enum variants, all type params must be inferrable or explicitly provided
+            // since generated Rust code needs concrete types
+            for param in type_params {
+                if !bindings.contains_key(param) {
+                    self.errors.push(CheckError::generic(
+                        format!(
+                            "type parameter `{}` cannot be inferred; use turbofish syntax",
+                            param
+                        ),
+                        span,
+                    ));
+                    // Insert Error to avoid cascading errors
+                    bindings.insert(param.clone(), Type::Error);
+                }
+            }
+        }
+
+        bindings
+    }
+
+    /// Resolve type parameter bindings for a generic function call.
+    fn resolve_type_bindings(
+        &mut self,
+        type_params: &[String],
+        type_args: &[sage_parser::TypeExpr],
+        params: &[(String, Type)],
+        args: &[Expr],
+        span: &sage_parser::Span,
+    ) -> HashMap<String, Type> {
+        let mut bindings = HashMap::new();
+
+        if !type_args.is_empty() {
+            // Explicit type arguments via turbofish syntax
+            if type_args.len() != type_params.len() {
+                self.errors.push(CheckError::generic(
+                    format!(
+                        "expected {} type argument(s), found {}",
+                        type_params.len(),
+                        type_args.len()
+                    ),
+                    span,
+                ));
+                return bindings;
+            }
+
+            // Convert TypeExpr to Type and create bindings
+            let empty_params = HashSet::new();
+            for (param, arg) in type_params.iter().zip(type_args.iter()) {
+                let ty = resolve_type_with_params(arg, &empty_params);
+                bindings.insert(param.clone(), ty);
+            }
+        } else {
+            // Infer type arguments from actual arguments
+            for (arg, (_, param_ty)) in args.iter().zip(params.iter()) {
+                let arg_ty = self.check_expr(arg);
+                self.unify_types(param_ty, &arg_ty, &mut bindings);
+            }
+
+            // Check all type parameters were inferred
+            for param in type_params {
+                if !bindings.contains_key(param) {
+                    self.errors.push(CheckError::generic(
+                        format!("could not infer type for type parameter `{}`", param),
+                        span,
+                    ));
+                }
+            }
+        }
+
+        bindings
+    }
+
+    /// Attempt to unify a pattern type with a concrete type, extracting type parameter bindings.
+    fn unify_types(&mut self, pattern: &Type, concrete: &Type, bindings: &mut HashMap<String, Type>) {
+        match (pattern, concrete) {
+            // Type parameter: bind to concrete type
+            (Type::TypeParam(name), concrete) => {
+                if let Some(existing) = bindings.get(name) {
+                    // Already bound - check consistency
+                    if !existing.is_compatible_with(concrete) {
+                        // Conflicting types for same type parameter - handled elsewhere
+                    }
+                } else {
+                    bindings.insert(name.clone(), concrete.clone());
+                }
+            }
+
+            // Recurse into compound types
+            (Type::List(p_elem), Type::List(c_elem)) => {
+                self.unify_types(p_elem, c_elem, bindings);
+            }
+            (Type::Option(p_inner), Type::Option(c_inner)) => {
+                self.unify_types(p_inner, c_inner, bindings);
+            }
+            (Type::Map(p_k, p_v), Type::Map(c_k, c_v)) => {
+                self.unify_types(p_k, c_k, bindings);
+                self.unify_types(p_v, c_v, bindings);
+            }
+            (Type::Tuple(p_elems), Type::Tuple(c_elems)) if p_elems.len() == c_elems.len() => {
+                for (p, c) in p_elems.iter().zip(c_elems.iter()) {
+                    self.unify_types(p, c, bindings);
+                }
+            }
+            (Type::Result(p_ok, p_err), Type::Result(c_ok, c_err)) => {
+                self.unify_types(p_ok, c_ok, bindings);
+                self.unify_types(p_err, c_err, bindings);
+            }
+            (Type::Fn(p_params, p_ret), Type::Fn(c_params, c_ret))
+                if p_params.len() == c_params.len() =>
+            {
+                for (p, c) in p_params.iter().zip(c_params.iter()) {
+                    self.unify_types(p, c, bindings);
+                }
+                self.unify_types(p_ret, c_ret, bindings);
+            }
+            (Type::Generic(p_name, p_args), Type::Generic(c_name, c_args))
+                if p_name == c_name && p_args.len() == c_args.len() =>
+            {
+                for (p, c) in p_args.iter().zip(c_args.iter()) {
+                    self.unify_types(p, c, bindings);
+                }
+            }
+            (Type::Inferred(p_inner), Type::Inferred(c_inner)) => {
+                self.unify_types(p_inner, c_inner, bindings);
+            }
+
+            // Base types: no unification needed
+            _ => {}
+        }
     }
 
     fn check_builtin_call(
@@ -5250,8 +6047,12 @@ impl<'a> ModuleChecker<'a> {
             "map_delete" => {
                 // map_delete(Map<K, V>, K) -> Unit
                 if args.len() != 2 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count("map_delete", 2, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "map_delete",
+                        2,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let map_ty = self.check_expr(&args[0]);
@@ -5329,8 +6130,12 @@ impl<'a> ModuleChecker<'a> {
             "map_values" => {
                 // map_values(Map<K, V>) -> List<V>
                 if args.len() != 1 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count("map_values", 1, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "map_values",
+                        1,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let map_ty = self.check_expr(&args[0]);
@@ -5352,7 +6157,6 @@ impl<'a> ModuleChecker<'a> {
             // =========================================================================
             // RFC-0013: List Higher-Order Functions
             // =========================================================================
-
             "map" => {
                 // map(List<A>, Fn(A) -> B) -> List<B>
                 if args.len() != 2 {
@@ -5464,8 +6268,12 @@ impl<'a> ModuleChecker<'a> {
                 // any/all(List<A>, Fn(A) -> Bool) -> Bool
                 // count_where(List<A>, Fn(A) -> Bool) -> Int
                 if args.len() != 2 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count(builtin.name, 2, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        builtin.name,
+                        2,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let list_ty = self.check_expr(&args[0]);
@@ -5586,10 +6394,7 @@ impl<'a> ModuleChecker<'a> {
                 if let (Some(elem1), Some(elem2)) =
                     (list1_ty.list_element(), list2_ty.list_element())
                 {
-                    return Type::List(Box::new(Type::Tuple(vec![
-                        elem1.clone(),
-                        elem2.clone(),
-                    ])));
+                    return Type::List(Box::new(Type::Tuple(vec![elem1.clone(), elem2.clone()])));
                 }
                 if !list1_ty.is_error() && list1_ty.list_element().is_none() {
                     self.errors.push(CheckError::type_mismatch(
@@ -5648,8 +6453,12 @@ impl<'a> ModuleChecker<'a> {
             "enumerate" => {
                 // enumerate(List<A>) -> List<(Int, A)>
                 if args.len() != 1 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count("enumerate", 1, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "enumerate",
+                        1,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let list_ty = self.check_expr(&args[0]);
@@ -5670,8 +6479,12 @@ impl<'a> ModuleChecker<'a> {
             "take" | "drop" => {
                 // take/drop(List<A>, Int) -> List<A>
                 if args.len() != 2 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count(builtin.name, 2, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        builtin.name,
+                        2,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let list_ty = self.check_expr(&args[0]);
@@ -5724,8 +6537,12 @@ impl<'a> ModuleChecker<'a> {
             "reverse" | "unique" => {
                 // reverse/unique(List<A>) -> List<A>
                 if args.len() != 1 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count(builtin.name, 1, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        builtin.name,
+                        1,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let list_ty = self.check_expr(&args[0]);
@@ -5746,12 +6563,15 @@ impl<'a> ModuleChecker<'a> {
             // =========================================================================
             // RFC-0010: List Utilities
             // =========================================================================
-
             "first" | "last" | "pop" => {
                 // first/last/pop(List<T>) -> Option<T>
                 if args.len() != 1 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count(builtin.name, 1, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        builtin.name,
+                        1,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let list_ty = self.check_expr(&args[0]);
@@ -5802,8 +6622,12 @@ impl<'a> ModuleChecker<'a> {
             "list_contains" => {
                 // list_contains(List<T>, T) -> Bool
                 if args.len() != 2 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count("list_contains", 2, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "list_contains",
+                        2,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let list_ty = self.check_expr(&args[0]);
@@ -5854,8 +6678,12 @@ impl<'a> ModuleChecker<'a> {
             "list_slice" => {
                 // list_slice(List<T>, Int, Int) -> List<T>
                 if args.len() != 3 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count("list_slice", 3, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "list_slice",
+                        3,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let list_ty = self.check_expr(&args[0]);
@@ -5961,8 +6789,12 @@ impl<'a> ModuleChecker<'a> {
             "take_while" | "drop_while" => {
                 // take_while/drop_while(List<T>, Fn(T)->Bool) -> List<T>
                 if args.len() != 2 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count(builtin.name, 2, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        builtin.name,
+                        2,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let list_ty = self.check_expr(&args[0]);
@@ -5997,12 +6829,15 @@ impl<'a> ModuleChecker<'a> {
             // =========================================================================
             // RFC-0010: Option Utilities
             // =========================================================================
-
             "is_some" | "is_none" => {
                 // is_some/is_none(Option<T>) -> Bool
                 if args.len() != 1 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count(builtin.name, 1, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        builtin.name,
+                        1,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let opt_ty = self.check_expr(&args[0]);
@@ -6043,8 +6878,12 @@ impl<'a> ModuleChecker<'a> {
             "unwrap_or" => {
                 // unwrap_or(Option<T>, T) -> T
                 if args.len() != 2 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count("unwrap_or", 2, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "unwrap_or",
+                        2,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let opt_ty = self.check_expr(&args[0]);
@@ -6073,8 +6912,12 @@ impl<'a> ModuleChecker<'a> {
             "unwrap_or_else" => {
                 // unwrap_or_else(Option<T>, Fn()->T) -> T
                 if args.len() != 2 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count("unwrap_or_else", 2, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "unwrap_or_else",
+                        2,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let opt_ty = self.check_expr(&args[0]);
@@ -6106,8 +6949,12 @@ impl<'a> ModuleChecker<'a> {
             "map_option" => {
                 // map_option(Option<T>, Fn(T)->U) -> Option<U>
                 if args.len() != 2 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count("map_option", 2, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "map_option",
+                        2,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let opt_ty = self.check_expr(&args[0]);
@@ -6139,8 +6986,12 @@ impl<'a> ModuleChecker<'a> {
             "or_option" => {
                 // or_option(Option<T>, Option<T>) -> Option<T>
                 if args.len() != 2 {
-                    self.errors
-                        .push(CheckError::wrong_arg_count("or_option", 2, args.len(), span));
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "or_option",
+                        2,
+                        args.len(),
+                        span,
+                    ));
                     return Type::Error;
                 }
                 let opt1_ty = self.check_expr(&args[0]);
@@ -6290,7 +7141,10 @@ impl<'a> ModuleChecker<'a> {
         }
 
         // Time constants (RFC-0010)
-        if matches!(name, "MS_PER_SECOND" | "MS_PER_MINUTE" | "MS_PER_HOUR" | "MS_PER_DAY") {
+        if matches!(
+            name,
+            "MS_PER_SECOND" | "MS_PER_MINUTE" | "MS_PER_HOUR" | "MS_PER_DAY"
+        ) {
             return Type::Int;
         }
 
@@ -6317,5 +7171,4 @@ impl<'a> ModuleChecker<'a> {
             })
             .map(|v| v as _)
     }
-
 }

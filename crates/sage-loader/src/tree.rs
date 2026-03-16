@@ -249,13 +249,20 @@ pub fn load_project_with_packages(
 /// Files in `hearth/` (build output) are excluded.
 pub fn discover_test_files(project_path: &Path) -> Result<Vec<PathBuf>, Vec<LoadError>> {
     let project_root = if project_path.is_file() {
-        project_path.parent().unwrap_or(Path::new(".")).to_path_buf()
+        project_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf()
     } else {
         project_path.to_path_buf()
     };
 
     let src_dir = project_root.join("src");
-    let search_dir = if src_dir.exists() { src_dir } else { project_root };
+    let search_dir = if src_dir.exists() {
+        src_dir
+    } else {
+        project_root
+    };
 
     let mut test_files = Vec::new();
     collect_test_files(&search_dir, &mut test_files)?;
@@ -620,9 +627,21 @@ pub agent Worker {
         fs::create_dir_all(dir.path().join("src")).unwrap();
 
         // Create main file and test files
-        fs::write(dir.path().join("src/main.sg"), "agent Main { on start { emit(0); } } run Main;").unwrap();
-        fs::write(dir.path().join("src/counter_test.sg"), "test \"counter works\" { assert(true); }").unwrap();
-        fs::write(dir.path().join("src/worker_test.sg"), "test \"worker works\" { assert(true); }").unwrap();
+        fs::write(
+            dir.path().join("src/main.sg"),
+            "agent Main { on start { emit(0); } } run Main;",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("src/counter_test.sg"),
+            "test \"counter works\" { assert(true); }",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("src/worker_test.sg"),
+            "test \"worker works\" { assert(true); }",
+        )
+        .unwrap();
 
         let test_files = discover_test_files(dir.path()).unwrap();
         assert_eq!(test_files.len(), 2);
@@ -636,10 +655,22 @@ pub agent Worker {
         fs::create_dir_all(dir.path().join("src")).unwrap();
         fs::create_dir_all(dir.path().join("hearth")).unwrap();
 
-        fs::write(dir.path().join("src/main.sg"), "agent Main { on start { emit(0); } } run Main;").unwrap();
-        fs::write(dir.path().join("src/counter_test.sg"), "test \"counter\" { assert(true); }").unwrap();
+        fs::write(
+            dir.path().join("src/main.sg"),
+            "agent Main { on start { emit(0); } } run Main;",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("src/counter_test.sg"),
+            "test \"counter\" { assert(true); }",
+        )
+        .unwrap();
         // This should be skipped
-        fs::write(dir.path().join("hearth/generated_test.sg"), "test \"gen\" { assert(true); }").unwrap();
+        fs::write(
+            dir.path().join("hearth/generated_test.sg"),
+            "test \"gen\" { assert(true); }",
+        )
+        .unwrap();
 
         let test_files = discover_test_files(dir.path()).unwrap();
         assert_eq!(test_files.len(), 1);
@@ -651,7 +682,11 @@ pub agent Worker {
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("src")).unwrap();
 
-        fs::write(dir.path().join("src/main.sg"), "agent Main { on start { emit(0); } } run Main;").unwrap();
+        fs::write(
+            dir.path().join("src/main.sg"),
+            "agent Main { on start { emit(0); } } run Main;",
+        )
+        .unwrap();
         fs::write(
             dir.path().join("src/math_test.sg"),
             r#"
@@ -665,7 +700,8 @@ test "subtraction works" {
     assert(y == 2);
 }
 "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let test_files = load_test_files(dir.path()).unwrap();
         assert_eq!(test_files.len(), 1);

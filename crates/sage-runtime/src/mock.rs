@@ -142,9 +142,8 @@ impl MockLlmClient {
         T: DeserializeOwned,
     {
         match self.queue.pop() {
-            Some(MockResponse::Value(value)) => serde_json::from_value(value).map_err(|e| {
-                SageError::Llm(format!("failed to deserialize mock value: {e}"))
-            }),
+            Some(MockResponse::Value(value)) => serde_json::from_value(value)
+                .map_err(|e| SageError::Llm(format!("failed to deserialize mock value: {e}"))),
             Some(MockResponse::Fail(msg)) => Err(SageError::Llm(msg)),
             None => Err(SageError::Llm(
                 "infer called with no mock available (E054)".to_string(),
@@ -161,9 +160,8 @@ impl MockLlmClient {
     {
         // Same as infer - the schema is ignored for mocks
         match self.queue.pop() {
-            Some(MockResponse::Value(value)) => serde_json::from_value(value).map_err(|e| {
-                SageError::Llm(format!("failed to deserialize mock value: {e}"))
-            }),
+            Some(MockResponse::Value(value)) => serde_json::from_value(value)
+                .map_err(|e| SageError::Llm(format!("failed to deserialize mock value: {e}"))),
             Some(MockResponse::Fail(msg)) => Err(SageError::Llm(msg)),
             None => Err(SageError::Llm(
                 "infer called with no mock available (E054)".to_string(),
@@ -346,7 +344,10 @@ mod tests {
             "confidence": 0.95
         }))]);
 
-        let summary: Summary = client.infer_structured("summarize", "schema").await.unwrap();
+        let summary: Summary = client
+            .infer_structured("summarize", "schema")
+            .await
+            .unwrap();
         assert_eq!(summary.text, "A summary");
         assert!((summary.confidence - 0.95).abs() < 0.001);
     }
@@ -401,6 +402,9 @@ mod tests {
 
         let result: Result<String, _> = registry.call("Http", "get").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("no mock registered"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("no mock registered"));
     }
 }

@@ -83,13 +83,15 @@ pub enum UseKind {
 // Type declarations (records, enums)
 // =============================================================================
 
-/// A record declaration: `record Point { x: Int, y: Int }`
+/// A record declaration: `record Point { x: Int, y: Int }` or `record Pair<A, B> { first: A, second: B }`
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordDecl {
     /// Whether this record is public.
     pub is_pub: bool,
     /// The record's name.
     pub name: Ident,
+    /// Type parameters for generic records (e.g., `<A, B>` in `Pair<A, B>`).
+    pub type_params: Vec<Ident>,
     /// The record's fields.
     pub fields: Vec<RecordField>,
     /// Span covering the declaration.
@@ -118,13 +120,15 @@ pub struct EnumVariant {
     pub span: Span,
 }
 
-/// An enum declaration: `enum Status { Active, Pending, Done }` or `enum Result { Ok(T), Err(E) }`
+/// An enum declaration: `enum Status { Active, Pending, Done }` or `enum Tree<T> { Leaf(T), Node(Tree<T>, Tree<T>) }`
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDecl {
     /// Whether this enum is public.
     pub is_pub: bool,
     /// The enum's name.
     pub name: Ident,
+    /// Type parameters for generic enums (e.g., `<T>` in `Tree<T>`).
+    pub type_params: Vec<Ident>,
     /// The enum's variants.
     pub variants: Vec<EnumVariant>,
     /// Span covering the declaration.
@@ -264,13 +268,15 @@ impl fmt::Display for EventKind {
 // Function declarations
 // =============================================================================
 
-/// A function declaration: `fn name(params) -> ReturnType { ... }` or `fn name(params) -> ReturnType fails { ... }`
+/// A function declaration: `fn name(params) -> ReturnType { ... }` or `fn map<T, U>(list: List<T>, f: Fn(T) -> U) -> List<U> { ... }`
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnDecl {
     /// Whether this function is public (can be imported by other modules).
     pub is_pub: bool,
     /// The function's name.
     pub name: Ident,
+    /// Type parameters for generic functions (e.g., `<T, U>` in `map<T, U>`).
+    pub type_params: Vec<Ident>,
     /// The function's parameters.
     pub params: Vec<Param>,
     /// The return type.
@@ -551,10 +557,12 @@ pub enum Expr {
         span: Span,
     },
 
-    /// Function call: `name(args)`
+    /// Function call: `name(args)` or `name::<T, U>(args)` (turbofish)
     Call {
         /// The function name.
         name: Ident,
+        /// Explicit type arguments (turbofish syntax): `foo::<Int, String>(...)`
+        type_args: Vec<TypeExpr>,
         /// The arguments.
         args: Vec<Expr>,
         /// Span covering the expression.
@@ -651,10 +659,12 @@ pub enum Expr {
         span: Span,
     },
 
-    /// Record construction: `Point { x: 1, y: 2 }`
+    /// Record construction: `Point { x: 1, y: 2 }` or `Pair::<Int, String> { first: 1, second: "hi" }`
     RecordConstruct {
         /// The record type name.
         name: Ident,
+        /// Explicit type arguments (turbofish syntax): `Pair::<Int, String> { ... }`
+        type_args: Vec<TypeExpr>,
         /// Field initializations.
         fields: Vec<FieldInit>,
         /// Span covering the expression.
@@ -764,10 +774,12 @@ pub enum Expr {
         span: Span,
     },
 
-    /// Enum variant construction: `MyEnum.Variant` or `MyEnum.Variant(payload)`
+    /// Enum variant construction: `MyEnum.Variant` or `Either::<L, R>.Left(payload)`
     VariantConstruct {
         /// The enum type name.
         enum_name: Ident,
+        /// Explicit type arguments (turbofish syntax): `Either::<L, R>.Left(...)`
+        type_args: Vec<TypeExpr>,
         /// The variant name.
         variant: Ident,
         /// The optional payload expression.

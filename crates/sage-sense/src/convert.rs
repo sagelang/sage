@@ -22,10 +22,7 @@ pub fn span_to_range(start: usize, end: usize, source: &str) -> Range {
 }
 
 /// Convert a LexErrorLocation to an LSP Diagnostic.
-pub fn lex_error_to_diagnostic(
-    error: &sage_parser::LexErrorLocation,
-    source: &str,
-) -> Diagnostic {
+pub fn lex_error_to_diagnostic(error: &sage_parser::LexErrorLocation, source: &str) -> Diagnostic {
     Diagnostic {
         range: span_to_range(error.start, error.end, source),
         severity: Some(DiagnosticSeverity::ERROR),
@@ -102,10 +99,34 @@ mod tests {
     #[test]
     fn test_offset_to_position_simple() {
         let source = "hello\nworld";
-        assert_eq!(offset_to_position(0, source), Position { line: 0, character: 0 });
-        assert_eq!(offset_to_position(5, source), Position { line: 0, character: 5 });
-        assert_eq!(offset_to_position(6, source), Position { line: 1, character: 0 });
-        assert_eq!(offset_to_position(11, source), Position { line: 1, character: 5 });
+        assert_eq!(
+            offset_to_position(0, source),
+            Position {
+                line: 0,
+                character: 0
+            }
+        );
+        assert_eq!(
+            offset_to_position(5, source),
+            Position {
+                line: 0,
+                character: 5
+            }
+        );
+        assert_eq!(
+            offset_to_position(6, source),
+            Position {
+                line: 1,
+                character: 0
+            }
+        );
+        assert_eq!(
+            offset_to_position(11, source),
+            Position {
+                line: 1,
+                character: 5
+            }
+        );
     }
 
     #[test]
@@ -113,18 +134,48 @@ mod tests {
         // UTF-8 multibyte: "日本語" is 9 bytes but 3 UTF-16 code units
         let source = "日本語";
         // First char
-        assert_eq!(offset_to_position(0, source), Position { line: 0, character: 0 });
+        assert_eq!(
+            offset_to_position(0, source),
+            Position {
+                line: 0,
+                character: 0
+            }
+        );
         // After first char (3 bytes, 1 UTF-16 unit)
-        assert_eq!(offset_to_position(3, source), Position { line: 0, character: 1 });
+        assert_eq!(
+            offset_to_position(3, source),
+            Position {
+                line: 0,
+                character: 1
+            }
+        );
         // After second char
-        assert_eq!(offset_to_position(6, source), Position { line: 0, character: 2 });
+        assert_eq!(
+            offset_to_position(6, source),
+            Position {
+                line: 0,
+                character: 2
+            }
+        );
     }
 
     #[test]
     fn test_span_to_range() {
         let source = "hello\nworld";
         let range = span_to_range(0, 5, source);
-        assert_eq!(range.start, Position { line: 0, character: 0 });
-        assert_eq!(range.end, Position { line: 0, character: 5 });
+        assert_eq!(
+            range.start,
+            Position {
+                line: 0,
+                character: 0
+            }
+        );
+        assert_eq!(
+            range.end,
+            Position {
+                line: 0,
+                character: 5
+            }
+        );
     }
 }

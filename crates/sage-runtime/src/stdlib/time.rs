@@ -47,10 +47,14 @@ pub fn parse_timestamp(s: &str, format: &str) -> Result<i64, String> {
     let dt = DateTime::parse_from_str(s, format)
         .or_else(|_| {
             // Try parsing as UTC without timezone
-            chrono::NaiveDateTime::parse_from_str(s, format)
-                .map(|d| d.and_utc().fixed_offset())
+            chrono::NaiveDateTime::parse_from_str(s, format).map(|d| d.and_utc().fixed_offset())
         })
-        .map_err(|e| format!("failed to parse timestamp '{}' with format '{}': {}", s, format, e))?;
+        .map_err(|e| {
+            format!(
+                "failed to parse timestamp '{}' with format '{}': {}",
+                s, format, e
+            )
+        })?;
     Ok(dt.timestamp_millis())
 }
 

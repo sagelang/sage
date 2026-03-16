@@ -188,7 +188,10 @@ pub enum CheckError {
     },
 
     #[error("item `{name}` in module `{module}` is private")]
-    #[diagnostic(code(sage::private_item), help("Oswyn suggests: add `pub` to make it public"))]
+    #[diagnostic(
+        code(sage::private_item),
+        help("Oswyn suggests: add `pub` to make it public")
+    )]
     PrivateItem {
         name: String,
         module: String,
@@ -515,6 +518,17 @@ pub enum CheckError {
     MockFailNotString {
         found: String,
         #[label("expected String, found `{found}`")]
+        span: SourceSpan,
+    },
+
+    // =========================================================================
+    // Generics errors (RFC-0015)
+    // =========================================================================
+    #[error("{message}")]
+    #[diagnostic(code(sage::E100))]
+    GenericError {
+        message: String,
+        #[label("generic error")]
         span: SourceSpan,
     },
 }
@@ -1008,6 +1022,18 @@ impl CheckError {
     pub fn mock_fail_not_string(found: impl Into<String>, span: &Span) -> Self {
         Self::MockFailNotString {
             found: found.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    // =========================================================================
+    // RFC-0015: Generics helpers
+    // =========================================================================
+
+    /// Create a generic-related error (E100).
+    pub fn generic(message: impl Into<String>, span: &Span) -> Self {
+        Self::GenericError {
+            message: message.into(),
             span: to_source_span(span),
         }
     }

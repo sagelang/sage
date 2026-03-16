@@ -3,8 +3,8 @@
 use crate::emit::Emitter;
 use sage_loader::ModuleTree;
 use sage_parser::{
-    AgentDecl, BinOp, Block, ConstDecl, EnumDecl, EventKind, Expr, FnDecl, Literal,
-    MockValue, Program, RecordDecl, Stmt, StringPart, TestDecl, TypeExpr, UnaryOp,
+    AgentDecl, BinOp, Block, ConstDecl, EnumDecl, EventKind, Expr, FnDecl, Literal, MockValue,
+    Program, RecordDecl, Stmt, StringPart, TestDecl, TypeExpr, UnaryOp,
 };
 
 /// How to specify the sage-runtime dependency in generated Cargo.toml.
@@ -149,12 +149,20 @@ impl Generator {
             Stmt::Assign { name, .. } => {
                 self.reassigned_vars.insert(name.name.clone());
             }
-            Stmt::If { then_block, else_block, .. } => {
+            Stmt::If {
+                then_block,
+                else_block,
+                ..
+            } => {
                 self.collect_reassigned_vars(then_block);
                 if let Some(else_branch) = else_block {
                     match else_branch {
-                        sage_parser::ElseBranch::Block(block) => self.collect_reassigned_vars(block),
-                        sage_parser::ElseBranch::ElseIf(stmt) => self.collect_reassigned_vars_stmt(stmt),
+                        sage_parser::ElseBranch::Block(block) => {
+                            self.collect_reassigned_vars(block)
+                        }
+                        sage_parser::ElseBranch::ElseIf(stmt) => {
+                            self.collect_reassigned_vars_stmt(stmt)
+                        }
                     }
                 }
             }
@@ -209,7 +217,11 @@ impl Generator {
         // Entry point (required for executables)
         if let Some(run_agent) = &program.run_agent {
             // Find the entry agent
-            if let Some(agent) = program.agents.iter().find(|a| a.name.name == run_agent.name) {
+            if let Some(agent) = program
+                .agents
+                .iter()
+                .find(|a| a.name.name == run_agent.name)
+            {
                 self.generate_main(agent);
             }
         }
@@ -456,7 +468,8 @@ serde_json = "1"
 
         // Generate mock tool registry if there are mock tools
         if !mock_tools.is_empty() {
-            self.emit.writeln("let _mock_tools = MockToolRegistry::new();");
+            self.emit
+                .writeln("let _mock_tools = MockToolRegistry::new();");
             for (tool_name, fn_name, value) in &mock_tools {
                 self.emit.write("_mock_tools.register(\"");
                 self.emit.write(tool_name);
@@ -723,7 +736,9 @@ serde_json = "1"
                     self.generate_expr(&args[0]);
                 }
                 self.emit.writeln(";");
-                self.emit.writeln("assert!(result.is_err(), \"Expected operation to fail but it succeeded\");");
+                self.emit.writeln(
+                    "assert!(result.is_err(), \"Expected operation to fail but it succeeded\");",
+                );
                 self.emit.dedent();
                 self.emit.writeln("}");
             }
@@ -745,13 +760,7 @@ serde_json = "1"
     fn sanitize_test_name(&self, name: &str) -> String {
         // Convert test name to valid Rust identifier
         name.chars()
-            .map(|c| {
-                if c.is_alphanumeric() {
-                    c
-                } else {
-                    '_'
-                }
-            })
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
             .collect::<String>()
             .to_lowercase()
     }
@@ -779,7 +788,8 @@ serde_json = "1"
             } = &const_decl.value
             {
                 self.emit.write("\"");
-                self.emit.write(&s.replace('\\', "\\\\").replace('"', "\\\""));
+                self.emit
+                    .write(&s.replace('\\', "\\\\").replace('"', "\\\""));
                 self.emit.write("\"");
             } else {
                 self.generate_expr(&const_decl.value);
@@ -794,10 +804,26 @@ serde_json = "1"
         if enum_decl.is_pub {
             self.emit.write("pub ");
         }
-        self.emit
-            .writeln("#[derive(Debug, Clone, Copy, PartialEq, Eq)]");
+        // Generic enums can't be Copy since type params may not be Copy
+        if enum_decl.type_params.is_empty() {
+            self.emit
+                .writeln("#[derive(Debug, Clone, Copy, PartialEq, Eq)]");
+        } else {
+            self.emit.writeln("#[derive(Debug, Clone, PartialEq, Eq)]");
+        }
         self.emit.write("enum ");
         self.emit.write(&enum_decl.name.name);
+        // RFC-0015: Emit type parameters
+        if !enum_decl.type_params.is_empty() {
+            self.emit.write("<");
+            for (i, param) in enum_decl.type_params.iter().enumerate() {
+                if i > 0 {
+                    self.emit.write(", ");
+                }
+                self.emit.write(&param.name);
+            }
+            self.emit.write(">");
+        }
         self.emit.writeln(" {");
         self.emit.indent();
         for variant in &enum_decl.variants {
@@ -820,6 +846,17 @@ serde_json = "1"
         self.emit.writeln("#[derive(Debug, Clone)]");
         self.emit.write("struct ");
         self.emit.write(&record.name.name);
+        // RFC-0015: Emit type parameters
+        if !record.type_params.is_empty() {
+            self.emit.write("<");
+            for (i, param) in record.type_params.iter().enumerate() {
+                if i > 0 {
+                    self.emit.write(", ");
+                }
+                self.emit.write(&param.name);
+            }
+            self.emit.write(">");
+        }
         self.emit.writeln(" {");
         self.emit.indent();
         for field in &record.fields {
@@ -839,6 +876,17 @@ serde_json = "1"
         }
         self.emit.write("fn ");
         self.emit.write(&func.name.name);
+        // RFC-0015: Emit type parameters
+        if !func.type_params.is_empty() {
+            self.emit.write("<");
+            for (i, param) in func.type_params.iter().enumerate() {
+                if i > 0 {
+                    self.emit.write(", ");
+                }
+                self.emit.write(&param.name);
+            }
+            self.emit.write(">");
+        }
         self.emit.write("(");
 
         for (i, param) in func.params.iter().enumerate() {
@@ -956,8 +1004,7 @@ serde_json = "1"
 
                 // on stop handler - cleanup before termination
                 EventKind::Stop => {
-                    self.emit
-                        .writeln("async fn on_stop(&self) {");
+                    self.emit.writeln("async fn on_stop(&self) {");
                     self.emit.indent();
                     self.generate_block_contents(&handler.body);
                     self.emit.dedent();
@@ -1037,7 +1084,8 @@ serde_json = "1"
         self.emit.dedent();
         self.emit.writeln("};");
         self.emit.writeln("#[cfg(not(unix))]");
-        self.emit.writeln("let terminate = std::future::pending::<()>();");
+        self.emit
+            .writeln("let terminate = std::future::pending::<()>();");
         self.emit.writeln("");
 
         self.emit
@@ -1053,7 +1101,8 @@ serde_json = "1"
                 .writeln("let result = match agent.on_start(&mut ctx).await {");
             self.emit.indent();
             self.emit.writeln("Ok(result) => Ok(result),");
-            self.emit.writeln("Err(e) => agent.on_error(e, &mut ctx).await,");
+            self.emit
+                .writeln("Err(e) => agent.on_error(e, &mut ctx).await,");
             self.emit.dedent();
             self.emit.writeln("};");
         } else {
@@ -1078,13 +1127,15 @@ serde_json = "1"
         self.emit.writeln("result = handle.result() => result?,");
         self.emit.writeln("_ = ctrl_c => {");
         self.emit.indent();
-        self.emit.writeln("eprintln!(\"\\nReceived interrupt signal, shutting down...\");");
+        self.emit
+            .writeln("eprintln!(\"\\nReceived interrupt signal, shutting down...\");");
         self.emit.writeln("std::process::exit(0);");
         self.emit.dedent();
         self.emit.writeln("}");
         self.emit.writeln("_ = terminate => {");
         self.emit.indent();
-        self.emit.writeln("eprintln!(\"Received terminate signal, shutting down...\");");
+        self.emit
+            .writeln("eprintln!(\"Received terminate signal, shutting down...\");");
         self.emit.writeln("std::process::exit(0);");
         self.emit.dedent();
         self.emit.writeln("}");
@@ -1327,7 +1378,12 @@ serde_json = "1"
                 self.generate_expr(operand);
             }
 
-            Expr::Call { name, args, .. } => {
+            Expr::Call {
+                name,
+                type_args,
+                args,
+                ..
+            } => {
                 let fn_name = &name.name;
 
                 // Handle builtins
@@ -1355,11 +1411,13 @@ serde_json = "1"
                     }
                     "lines" => {
                         self.generate_expr(&args[0]);
-                        self.emit.write(".lines().map(str::to_string).collect::<Vec<_>>()");
+                        self.emit
+                            .write(".lines().map(str::to_string).collect::<Vec<_>>()");
                     }
                     "chars" => {
                         self.generate_expr(&args[0]);
-                        self.emit.write(".chars().map(|c| c.to_string()).collect::<Vec<_>>()");
+                        self.emit
+                            .write(".chars().map(|c| c.to_string()).collect::<Vec<_>>()");
                     }
                     "join" => {
                         self.generate_expr(&args[0]);
@@ -1545,7 +1603,8 @@ serde_json = "1"
                         self.generate_expr(&args[0]);
                         self.emit.write("; let __exp = ");
                         self.generate_expr(&args[1]);
-                        self.emit.write("; if __exp < 0 { 0 } else { __base.pow(__exp as u32) } }");
+                        self.emit
+                            .write("; if __exp < 0 { 0 } else { __base.pow(__exp as u32) } }");
                     }
                     "pow_float" => {
                         self.generate_expr(&args[0]);
@@ -1569,11 +1628,13 @@ serde_json = "1"
                     // RFC-0013: Parsing functions
                     "parse_int" => {
                         self.generate_expr(&args[0]);
-                        self.emit.write(".trim().parse::<i64>().map_err(|e| e.to_string())");
+                        self.emit
+                            .write(".trim().parse::<i64>().map_err(|e| e.to_string())");
                     }
                     "parse_float" => {
                         self.generate_expr(&args[0]);
-                        self.emit.write(".trim().parse::<f64>().map_err(|e| e.to_string())");
+                        self.emit
+                            .write(".trim().parse::<f64>().map_err(|e| e.to_string())");
                     }
                     "parse_bool" => {
                         self.emit.write("sage_runtime::stdlib::parse_bool(&");
@@ -1587,7 +1648,8 @@ serde_json = "1"
                     "bool_to_str" => {
                         self.emit.write("if ");
                         self.generate_expr(&args[0]);
-                        self.emit.write(" { \"true\".to_string() } else { \"false\".to_string() }");
+                        self.emit
+                            .write(" { \"true\".to_string() } else { \"false\".to_string() }");
                     }
                     "int_to_str" => {
                         self.emit.write("(");
@@ -1672,7 +1734,8 @@ serde_json = "1"
                     }
                     "flatten" => {
                         self.generate_expr(&args[0]);
-                        self.emit.write(".into_iter().flatten().collect::<Vec<_>>()");
+                        self.emit
+                            .write(".into_iter().flatten().collect::<Vec<_>>()");
                     }
                     "reverse" => {
                         self.emit.write("{ let mut __v = ");
@@ -1680,7 +1743,8 @@ serde_json = "1"
                         self.emit.write("; __v.reverse(); __v }");
                     }
                     "unique" => {
-                        self.emit.write("{ let mut __seen = std::collections::HashSet::new(); ");
+                        self.emit
+                            .write("{ let mut __seen = std::collections::HashSet::new(); ");
                         self.generate_expr(&args[0]);
                         self.emit.write(".into_iter().filter(|__x| __seen.insert(format!(\"{:?}\", __x))).collect::<Vec<_>>() }");
                     }
@@ -1756,7 +1820,8 @@ serde_json = "1"
                         self.generate_expr(&args[0]);
                         self.emit.write(".chunks(");
                         self.generate_expr(&args[1]);
-                        self.emit.write(" as usize).map(|c| c.to_vec()).collect::<Vec<_>>()");
+                        self.emit
+                            .write(" as usize).map(|c| c.to_vec()).collect::<Vec<_>>()");
                     }
                     "pop" => {
                         self.emit.write("{ let mut __v = ");
@@ -1836,21 +1901,24 @@ serde_json = "1"
                     "read_file" => {
                         self.emit.write("sage_runtime::stdlib::read_file(&");
                         self.generate_expr(&args[0]);
-                        self.emit.write(").map_err(sage_runtime::SageError::agent)?");
+                        self.emit
+                            .write(").map_err(sage_runtime::SageError::agent)?");
                     }
                     "write_file" => {
                         self.emit.write("sage_runtime::stdlib::write_file(&");
                         self.generate_expr(&args[0]);
                         self.emit.write(", &");
                         self.generate_expr(&args[1]);
-                        self.emit.write(").map_err(sage_runtime::SageError::agent)?");
+                        self.emit
+                            .write(").map_err(sage_runtime::SageError::agent)?");
                     }
                     "append_file" => {
                         self.emit.write("sage_runtime::stdlib::append_file(&");
                         self.generate_expr(&args[0]);
                         self.emit.write(", &");
                         self.generate_expr(&args[1]);
-                        self.emit.write(").map_err(sage_runtime::SageError::agent)?");
+                        self.emit
+                            .write(").map_err(sage_runtime::SageError::agent)?");
                     }
                     "file_exists" => {
                         self.emit.write("sage_runtime::stdlib::file_exists(&");
@@ -1860,17 +1928,20 @@ serde_json = "1"
                     "delete_file" => {
                         self.emit.write("sage_runtime::stdlib::delete_file(&");
                         self.generate_expr(&args[0]);
-                        self.emit.write(").map_err(sage_runtime::SageError::agent)?");
+                        self.emit
+                            .write(").map_err(sage_runtime::SageError::agent)?");
                     }
                     "list_dir" => {
                         self.emit.write("sage_runtime::stdlib::list_dir(&");
                         self.generate_expr(&args[0]);
-                        self.emit.write(").map_err(sage_runtime::SageError::agent)?");
+                        self.emit
+                            .write(").map_err(sage_runtime::SageError::agent)?");
                     }
                     "make_dir" => {
                         self.emit.write("sage_runtime::stdlib::make_dir(&");
                         self.generate_expr(&args[0]);
-                        self.emit.write(").map_err(sage_runtime::SageError::agent)?");
+                        self.emit
+                            .write(").map_err(sage_runtime::SageError::agent)?");
                     }
                     "read_line" => {
                         self.emit.write("sage_runtime::stdlib::read_line().map_err(sage_runtime::SageError::agent)?");
@@ -1894,7 +1965,8 @@ serde_json = "1"
                         self.emit.write("sage_runtime::stdlib::now_s()");
                     }
                     "sleep_ms" => {
-                        self.emit.write("tokio::time::sleep(std::time::Duration::from_millis(");
+                        self.emit
+                            .write("tokio::time::sleep(std::time::Duration::from_millis(");
                         self.generate_expr(&args[0]);
                         self.emit.write(" as u64)).await");
                     }
@@ -1910,7 +1982,8 @@ serde_json = "1"
                         self.generate_expr(&args[0]);
                         self.emit.write(", &");
                         self.generate_expr(&args[1]);
-                        self.emit.write(").map_err(sage_runtime::SageError::agent)?");
+                        self.emit
+                            .write(").map_err(sage_runtime::SageError::agent)?");
                     }
 
                     // =========================================================================
@@ -1919,7 +1992,8 @@ serde_json = "1"
                     "json_parse" => {
                         self.emit.write("sage_runtime::stdlib::json_parse(&");
                         self.generate_expr(&args[0]);
-                        self.emit.write(").map_err(sage_runtime::SageError::agent)?");
+                        self.emit
+                            .write(").map_err(sage_runtime::SageError::agent)?");
                     }
                     "json_get" => {
                         self.emit.write("sage_runtime::stdlib::json_get(&");
@@ -1957,7 +2031,8 @@ serde_json = "1"
                         self.emit.write(")");
                     }
                     "json_stringify" => {
-                        self.emit.write("sage_runtime::stdlib::json_stringify_string(&");
+                        self.emit
+                            .write("sage_runtime::stdlib::json_stringify_string(&");
                         self.generate_expr(&args[0]);
                         self.emit.write(".to_string())");
                     }
@@ -1965,6 +2040,17 @@ serde_json = "1"
                     _ => {
                         // User-defined function call
                         self.emit.write(fn_name);
+                        // RFC-0015: Emit type arguments if provided (turbofish syntax)
+                        if !type_args.is_empty() {
+                            self.emit.write("::<");
+                            for (i, arg) in type_args.iter().enumerate() {
+                                if i > 0 {
+                                    self.emit.write(", ");
+                                }
+                                self.emit_type(arg);
+                            }
+                            self.emit.write(">");
+                        }
                         self.emit.write("(");
                         for (i, arg) in args.iter().enumerate() {
                             if i > 0 {
@@ -2025,7 +2111,8 @@ serde_json = "1"
 
             Expr::Spawn { agent, fields, .. } => {
                 let has_error_handler = self.agents_with_error_handlers.contains(&agent.name);
-                self.emit.write("sage_runtime::spawn(|mut ctx| async move { ");
+                self.emit
+                    .write("sage_runtime::spawn(|mut ctx| async move { ");
                 self.emit.write("let agent = ");
                 self.emit.write(&agent.name);
                 if fields.is_empty() {
@@ -2046,7 +2133,8 @@ serde_json = "1"
                     // Wire up error handler like in main
                     self.emit.write("match agent.on_start(&mut ctx).await { ");
                     self.emit.write("Ok(result) => Ok(result), ");
-                    self.emit.write("Err(e) => agent.on_error(e, &mut ctx).await } })");
+                    self.emit
+                        .write("Err(e) => agent.on_error(e, &mut ctx).await } })");
                 } else {
                     self.emit.write("agent.on_start(&mut ctx).await })");
                 }
@@ -2179,7 +2267,8 @@ serde_json = "1"
             Expr::Fail { error, .. } => {
                 // Generate: return Err(SageError::agent(msg))
                 // TODO: Use SageError::user once runtime 0.6.1 is published
-                self.emit.write("return Err(sage_runtime::SageError::agent(");
+                self.emit
+                    .write("return Err(sage_runtime::SageError::agent(");
                 self.generate_expr(error);
                 self.emit.write("))");
             }
@@ -2317,11 +2406,23 @@ serde_json = "1"
 
             Expr::VariantConstruct {
                 enum_name,
+                type_args,
                 variant,
                 payload,
                 ..
             } => {
                 self.emit.write(&enum_name.name);
+                // RFC-0015: Emit type arguments if provided (turbofish syntax)
+                if !type_args.is_empty() {
+                    self.emit.write("::<");
+                    for (i, arg) in type_args.iter().enumerate() {
+                        if i > 0 {
+                            self.emit.write(", ");
+                        }
+                        self.emit_type(arg);
+                    }
+                    self.emit.write(">");
+                }
                 self.emit.write("::");
                 self.emit.write(&variant.name);
                 if let Some(payload_expr) = payload {
@@ -2492,8 +2593,18 @@ serde_json = "1"
                 self.emit.write(&agent_name.name);
                 self.emit.write("Output>");
             }
-            TypeExpr::Named(name) => {
+            TypeExpr::Named(name, type_args) => {
                 self.emit.write(&name.name);
+                if !type_args.is_empty() {
+                    self.emit.write("<");
+                    for (i, arg) in type_args.iter().enumerate() {
+                        if i > 0 {
+                            self.emit.write(", ");
+                        }
+                        self.emit_type(arg);
+                    }
+                    self.emit.write(">");
+                }
             }
 
             // RFC-0007: Error handling
@@ -2586,7 +2697,8 @@ serde_json = "1"
 
     fn find_emit_type(&self, block: &Block) -> Option<String> {
         // Track variable assignments to resolve emit(var) types
-        let mut var_types: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut var_types: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
 
         for stmt in &block.stmts {
             // Track let bindings

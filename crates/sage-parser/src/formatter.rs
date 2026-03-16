@@ -387,7 +387,10 @@ impl Formatter {
             EventKind::Start => {
                 self.write("on start {\n");
             }
-            EventKind::Message { param_name, param_ty } => {
+            EventKind::Message {
+                param_name,
+                param_ty,
+            } => {
                 self.write("on message(");
                 self.write(&param_name.name);
                 self.write(": ");
@@ -434,7 +437,9 @@ impl Formatter {
 
     fn format_stmt(&mut self, stmt: &Stmt) {
         match stmt {
-            Stmt::Let { name, ty, value, .. } => {
+            Stmt::Let {
+                name, ty, value, ..
+            } => {
                 self.write_indent();
                 self.write("let ");
                 self.write(&name.name);
@@ -446,7 +451,9 @@ impl Formatter {
                 self.format_expr(value);
                 self.write(";\n");
             }
-            Stmt::LetTuple { names, ty, value, .. } => {
+            Stmt::LetTuple {
+                names, ty, value, ..
+            } => {
                 self.write_indent();
                 self.write("let (");
                 for (i, name) in names.iter().enumerate() {
@@ -485,7 +492,9 @@ impl Formatter {
                 }
                 self.write(";\n");
             }
-            Stmt::While { condition, body, .. } => {
+            Stmt::While {
+                condition, body, ..
+            } => {
                 self.write_indent();
                 self.write("while ");
                 self.format_expr(condition);
@@ -495,7 +504,12 @@ impl Formatter {
                 self.dedent();
                 self.writeln("}");
             }
-            Stmt::For { pattern, iter, body, .. } => {
+            Stmt::For {
+                pattern,
+                iter,
+                body,
+                ..
+            } => {
                 self.write_indent();
                 self.write("for ");
                 self.format_pattern(pattern);
@@ -678,7 +692,9 @@ impl Formatter {
         match expr {
             Expr::Literal { value, .. } => self.format_literal(value),
             Expr::Var { name, .. } => self.write(&name.name),
-            Expr::Binary { left, op, right, .. } => {
+            Expr::Binary {
+                left, op, right, ..
+            } => {
                 self.format_expr(left);
                 self.write(" ");
                 self.write(&op.to_string());
@@ -789,7 +805,9 @@ impl Formatter {
                     self.write(")");
                 }
             }
-            Expr::Match { scrutinee, arms, .. } => {
+            Expr::Match {
+                scrutinee, arms, ..
+            } => {
                 self.write("match ");
                 self.format_expr(scrutinee);
                 self.write(" {\n");
@@ -855,7 +873,9 @@ impl Formatter {
                     self.write("}");
                 }
             }
-            Expr::Await { handle, timeout, .. } => {
+            Expr::Await {
+                handle, timeout, ..
+            } => {
                 self.write("await ");
                 self.format_expr(handle);
                 if let Some(t) = timeout {
@@ -869,7 +889,9 @@ impl Formatter {
                 self.format_expr(value);
                 self.write(")");
             }
-            Expr::Send { handle, message, .. } => {
+            Expr::Send {
+                handle, message, ..
+            } => {
                 self.write("send(");
                 self.format_expr(handle);
                 self.write(", ");
@@ -1033,7 +1055,19 @@ impl Formatter {
             TypeExpr::String => self.write("String"),
             TypeExpr::Unit => self.write("Unit"),
             TypeExpr::Error => self.write("Error"),
-            TypeExpr::Named(name) => self.write(&name.name),
+            TypeExpr::Named(name, type_args) => {
+                self.write(&name.name);
+                if !type_args.is_empty() {
+                    self.write("<");
+                    for (i, arg) in type_args.iter().enumerate() {
+                        if i > 0 {
+                            self.write(", ");
+                        }
+                        self.format_type(arg);
+                    }
+                    self.write(">");
+                }
+            }
             TypeExpr::List(inner) => {
                 self.write("List<");
                 self.format_type(inner);

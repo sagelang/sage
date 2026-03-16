@@ -7,9 +7,7 @@ pub fn server_capabilities() -> ServerCapabilities {
     ServerCapabilities {
         // Full document sync: client sends the entire file on every change.
         // Incremental sync is a future optimisation.
-        text_document_sync: Some(TextDocumentSyncCapability::Kind(
-            TextDocumentSyncKind::FULL,
-        )),
+        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
         // All other capabilities disabled for Phase 1
         ..Default::default()
     }

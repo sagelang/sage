@@ -173,7 +173,11 @@ struct Resolver<'a> {
 }
 
 impl<'a> Resolver<'a> {
-    fn new(cache: PackageCache, existing_lock: Option<&'a LockFile>, project_root: &'a Path) -> Self {
+    fn new(
+        cache: PackageCache,
+        existing_lock: Option<&'a LockFile>,
+        project_root: &'a Path,
+    ) -> Self {
         Self {
             cache,
             resolved: ResolvedPackagesMap::new(),

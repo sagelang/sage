@@ -1143,7 +1143,10 @@ run Main;
 
         let (_, result) = check_source(source);
         assert!(!result.errors.is_empty());
-        assert!(matches!(result.errors[0], CheckError::UnhandledError { .. }));
+        assert!(matches!(
+            result.errors[0],
+            CheckError::UnhandledError { .. }
+        ));
     }
 
     #[test]
@@ -1168,7 +1171,10 @@ run Main;
 
         let (_, result) = check_source(source);
         assert!(!result.errors.is_empty());
-        assert!(matches!(result.errors[0], CheckError::UnhandledError { .. }));
+        assert!(matches!(
+            result.errors[0],
+            CheckError::UnhandledError { .. }
+        ));
     }
 
     #[test]
@@ -1226,7 +1232,10 @@ run Main;
 
         let (_, result) = check_source(source);
         assert!(!result.errors.is_empty());
-        assert!(matches!(result.errors[0], CheckError::UnhandledError { .. }));
+        assert!(matches!(
+            result.errors[0],
+            CheckError::UnhandledError { .. }
+        ));
     }
 
     #[test]

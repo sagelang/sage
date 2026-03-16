@@ -31,6 +31,8 @@ pub struct AgentInfo {
 pub struct FunctionInfo {
     /// The function's name.
     pub name: String,
+    /// Type parameters for generic functions (e.g., `["T", "U"]` for `fn map<T, U>`).
+    pub type_params: Vec<String>,
     /// Parameter types in order.
     pub params: Vec<(String, Type)>,
     /// Return type.
@@ -72,6 +74,8 @@ impl Default for BuiltinInfo {
 pub struct RecordInfo {
     /// The record's name.
     pub name: String,
+    /// Type parameters for generic records (e.g., `["A", "B"]` for `record Pair<A, B>`).
+    pub type_params: Vec<String>,
     /// Fields declared by this record (name -> type).
     pub fields: HashMap<String, Type>,
     /// Field order (for positional access if needed).
@@ -87,6 +91,8 @@ pub struct RecordInfo {
 pub struct EnumInfo {
     /// The enum's name.
     pub name: String,
+    /// Type parameters for generic enums (e.g., `["T"]` for `enum Tree<T>`).
+    pub type_params: Vec<String>,
     /// Variants with optional payload types.
     pub variants: Vec<(String, Option<Type>)>,
     /// Whether this enum is public.
@@ -384,7 +390,7 @@ impl SymbolTable {
             "map_get",
             BuiltinInfo {
                 name: "map_get",
-                params: None, // Special handling for generics
+                params: None,             // Special handling for generics
                 return_type: Type::Error, // Determined by first arg
                 is_fallible: false,
             },
@@ -1930,35 +1936,77 @@ impl SymbolTable {
 }
 
 /// Convert a syntactic `TypeExpr` to a semantic Type.
+/// This version doesn't handle type parameters - use `resolve_type_with_params` when in a generic context.
 #[must_use]
 pub fn resolve_type(ty: &TypeExpr) -> Type {
+    resolve_type_with_params(ty, &std::collections::HashSet::new())
+}
+
+/// Convert a syntactic `TypeExpr` to a semantic Type, recognizing type parameters in scope.
+/// `type_params` is the set of type parameter names that are currently in scope.
+#[must_use]
+pub fn resolve_type_with_params(
+    ty: &TypeExpr,
+    type_params: &std::collections::HashSet<String>,
+) -> Type {
     match ty {
         TypeExpr::Int => Type::Int,
         TypeExpr::Float => Type::Float,
         TypeExpr::Bool => Type::Bool,
         TypeExpr::String => Type::String,
         TypeExpr::Unit => Type::Unit,
-        TypeExpr::List(inner) => Type::List(Box::new(resolve_type(inner))),
-        TypeExpr::Option(inner) => Type::Option(Box::new(resolve_type(inner))),
-        TypeExpr::Inferred(inner) => Type::Inferred(Box::new(resolve_type(inner))),
+        TypeExpr::List(inner) => {
+            Type::List(Box::new(resolve_type_with_params(inner, type_params)))
+        }
+        TypeExpr::Option(inner) => {
+            Type::Option(Box::new(resolve_type_with_params(inner, type_params)))
+        }
+        TypeExpr::Inferred(inner) => {
+            Type::Inferred(Box::new(resolve_type_with_params(inner, type_params)))
+        }
         TypeExpr::Agent(ident) => Type::Agent(ident.name.clone()),
-        TypeExpr::Named(ident) => {
-            // Named types can be records, enums, or agents
-            // We return Type::Named and let the checker validate
-            Type::Named(ident.name.clone())
+        TypeExpr::Named(ident, type_args) => {
+            let name = &ident.name;
+
+            // Check if this is a type parameter reference
+            if type_params.contains(name) {
+                return Type::TypeParam(name.clone());
+            }
+
+            // If there are type arguments, create a Generic type
+            if !type_args.is_empty() {
+                let resolved_args: Vec<Type> = type_args
+                    .iter()
+                    .map(|arg| resolve_type_with_params(arg, type_params))
+                    .collect();
+                return Type::Generic(name.clone(), resolved_args);
+            }
+
+            // Otherwise, it's a regular named type
+            Type::Named(name.clone())
         }
         TypeExpr::Fn(params, ret) => {
-            let param_types = params.iter().map(resolve_type).collect();
-            let ret_type = Box::new(resolve_type(ret));
+            let param_types = params
+                .iter()
+                .map(|p| resolve_type_with_params(p, type_params))
+                .collect();
+            let ret_type = Box::new(resolve_type_with_params(ret, type_params));
             Type::Fn(param_types, ret_type)
         }
-        TypeExpr::Map(key, value) => {
-            Type::Map(Box::new(resolve_type(key)), Box::new(resolve_type(value)))
-        }
-        TypeExpr::Tuple(elems) => Type::Tuple(elems.iter().map(resolve_type).collect()),
-        TypeExpr::Result(ok, err) => {
-            Type::Result(Box::new(resolve_type(ok)), Box::new(resolve_type(err)))
-        }
+        TypeExpr::Map(key, value) => Type::Map(
+            Box::new(resolve_type_with_params(key, type_params)),
+            Box::new(resolve_type_with_params(value, type_params)),
+        ),
+        TypeExpr::Tuple(elems) => Type::Tuple(
+            elems
+                .iter()
+                .map(|e| resolve_type_with_params(e, type_params))
+                .collect(),
+        ),
+        TypeExpr::Result(ok, err) => Type::Result(
+            Box::new(resolve_type_with_params(ok, type_params)),
+            Box::new(resolve_type_with_params(err, type_params)),
+        ),
 
         // RFC-0007: Error type (represented as named type for simplicity)
         TypeExpr::Error => Type::Named("Error".to_string()),

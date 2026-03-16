@@ -38,8 +38,8 @@ pub fn delete_file(path: &str) -> Result<(), String> {
 
 /// List the contents of a directory.
 pub fn list_dir(path: &str) -> Result<Vec<String>, String> {
-    let entries = fs::read_dir(path)
-        .map_err(|e| format!("failed to read directory '{}': {}", path, e))?;
+    let entries =
+        fs::read_dir(path).map_err(|e| format!("failed to read directory '{}': {}", path, e))?;
     let mut result = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|e| format!("failed to read directory entry: {}", e))?;

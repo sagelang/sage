@@ -24,7 +24,8 @@ impl Backend {
     /// Handle a file change (open or modify).
     async fn on_file_change(&self, uri: Url, text: String, version: i32) {
         let diagnostics = crate::analysis::analyse(&text);
-        self.store.update(uri.clone(), text, diagnostics.clone(), version);
+        self.store
+            .update(uri.clone(), text, diagnostics.clone(), version);
         self.client
             .publish_diagnostics(uri, diagnostics, Some(version))
             .await;

@@ -4,14 +4,14 @@
 
 use crate::ast::{
     AgentDecl, BeliefDecl, BinOp, Block, ClosureParam, ConstDecl, ElseBranch, EnumDecl, EventKind,
-    Expr, FieldInit, FnDecl, HandlerDecl, Literal, MapEntry, MatchArm, MockValue,
-    ModDecl, Param, Pattern, Program, RecordDecl, RecordField, Stmt, StringPart, StringTemplate,
-    TestDecl, ToolDecl, ToolFnDecl, UnaryOp, UseDecl, UseKind,
+    Expr, FieldInit, FnDecl, HandlerDecl, Literal, MapEntry, MatchArm, MockValue, ModDecl, Param,
+    Pattern, Program, RecordDecl, RecordField, Stmt, StringPart, StringTemplate, TestDecl,
+    ToolDecl, ToolFnDecl, UnaryOp, UseDecl, UseKind,
 };
+use crate::{Ident, Span, TypeExpr};
+use crate::{Spanned, Token};
 use chumsky::prelude::*;
 use chumsky::BoxedParser;
-use crate::{Spanned, Token};
-use crate::{Ident, Span, TypeExpr};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -255,6 +255,19 @@ fn use_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseErr
 
 /// Parser for a record declaration: `record Point { x: Int, y: Int }`
 #[allow(clippy::needless_pass_by_value)]
+/// Parser for type parameters: `<T>`, `<A, B>`, `<T, U, V>`, etc.
+/// Returns empty Vec if no type parameters present.
+fn type_params_parser(
+    source: Arc<str>,
+) -> impl Parser<Token, Vec<Ident>, Error = ParseError> + Clone {
+    ident_token_parser(source)
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .delimited_by(just(Token::Lt), just(Token::Gt))
+        .or_not()
+        .map(|params| params.unwrap_or_default())
+}
+
 fn record_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseError> {
     let src = source.clone();
     let src2 = source.clone();
@@ -273,20 +286,24 @@ fn record_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = Parse
         .or_not()
         .then_ignore(just(Token::KwRecord))
         .then(ident_token_parser(src2.clone()))
+        .then(type_params_parser(src2.clone()))
         .then(
             field
                 .separated_by(just(Token::Comma))
                 .allow_trailing()
                 .delimited_by(just(Token::LBrace), just(Token::RBrace)),
         )
-        .map_with_span(move |((is_pub, name), fields), span: Range<usize>| {
-            TopLevel::Record(RecordDecl {
-                is_pub: is_pub.is_some(),
-                name,
-                fields,
-                span: make_span(&src2, span),
-            })
-        })
+        .map_with_span(
+            move |(((is_pub, name), type_params), fields), span: Range<usize>| {
+                TopLevel::Record(RecordDecl {
+                    is_pub: is_pub.is_some(),
+                    name,
+                    type_params,
+                    fields,
+                    span: make_span(&src2, span),
+                })
+            },
+        )
 }
 
 /// Parser for an enum declaration: `enum Status { Active, Pending, Done }` or `enum Result { Ok(T), Err(E) }`
@@ -316,20 +333,24 @@ fn enum_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseEr
         .or_not()
         .then_ignore(just(Token::KwEnum))
         .then(ident_token_parser(src3.clone()))
+        .then(type_params_parser(src3.clone()))
         .then(
             variant
                 .separated_by(just(Token::Comma))
                 .allow_trailing()
                 .delimited_by(just(Token::LBrace), just(Token::RBrace)),
         )
-        .map_with_span(move |((is_pub, name), variants), span: Range<usize>| {
-            TopLevel::Enum(EnumDecl {
-                is_pub: is_pub.is_some(),
-                name,
-                variants,
-                span: make_span(&src2, span),
-            })
-        })
+        .map_with_span(
+            move |(((is_pub, name), type_params), variants), span: Range<usize>| {
+                TopLevel::Enum(EnumDecl {
+                    is_pub: is_pub.is_some(),
+                    name,
+                    type_params,
+                    variants,
+                    span: make_span(&src2, span),
+                })
+            },
+        )
 }
 
 /// Parser for a const declaration: `const MAX_RETRIES: Int = 3`
@@ -390,12 +411,14 @@ fn tool_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseEr
         .then(params)
         .then_ignore(just(Token::Arrow))
         .then(type_parser(src2.clone()))
-        .map_with_span(move |((name, params), return_ty), span: Range<usize>| ToolFnDecl {
-            name,
-            params,
-            return_ty,
-            span: make_span(&src2, span),
-        });
+        .map_with_span(
+            move |((name, params), return_ty), span: Range<usize>| ToolFnDecl {
+                name,
+                params,
+                return_ty,
+                span: make_span(&src2, span),
+            },
+        );
 
     just(Token::KwPub)
         .or_not()
@@ -441,7 +464,7 @@ fn test_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseEr
     .map_with_span(move |_, span: Range<usize>| {
         // Extract the string content without quotes (handles both " and ')
         let s = &src[span.clone()];
-        s[1..s.len()-1].to_string()
+        s[1..s.len() - 1].to_string()
     });
 
     // Test body - use the statement parser
@@ -593,17 +616,19 @@ fn fn_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseErro
         .or_not()
         .then_ignore(just(Token::KwFn))
         .then(ident_token_parser(src2.clone()))
+        .then(type_params_parser(src2.clone()))
         .then(params)
         .then_ignore(just(Token::Arrow))
         .then(type_parser(src2.clone()))
         .then(just(Token::KwFails).or_not())
         .then(block_parser(src2))
         .map_with_span(
-            move |(((((is_pub, name), params), return_ty), is_fallible), body),
+            move |((((((is_pub, name), type_params), params), return_ty), is_fallible), body),
                   span: Range<usize>| {
                 TopLevel::Function(FnDecl {
                     is_pub: is_pub.is_some(),
                     name,
+                    type_params,
                     params,
                     return_ty,
                     is_fallible: is_fallible.is_some(),
@@ -678,12 +703,14 @@ fn stmt_parser(
         .then_ignore(just(Token::Eq))
         .then(expr_parser(src10.clone()))
         .then_ignore(just(Token::Semicolon))
-        .map_with_span(move |((names, ty), value), span: Range<usize>| Stmt::LetTuple {
-            names,
-            ty,
-            value,
-            span: make_span(&src10, span),
-        });
+        .map_with_span(
+            move |((names, ty), value), span: Range<usize>| Stmt::LetTuple {
+                names,
+                ty,
+                value,
+                span: make_span(&src10, span),
+            },
+        );
 
     let let_stmt = just(Token::KwLet)
         .ignore_then(ident_token_parser(src.clone()))
@@ -741,12 +768,14 @@ fn stmt_parser(
         .then_ignore(just(Token::KwIn))
         .then(expr_parser(src4.clone()))
         .then(block.clone())
-        .map_with_span(move |((pattern, iter), body), span: Range<usize>| Stmt::For {
-            pattern,
-            iter,
-            body,
-            span: make_span(&src4, span),
-        });
+        .map_with_span(
+            move |((pattern, iter), body), span: Range<usize>| Stmt::For {
+                pattern,
+                iter,
+                body,
+                span: make_span(&src4, span),
+            },
+        );
 
     let while_stmt = just(Token::KwWhile)
         .ignore_then(expr_parser(src7.clone()))
@@ -810,12 +839,14 @@ fn stmt_parser(
             }
         }))
         .then_ignore(just(Token::Semicolon))
-        .map_with_span(move |((tool_name, fn_name), value), span: Range<usize>| Stmt::MockTool {
-            tool_name,
-            fn_name,
-            value,
-            span: make_span(&src15, span),
-        });
+        .map_with_span(
+            move |((tool_name, fn_name), value), span: Range<usize>| Stmt::MockTool {
+                tool_name,
+                fn_name,
+                value,
+                span: make_span(&src15, span),
+            },
+        );
 
     let assign_stmt = ident_token_parser(src5.clone())
         .then_ignore(just(Token::Eq))
@@ -1033,8 +1064,20 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
                 }
             });
 
-        // function call: name(args)
+        // Turbofish type arguments: ::<Int, String>
+        let turbofish = just(Token::ColonColon)
+            .ignore_then(
+                type_parser(src.clone())
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing()
+                    .delimited_by(just(Token::Lt), just(Token::Gt)),
+            )
+            .or_not()
+            .map(|args| args.unwrap_or_default());
+
+        // function call: name(args) or name::<T, U>(args)
         let call_expr = ident_token_parser(src.clone())
+            .then(turbofish.clone())
             .then(
                 expr.clone()
                     .separated_by(just(Token::Comma))
@@ -1043,8 +1086,9 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
             )
             .map_with_span({
                 let src = src.clone();
-                move |(name, args), span: Range<usize>| Expr::Call {
+                move |((name, type_args), args), span: Range<usize>| Expr::Call {
                     name,
+                    type_args,
                     args,
                     span: make_span(&src, span),
                 }
@@ -1122,7 +1166,19 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
                 }
             });
 
+        // Turbofish for record construction: Pair::<Int, String> { ... }
+        let record_turbofish = just(Token::ColonColon)
+            .ignore_then(
+                type_parser(src.clone())
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing()
+                    .delimited_by(just(Token::Lt), just(Token::Gt)),
+            )
+            .or_not()
+            .map(|args| args.unwrap_or_default());
+
         let record_construct = ident_token_parser(src.clone())
+            .then(record_turbofish)
             .then_ignore(just(Token::LBrace))
             .then(
                 record_field_init
@@ -1132,8 +1188,9 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
             .then_ignore(just(Token::RBrace))
             .map_with_span({
                 let src = src.clone();
-                move |(name, fields), span: Range<usize>| Expr::RecordConstruct {
+                move |((name, type_args), fields), span: Range<usize>| Expr::RecordConstruct {
                     name,
+                    type_args,
                     fields,
                     span: make_span(&src, span),
                 }
@@ -1141,7 +1198,11 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
 
         // Closure parameter: `name` or `name: Type`
         let closure_param = ident_token_parser(src.clone())
-            .then(just(Token::Colon).ignore_then(type_parser(src.clone())).or_not())
+            .then(
+                just(Token::Colon)
+                    .ignore_then(type_parser(src.clone()))
+                    .or_not(),
+            )
             .map_with_span({
                 let src = src.clone();
                 move |(name, ty), span: Range<usize>| ClosureParam {
@@ -1153,16 +1214,14 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
 
         // Closure expression: |params| body
         // Handle both `|| expr` (empty params using Or token) and `|params| expr`
-        let closure_empty = just(Token::Or)
-            .ignore_then(expr.clone())
-            .map_with_span({
-                let src = src.clone();
-                move |body, span: Range<usize>| Expr::Closure {
-                    params: vec![],
-                    body: Box::new(body),
-                    span: make_span(&src, span),
-                }
-            });
+        let closure_empty = just(Token::Or).ignore_then(expr.clone()).map_with_span({
+            let src = src.clone();
+            move |body, span: Range<usize>| Expr::Closure {
+                params: vec![],
+                body: Box::new(body),
+                span: make_span(&src, span),
+            }
+        });
 
         let closure_with_params = just(Token::Pipe)
             .ignore_then(
@@ -1210,8 +1269,20 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
                 }
             });
 
-        // Enum variant construction: EnumName::Variant or EnumName::Variant(payload)
+        // Enum variant construction: EnumName::Variant or Either::<L, R>::Left(payload)
+        // Turbofish comes between enum name and ::Variant
+        let variant_turbofish = just(Token::ColonColon)
+            .ignore_then(
+                type_parser(src.clone())
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing()
+                    .delimited_by(just(Token::Lt), just(Token::Gt)),
+            )
+            .or_not()
+            .map(|args| args.unwrap_or_default());
+
         let variant_construct = ident_token_parser(src.clone())
+            .then(variant_turbofish)
             .then_ignore(just(Token::ColonColon))
             .then(ident_token_parser(src.clone()))
             .then(
@@ -1221,11 +1292,14 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
             )
             .map_with_span({
                 let src = src.clone();
-                move |((enum_name, variant), payload), span: Range<usize>| Expr::VariantConstruct {
-                    enum_name,
-                    variant,
-                    payload: payload.map(Box::new),
-                    span: make_span(&src, span),
+                move |(((enum_name, type_args), variant), payload), span: Range<usize>| {
+                    Expr::VariantConstruct {
+                        enum_name,
+                        type_args,
+                        variant,
+                        payload: payload.map(Box::new),
+                        span: make_span(&src, span),
+                    }
                 }
             });
 
@@ -1680,7 +1754,16 @@ fn type_parser(source: Arc<str>) -> impl Parser<Token, TypeExpr, Error = ParseEr
             .then_ignore(just(Token::Gt))
             .map(TypeExpr::Agent);
 
-        let named_ty = ident_token_parser(src.clone()).map(TypeExpr::Named);
+        // Named type with optional type arguments: MyRecord, Pair<Int, String>
+        let named_ty = ident_token_parser(src.clone())
+            .then(
+                ty.clone()
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing()
+                    .delimited_by(just(Token::Lt), just(Token::Gt))
+                    .or_not(),
+            )
+            .map(|(name, type_args)| TypeExpr::Named(name, type_args.unwrap_or_default()));
 
         // Function type: Fn(A, B) -> C
         let fn_ty = just(Token::TyFn)
@@ -1875,7 +1958,9 @@ fn pattern_parser(source: Arc<str>) -> impl Parser<Token, Pattern, Error = Parse
                 move |(name, payload), span: Range<usize>| {
                     // If it looks like a variant (starts with uppercase), treat as variant
                     // Otherwise treat as binding (only if no payload)
-                    if name.name.chars().next().is_some_and(|c| c.is_uppercase()) || payload.is_some() {
+                    if name.name.chars().next().is_some_and(|c| c.is_uppercase())
+                        || payload.is_some()
+                    {
                         Pattern::Variant {
                             enum_name: None,
                             variant: name,
@@ -2050,7 +2135,7 @@ fn parse_string_template(s: &str, span: &Span) -> Vec<StringPart> {
                 // Handle string delimiters (both " and ')
                 if c == '"' || c == '\'' {
                     match string_quote {
-                        None => string_quote = Some(c), // Start of string
+                        None => string_quote = Some(c),           // Start of string
                         Some(q) if q == c => string_quote = None, // End of string
                         Some(_) => {} // Inside different type of string, ignore
                     }
@@ -2153,7 +2238,12 @@ struct InterpExprParser<'a> {
 
 impl<'a> InterpExprParser<'a> {
     fn new(tokens: &'a [crate::Spanned], source: &'a str, span: Span) -> Self {
-        Self { tokens, source, pos: 0, span }
+        Self {
+            tokens,
+            source,
+            pos: 0,
+            span,
+        }
     }
 
     fn current(&self) -> Option<&Token> {
@@ -2161,7 +2251,9 @@ impl<'a> InterpExprParser<'a> {
     }
 
     fn current_text(&self) -> Option<&str> {
-        self.tokens.get(self.pos).map(|s| &self.source[s.start..s.end])
+        self.tokens
+            .get(self.pos)
+            .map(|s| &self.source[s.start..s.end])
     }
 
     fn advance(&mut self) {
@@ -2332,6 +2424,7 @@ impl<'a> InterpExprParser<'a> {
                         let args = self.parse_args();
                         expr = Expr::Call {
                             name,
+                            type_args: vec![], // TODO: Parse turbofish
                             args,
                             span: self.span.clone(),
                         };
@@ -2368,7 +2461,7 @@ impl<'a> InterpExprParser<'a> {
                 let text = self.current_text().unwrap_or("\"\"");
                 // Remove surrounding quotes
                 let s = if text.len() >= 2 {
-                    text[1..text.len()-1].to_string()
+                    text[1..text.len() - 1].to_string()
                 } else {
                     String::new()
                 };
@@ -2812,7 +2905,11 @@ mod tests {
 
         let stmts = &prog.agents[0].handlers[0].body.stmts;
         if let Stmt::Let { value, .. } = &stmts[0] {
-            if let Expr::Literal { value: Literal::String(s), .. } = value {
+            if let Expr::Literal {
+                value: Literal::String(s),
+                ..
+            } = value
+            {
                 assert_eq!(s, "hello");
             } else {
                 panic!("expected string literal, got {:?}", value);
@@ -2846,7 +2943,11 @@ mod tests {
 
         // Verify the string interpolation was parsed
         let stmts = &prog.agents[0].handlers[0].body.stmts;
-        if let Stmt::Expr { expr: Expr::Call { args, .. }, .. } = &stmts[0] {
+        if let Stmt::Expr {
+            expr: Expr::Call { args, .. },
+            ..
+        } = &stmts[0]
+        {
             if let Expr::StringInterp { template, .. } = &args[0] {
                 assert!(template.has_interpolations());
             } else {
@@ -3533,7 +3634,7 @@ mod tests {
         let worker = &prog.agents[0];
         assert_eq!(worker.name.name, "Worker");
         assert!(worker.receives.is_some());
-        if let Some(TypeExpr::Named(name)) = &worker.receives {
+        if let Some(TypeExpr::Named(name, _)) = &worker.receives {
             assert_eq!(name.name, "WorkerMsg");
         } else {
             panic!("expected named type for receives");
@@ -4395,6 +4496,372 @@ mod tests {
             );
         } else {
             panic!("expected MockTool statement");
+        }
+    }
+
+    // =========================================================================
+    // RFC-0015: Generics tests
+    // =========================================================================
+
+    #[test]
+    fn parse_generic_function() {
+        let source = r#"
+            fn identity<T>(x: T) -> T {
+                return x;
+            }
+
+            agent Main {
+                on start { emit(0); }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.functions.len(), 1);
+        let func = &prog.functions[0];
+        assert_eq!(func.name.name, "identity");
+        assert_eq!(func.type_params.len(), 1);
+        assert_eq!(func.type_params[0].name, "T");
+    }
+
+    #[test]
+    fn parse_generic_function_multiple_params() {
+        let source = r#"
+            fn map<T, U>(list: List<T>, f: Fn(T) -> U) -> List<U> {
+                return [];
+            }
+
+            agent Main {
+                on start { emit(0); }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let func = &prog.functions[0];
+        assert_eq!(func.name.name, "map");
+        assert_eq!(func.type_params.len(), 2);
+        assert_eq!(func.type_params[0].name, "T");
+        assert_eq!(func.type_params[1].name, "U");
+    }
+
+    #[test]
+    fn parse_generic_record() {
+        let source = r#"
+            record Pair<A, B> {
+                first: A,
+                second: B,
+            }
+
+            agent Main {
+                on start { emit(0); }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.records.len(), 1);
+        let record = &prog.records[0];
+        assert_eq!(record.name.name, "Pair");
+        assert_eq!(record.type_params.len(), 2);
+        assert_eq!(record.type_params[0].name, "A");
+        assert_eq!(record.type_params[1].name, "B");
+    }
+
+    #[test]
+    fn parse_generic_enum() {
+        let source = r#"
+            enum Tree<T> {
+                Leaf(T),
+                Node(Tree<T>),
+            }
+
+            agent Main {
+                on start { emit(0); }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.enums.len(), 1);
+        let enumm = &prog.enums[0];
+        assert_eq!(enumm.name.name, "Tree");
+        assert_eq!(enumm.type_params.len(), 1);
+        assert_eq!(enumm.type_params[0].name, "T");
+    }
+
+    #[test]
+    fn parse_generic_type_argument() {
+        let source = r#"
+            record Wrapper<T> {
+                value: T,
+            }
+
+            fn make_wrapper<T>(value: T) -> Wrapper<T> {
+                return Wrapper { value: value };
+            }
+
+            agent Main {
+                on start { emit(0); }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let func = &prog.functions[0];
+        // Check return type is Wrapper<T>
+        if let TypeExpr::Named(name, type_args) = &func.return_ty {
+            assert_eq!(name.name, "Wrapper");
+            assert_eq!(type_args.len(), 1);
+            if let TypeExpr::Named(inner_name, _) = &type_args[0] {
+                assert_eq!(inner_name.name, "T");
+            } else {
+                panic!("expected Named type argument");
+            }
+        } else {
+            panic!("expected Named return type");
+        }
+    }
+
+    #[test]
+    fn parse_turbofish_function_call() {
+        let source = r#"
+            fn identity<T>(x: T) -> T {
+                return x;
+            }
+
+            agent Main {
+                on start {
+                    let result = identity::<Int>(42);
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Let { value, .. } = &handler.body.stmts[0] {
+            if let Expr::Call {
+                name, type_args, ..
+            } = value
+            {
+                assert_eq!(name.name, "identity");
+                assert_eq!(type_args.len(), 1);
+                assert!(matches!(type_args[0], TypeExpr::Int));
+            } else {
+                panic!("expected Call expression");
+            }
+        } else {
+            panic!("expected Let statement");
+        }
+    }
+
+    #[test]
+    fn parse_turbofish_multiple_type_args() {
+        let source = r#"
+            fn make_pair<A, B>(a: A, b: B) -> (A, B) {
+                return (a, b);
+            }
+
+            agent Main {
+                on start {
+                    let pair = make_pair::<Int, String>(42, "hello");
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Let { value, .. } = &handler.body.stmts[0] {
+            if let Expr::Call {
+                name, type_args, ..
+            } = value
+            {
+                assert_eq!(name.name, "make_pair");
+                assert_eq!(type_args.len(), 2);
+                assert!(matches!(type_args[0], TypeExpr::Int));
+                assert!(matches!(type_args[1], TypeExpr::String));
+            } else {
+                panic!("expected Call expression");
+            }
+        } else {
+            panic!("expected Let statement");
+        }
+    }
+
+    #[test]
+    fn parse_turbofish_record_construction() {
+        let source = r#"
+            record Pair<A, B> {
+                first: A,
+                second: B,
+            }
+
+            agent Main {
+                on start {
+                    let p = Pair::<Int, String> { first: 42, second: "hi" };
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Let { value, .. } = &handler.body.stmts[0] {
+            if let Expr::RecordConstruct {
+                name, type_args, ..
+            } = value
+            {
+                assert_eq!(name.name, "Pair");
+                assert_eq!(type_args.len(), 2);
+                assert!(matches!(type_args[0], TypeExpr::Int));
+                assert!(matches!(type_args[1], TypeExpr::String));
+            } else {
+                panic!("expected RecordConstruct expression");
+            }
+        } else {
+            panic!("expected Let statement");
+        }
+    }
+
+    #[test]
+    fn parse_turbofish_variant_construction() {
+        let source = r#"
+            enum Either<L, R> {
+                Left(L),
+                Right(R),
+            }
+
+            agent Main {
+                on start {
+                    let e = Either::<String, Int>::Left("hello");
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Let { value, .. } = &handler.body.stmts[0] {
+            if let Expr::VariantConstruct {
+                enum_name,
+                type_args,
+                variant,
+                ..
+            } = value
+            {
+                assert_eq!(enum_name.name, "Either");
+                assert_eq!(variant.name, "Left");
+                assert_eq!(type_args.len(), 2);
+                assert!(matches!(type_args[0], TypeExpr::String));
+                assert!(matches!(type_args[1], TypeExpr::Int));
+            } else {
+                panic!("expected VariantConstruct expression");
+            }
+        } else {
+            panic!("expected Let statement");
+        }
+    }
+
+    #[test]
+    fn parse_generic_in_type_annotation() {
+        let source = r#"
+            record Page<T> {
+                items: List<T>,
+                count: Int,
+            }
+
+            agent Main {
+                on start {
+                    let page: Page<String> = Page { items: [], count: 0 };
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Let { ty: Some(ty), .. } = &handler.body.stmts[0] {
+            if let TypeExpr::Named(name, type_args) = ty {
+                assert_eq!(name.name, "Page");
+                assert_eq!(type_args.len(), 1);
+                assert!(matches!(type_args[0], TypeExpr::String));
+            } else {
+                panic!("expected Named type");
+            }
+        } else {
+            panic!("expected Let statement with type annotation");
+        }
+    }
+
+    #[test]
+    fn parse_nested_generic_types() {
+        let source = r#"
+            record Nested<T> {
+                value: Option<List<T>>,
+            }
+
+            agent Main {
+                on start { emit(0); }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let record = &prog.records[0];
+        let field_ty = &record.fields[0].ty;
+        // Should be Option<List<T>>
+        if let TypeExpr::Option(inner) = field_ty {
+            if let TypeExpr::List(elem) = inner.as_ref() {
+                if let TypeExpr::Named(name, _) = elem.as_ref() {
+                    assert_eq!(name.name, "T");
+                } else {
+                    panic!("expected Named type T");
+                }
+            } else {
+                panic!("expected List type");
+            }
+        } else {
+            panic!("expected Option type");
         }
     }
 }

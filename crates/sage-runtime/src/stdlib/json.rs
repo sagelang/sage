@@ -5,8 +5,7 @@ use serde_json::Value;
 /// Parse a JSON string, validating that it's well-formed JSON.
 /// Returns the original string if valid.
 pub fn json_parse(s: &str) -> Result<String, String> {
-    let _: Value = serde_json::from_str(s)
-        .map_err(|e| format!("invalid JSON: {}", e))?;
+    let _: Value = serde_json::from_str(s).map_err(|e| format!("invalid JSON: {}", e))?;
     Ok(s.to_string())
 }
 
@@ -52,12 +51,14 @@ pub fn json_get_bool(json: &str, field: &str) -> Option<bool> {
 pub fn json_get_list(json: &str, field: &str) -> Option<Vec<String>> {
     let value: Value = serde_json::from_str(json).ok()?;
     let arr = value.get(field)?.as_array()?;
-    Some(arr.iter().map(|v| {
-        match v {
-            Value::String(s) => s.clone(),
-            other => other.to_string(),
-        }
-    }).collect())
+    Some(
+        arr.iter()
+            .map(|v| match v {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            })
+            .collect(),
+    )
 }
 
 /// Convert a value to a JSON string.
@@ -112,8 +113,14 @@ mod tests {
     #[test]
     fn test_json_get_list() {
         let json = r#"{"items": ["a", "b", "c"], "numbers": [1, 2, 3]}"#;
-        assert_eq!(json_get_list(json, "items"), Some(vec!["a".to_string(), "b".to_string(), "c".to_string()]));
-        assert_eq!(json_get_list(json, "numbers"), Some(vec!["1".to_string(), "2".to_string(), "3".to_string()]));
+        assert_eq!(
+            json_get_list(json, "items"),
+            Some(vec!["a".to_string(), "b".to_string(), "c".to_string()])
+        );
+        assert_eq!(
+            json_get_list(json, "numbers"),
+            Some(vec!["1".to_string(), "2".to_string(), "3".to_string()])
+        );
         assert_eq!(json_get_list(json, "missing"), None);
     }
 
