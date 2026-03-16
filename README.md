@@ -63,11 +63,11 @@ run Coordinator;
 
 ## Status
 
-**v0.6.0 released** — Crate consolidation and refactored project structure.
+**v1.0.3 released** — Generics (parametric polymorphism) for functions, records, and enums.
 
 | | |
 |---|---|
-| **Latest** | [v0.6.0](https://github.com/sagelang/sage/releases/tag/v0.6.0) |
+| **Latest** | [v1.0.3](https://github.com/sagelang/sage/releases/tag/v1.0.3) |
 | **Extension** | `.sg` |
 | **Platforms** | macOS (ARM), Linux (x86_64, ARM) |
 | **Build time** | ~0.5s |
@@ -116,6 +116,44 @@ fn factorial(n: Int) -> Int {
     }
     return n * factorial(n - 1);
 }
+```
+
+### Generics
+
+Functions, records, and enums support type parameters:
+
+```sage
+// Generic functions
+fn identity<T>(x: T) -> T {
+    return x;
+}
+
+fn map<T, U>(list: List<T>, f: Fn(T) -> U) -> List<U> {
+    let result: List<U> = [];
+    for item in list {
+        result = push(result, f(item));
+    }
+    return result;
+}
+
+// Generic records
+record Pair<A, B> {
+    first: A,
+    second: B,
+}
+
+// Generic enums
+enum Either<L, R> {
+    Left(L),
+    Right(R),
+}
+
+// Usage - types are inferred
+let x = identity(42);                    // T = Int
+let pair = Pair { first: 1, second: "hi" };  // Pair<Int, String>
+
+// Turbofish syntax for explicit type arguments
+let e = Either::<String, Int>::Left("error");
 ```
 
 ### Closures
