@@ -1,4 +1,4 @@
-// Demonstrates agent spawning, state fields, and await
+// Demonstrates agent summoning, state fields, and await
 // Two workers compute values that are combined by the main agent
 
 agent Worker {
@@ -7,15 +7,15 @@ agent Worker {
 
     on start {
         let result = self.value * self.multiplier;
-        emit(str(result));
+        yield(str(result));
     }
 }
 
 agent Main {
     on start {
-        // Spawn two workers with different field values
-        let w1 = spawn Worker { value: 10, multiplier: 2 };
-        let w2 = spawn Worker { value: 7, multiplier: 3 };
+        // Summon two workers with different field values
+        let w1 = summon Worker { value: 10, multiplier: 2 };
+        let w2 = summon Worker { value: 7, multiplier: 3 };
 
         // Await both results
         let r1 = try await w1;
@@ -25,12 +25,12 @@ agent Main {
         print("Worker 1 result: {r1}");
         print("Worker 2 result: {r2}");
 
-        emit("done");
+        yield("done");
     }
 
     on error(e) {
         print("Worker failed");
-        emit("error");
+        yield("error");
     }
 }
 

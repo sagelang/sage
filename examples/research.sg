@@ -2,8 +2,8 @@
 // This is the canonical Sage example showing the language's key features:
 // - Agents as first-class primitives
 // - Agent state (formerly "beliefs")
-// - spawn/await for concurrency
-// - infer for LLM integration
+// - summon/await for concurrency
+// - divine for LLM integration
 // - Error handling with try/on error
 //
 // Run with: sage run examples/research.sg
@@ -13,14 +13,14 @@ agent Researcher {
     topic: String
 
     on start {
-        let summary = try infer(
+        let summary = try divine(
             "Write a concise 2-sentence summary of: {self.topic}"
         );
-        emit(summary);
+        yield(summary);
     }
 
     on error(e) {
-        emit("Research unavailable for this topic");
+        yield("Research unavailable for this topic");
     }
 }
 
@@ -28,9 +28,9 @@ agent Coordinator {
     on start {
         print("Starting research on two topics...");
 
-        // Spawn researchers in parallel
-        let r1 = spawn Researcher { topic: "quantum computing" };
-        let r2 = spawn Researcher { topic: "CRISPR gene editing" };
+        // Summon researchers in parallel
+        let r1 = summon Researcher { topic: "quantum computing" };
+        let r2 = summon Researcher { topic: "CRISPR gene editing" };
 
         // Await results (researchers handle errors internally, so always succeed)
         let s1 = try await r1;
@@ -46,12 +46,12 @@ agent Coordinator {
         print("CRISPR Gene Editing:");
         print(s2);
 
-        emit("Research complete");
+        yield("Research complete");
     }
 
     on error(e) {
         print("Research pipeline failed");
-        emit("Research failed");
+        yield("Research failed");
     }
 }
 

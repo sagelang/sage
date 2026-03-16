@@ -28,11 +28,11 @@ pub enum Token {
     #[token("message")]
     KwMessage,
 
-    #[token("infer")]
-    KwInfer,
+    #[token("divine")]
+    KwDivine,
 
-    #[token("spawn")]
-    KwSpawn,
+    #[token("summon")]
+    KwSummon,
 
     #[token("await")]
     KwAwait,
@@ -40,8 +40,8 @@ pub enum Token {
     #[token("send")]
     KwSend,
 
-    #[token("emit")]
-    KwEmit,
+    #[token("yield")]
+    KwYield,
 
     #[token("run")]
     KwRun,
@@ -181,8 +181,8 @@ pub enum Token {
     #[token("Option")]
     TyOption,
 
-    #[token("Inferred")]
-    TyInferred,
+    #[token("Oracle")]
+    TyOracle,
 
     #[token("Agent")]
     TyAgent,
@@ -348,11 +348,11 @@ impl Token {
                 | Token::KwStart
                 | Token::KwStop
                 | Token::KwMessage
-                | Token::KwInfer
-                | Token::KwSpawn
+                | Token::KwDivine
+                | Token::KwSummon
                 | Token::KwAwait
                 | Token::KwSend
-                | Token::KwEmit
+                | Token::KwYield
                 | Token::KwRun
                 | Token::KwFn
                 | Token::KwLet
@@ -403,7 +403,7 @@ impl Token {
                 | Token::TyUnit
                 | Token::TyList
                 | Token::TyOption
-                | Token::TyInferred
+                | Token::TyOracle
                 | Token::TyAgent
                 | Token::TyError
                 | Token::TyErrorKind
@@ -457,11 +457,11 @@ impl std::fmt::Display for Token {
             Token::KwStart => write!(f, "start"),
             Token::KwStop => write!(f, "stop"),
             Token::KwMessage => write!(f, "message"),
-            Token::KwInfer => write!(f, "infer"),
-            Token::KwSpawn => write!(f, "spawn"),
+            Token::KwDivine => write!(f, "divine"),
+            Token::KwSummon => write!(f, "summon"),
             Token::KwAwait => write!(f, "await"),
             Token::KwSend => write!(f, "send"),
-            Token::KwEmit => write!(f, "emit"),
+            Token::KwYield => write!(f, "yield"),
             Token::KwRun => write!(f, "run"),
             Token::KwFn => write!(f, "fn"),
             Token::KwLet => write!(f, "let"),
@@ -508,7 +508,7 @@ impl std::fmt::Display for Token {
             Token::TyUnit => write!(f, "Unit"),
             Token::TyList => write!(f, "List"),
             Token::TyOption => write!(f, "Option"),
-            Token::TyInferred => write!(f, "Inferred"),
+            Token::TyOracle => write!(f, "Oracle"),
             Token::TyAgent => write!(f, "Agent"),
             Token::TyError => write!(f, "Error"),
             Token::TyErrorKind => write!(f, "ErrorKind"),
@@ -581,13 +581,13 @@ mod tests {
     #[test]
     fn lex_more_keywords() {
         let mut lexer = Token::lexer(
-            "infer spawn await send emit run fn let return if else for in self true false",
+            "divine summon await send yield run fn let return if else for in self true false",
         );
-        assert_eq!(lexer.next(), Some(Ok(Token::KwInfer)));
-        assert_eq!(lexer.next(), Some(Ok(Token::KwSpawn)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwDivine)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwSummon)));
         assert_eq!(lexer.next(), Some(Ok(Token::KwAwait)));
         assert_eq!(lexer.next(), Some(Ok(Token::KwSend)));
-        assert_eq!(lexer.next(), Some(Ok(Token::KwEmit)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwYield)));
         assert_eq!(lexer.next(), Some(Ok(Token::KwRun)));
         assert_eq!(lexer.next(), Some(Ok(Token::KwFn)));
         assert_eq!(lexer.next(), Some(Ok(Token::KwLet)));
@@ -604,7 +604,7 @@ mod tests {
 
     #[test]
     fn lex_type_keywords() {
-        let mut lexer = Token::lexer("Int Float Bool String Unit List Option Inferred Agent");
+        let mut lexer = Token::lexer("Int Float Bool String Unit List Option Oracle Agent");
         assert_eq!(lexer.next(), Some(Ok(Token::TyInt)));
         assert_eq!(lexer.next(), Some(Ok(Token::TyFloat)));
         assert_eq!(lexer.next(), Some(Ok(Token::TyBool)));
@@ -612,7 +612,7 @@ mod tests {
         assert_eq!(lexer.next(), Some(Ok(Token::TyUnit)));
         assert_eq!(lexer.next(), Some(Ok(Token::TyList)));
         assert_eq!(lexer.next(), Some(Ok(Token::TyOption)));
-        assert_eq!(lexer.next(), Some(Ok(Token::TyInferred)));
+        assert_eq!(lexer.next(), Some(Ok(Token::TyOracle)));
         assert_eq!(lexer.next(), Some(Ok(Token::TyAgent)));
         assert_eq!(lexer.next(), None);
     }
@@ -766,8 +766,8 @@ mod tests {
                 belief topic: String
 
                 on start {
-                    let result: Inferred<String> = infer("test")
-                    emit(result)
+                    let result: Oracle<String> = divine("test")
+                    yield(result)
                 }
             }
         "#;
@@ -1011,12 +1011,12 @@ mod tests {
 
     #[test]
     fn lex_try_catch_expression() {
-        let mut lexer = Token::lexer("let x = try infer(prompt) catch { fallback }");
+        let mut lexer = Token::lexer("let x = try divine(prompt) catch { fallback }");
         assert_eq!(lexer.next(), Some(Ok(Token::KwLet)));
         assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // x
         assert_eq!(lexer.next(), Some(Ok(Token::Eq)));
         assert_eq!(lexer.next(), Some(Ok(Token::KwTry)));
-        assert_eq!(lexer.next(), Some(Ok(Token::KwInfer)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwDivine)));
         assert_eq!(lexer.next(), Some(Ok(Token::LParen)));
         assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // prompt
         assert_eq!(lexer.next(), Some(Ok(Token::RParen)));
@@ -1047,14 +1047,14 @@ mod tests {
 
     #[test]
     fn lex_on_error_handler() {
-        let mut lexer = Token::lexer("on error(e) { emit(fallback) }");
+        let mut lexer = Token::lexer("on error(e) { yield(fallback) }");
         assert_eq!(lexer.next(), Some(Ok(Token::KwOn)));
         assert_eq!(lexer.next(), Some(Ok(Token::KwError)));
         assert_eq!(lexer.next(), Some(Ok(Token::LParen)));
         assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // e
         assert_eq!(lexer.next(), Some(Ok(Token::RParen)));
         assert_eq!(lexer.next(), Some(Ok(Token::LBrace)));
-        assert_eq!(lexer.next(), Some(Ok(Token::KwEmit)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwYield)));
         assert_eq!(lexer.next(), Some(Ok(Token::LParen)));
         assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // fallback
         assert_eq!(lexer.next(), Some(Ok(Token::RParen)));

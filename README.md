@@ -28,33 +28,33 @@ agent Researcher {
     topic: String
 
     on start {
-        let summary = try infer(
+        let summary = try divine(
             "Write a concise 2-sentence summary of: {self.topic}"
         );
-        emit(summary);
+        yield(summary);
     }
 
     on error(e) {
-        emit("Research unavailable");
+        yield("Research unavailable");
     }
 }
 
 agent Coordinator {
     on start {
-        let r1 = spawn Researcher { topic: "quantum computing" };
-        let r2 = spawn Researcher { topic: "CRISPR gene editing" };
+        let r1 = summon Researcher { topic: "quantum computing" };
+        let r2 = summon Researcher { topic: "CRISPR gene editing" };
 
         let s1 = try await r1;
         let s2 = try await r2;
 
         print(s1);
         print(s2);
-        emit(0);
+        yield(0);
     }
 
     on error(e) {
         print("A researcher failed");
-        emit(1);
+        yield(1);
     }
 }
 
@@ -88,19 +88,19 @@ agent Worker {
 
     on start {
         let result = self.value * self.multiplier;
-        emit(result);
+        yield(result);
     }
 }
 
 agent Main {
     on start {
-        let w = spawn Worker { value: 10, multiplier: 2 };
+        let w = summon Worker { value: 10, multiplier: 2 };
         let result = try await w;
-        emit(result);
+        yield(result);
     }
 
     on error(e) {
-        emit(0);
+        yield(0);
     }
 }
 
@@ -204,7 +204,7 @@ pub agent Worker {
     task: String
 
     on start {
-        emit(self.task ++ " completed");
+        yield(self.task ++ " completed");
     }
 }
 ```
@@ -216,14 +216,14 @@ use agents::Worker;
 
 agent Main {
     on start {
-        let w = spawn Worker { task: "Processing" };
+        let w = summon Worker { task: "Processing" };
         let result = try await w;
         print(result);
-        emit(0);
+        yield(0);
     }
 
     on error(e) {
-        emit(1);
+        yield(1);
     }
 }
 run Main;
@@ -243,9 +243,9 @@ use agents::Worker as W;         // Aliased import
 
 ```sage
 if x > 5 {
-    emit(1);
+    yield(1);
 } else {
-    emit(0);
+    yield(0);
 }
 
 for item in [1, 2, 3] {
@@ -293,28 +293,28 @@ agent Worker receives WorkerMsg {
                 Shutdown => break,
             }
         }
-        emit(0);
+        yield(0);
     }
 }
 
 agent Coordinator {
     on start {
-        let w = spawn Worker { id: 1 };
+        let w = summon Worker { id: 1 };
         try send(w, Task);
         try send(w, Shutdown);
         try await w;
-        emit(0);
+        yield(0);
     }
 
     on error(e) {
-        emit(1);
+        yield(1);
     }
 }
 
 run Coordinator;
 ```
 
-The `receives` clause declares the message type an agent accepts. `receive()` blocks until a message arrives. Agents without `receives` are pure spawn/await agents.
+The `receives` clause declares the message type an agent accepts. `receive()` blocks until a message arrives. Agents without `receives` are pure summon/await agents.
 
 ### Types
 
@@ -330,7 +330,7 @@ The `receives` clause declares the message type an agent accepts. `receive()` bl
 | `(A, B, C)` | Tuples, e.g., `(1, "hello", true)` |
 | `Option<T>` | Optional values (`Some(x)` or `None`) |
 | `Result<T, E>` | Success or error (`Ok(x)` or `Err(e)`) |
-| `Inferred<T>` | LLM inference results |
+| `Oracle<T>` | LLM oracle results |
 | `Fn(A, B) -> C` | Function types |
 
 ### Records & Enums
@@ -401,20 +401,20 @@ fn unwrap_result(r: Result) -> String {
 
 ### Error Handling
 
-Fallible operations (`infer`, `await`, `send`, and functions marked `fails`) must be explicitly handled:
+Fallible operations (`divine`, `await`, `send`, and functions marked `fails`) must be explicitly handled:
 
 ```sage
 agent Main {
     on start {
         // try propagates errors to the agent's on error handler
-        let result = try infer("What is 2+2?");
+        let result = try divine("What is 2+2?");
         print(result);
-        emit(0);
+        yield(0);
     }
 
     on error(e) {
         print("Something went wrong");
-        emit(1);
+        yield(1);
     }
 }
 
@@ -424,7 +424,7 @@ run Main;
 You can also use `catch` to handle errors inline:
 
 ```sage
-let result = catch infer("prompt") {
+let result = catch divine("prompt") {
     "fallback value"
 };
 ```
@@ -433,7 +433,7 @@ Functions can be marked as fallible:
 
 ```sage
 fn risky_operation() -> Int fails {
-    let value = try infer("Give me a number");
+    let value = try divine("Give me a number");
     return parse_int(value);
 }
 ```
@@ -449,11 +449,11 @@ agent Fetcher {
     on start {
         let response = try Http.get("https://httpbin.org/get");
         print(response.body);
-        emit(response.status);
+        yield(response.status);
     }
 
     on error(e) {
-        emit(-1);
+        yield(-1);
     }
 }
 
@@ -487,9 +487,9 @@ test "addition works" {
 }
 
 test "agent returns expected output" {
-    mock infer -> "Mocked LLM response";
+    mock divine -> "Mocked LLM response";
 
-    let result = await spawn Summariser { topic: "test" };
+    let result = await summon Summariser { topic: "test" };
     assert_eq(result, "Mocked LLM response");
 }
 
@@ -518,7 +518,7 @@ sage test . --verbose    # Show failure details
 - `assert_empty`, `assert_not_empty` — collection checks
 - `assert_fails(expr)` — assert expression returns an error
 
-**Mock LLM responses** with `mock infer -> value;`. Mocks are consumed in order.
+**Mock LLM responses** with `mock divine -> value;`. Mocks are consumed in order.
 
 ### Expressions
 
@@ -562,7 +562,7 @@ let (x, y) = pair;
 | `str(value)` | Convert any type to string |
 | `len(list)` | Get list or map length |
 | `push(list, item)` | Add item to list |
-| `infer(prompt)` | LLM inference |
+| `divine(prompt)` | LLM divination |
 | `receive()` | Receive message from mailbox (agents only) |
 | `send(handle, msg)` | Send message to agent |
 | `map_get(map, key)` | Get value from map (returns `Option<V>`) |
@@ -711,7 +711,7 @@ sage check my_project/
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SAGE_API_KEY` | OpenAI API key for LLM inference | Required for `infer` |
+| `SAGE_API_KEY.*divine` |
 | `SAGE_LLM_URL` | Base URL for OpenAI-compatible API | `https://api.openai.com/v1` |
 | `SAGE_MODEL` | Model to use | `gpt-4o-mini` |
 | `SAGE_INFER_RETRIES` | Max retries for structured inference | `3` |

@@ -717,10 +717,10 @@ impl Checker {
             }
 
             // RFC-0012: mock infer statement - type check the mock value
-            Stmt::MockInfer { value, span } => {
+            Stmt::MockDivine { value, span } => {
                 // E056: mock infer outside test block
                 if !self.in_test_block {
-                    self.errors.push(CheckError::mock_infer_outside_test(span));
+                    self.errors.push(CheckError::mock_divine_outside_test(span));
                 }
 
                 match value {
@@ -848,7 +848,7 @@ impl Checker {
                 Type::Error
             }
 
-            Expr::Infer {
+            Expr::Divine {
                 template,
                 result_ty,
                 span,
@@ -866,10 +866,10 @@ impl Checker {
                 }
                 // infer returns Inferred<T>, default to Inferred<String>
                 let inner = result_ty.as_ref().map_or(Type::String, resolve_type);
-                Type::Inferred(Box::new(inner))
+                Type::Oracle(Box::new(inner))
             }
 
-            Expr::Spawn {
+            Expr::Summon {
                 agent,
                 fields,
                 span,
@@ -994,10 +994,10 @@ impl Checker {
                 Type::Unit
             }
 
-            Expr::Emit { value, span } => {
+            Expr::Yield { value, span } => {
                 // Check for emit in stop handler
                 if self.in_stop_handler {
-                    self.errors.push(CheckError::emit_in_stop_handler(span));
+                    self.errors.push(CheckError::yield_in_stop_handler(span));
                 }
 
                 let value_ty = self.check_expr(value);
@@ -1705,8 +1705,8 @@ impl Checker {
         }
 
         // Unwrap inferred types for comparison
-        let left = left.unwrap_inferred();
-        let right = right.unwrap_inferred();
+        let left = left.unwrap_oracle();
+        let right = right.unwrap_oracle();
 
         match op {
             // Arithmetic: Int/Float
@@ -1791,7 +1791,7 @@ impl Checker {
             return Type::Error;
         }
 
-        let operand = operand.unwrap_inferred();
+        let operand = operand.unwrap_oracle();
 
         match op {
             UnaryOp::Neg => {
@@ -2260,7 +2260,7 @@ impl Checker {
                     self.unify_types(p, c, bindings);
                 }
             }
-            (Type::Inferred(p_inner), Type::Inferred(c_inner)) => {
+            (Type::Oracle(p_inner), Type::Oracle(c_inner)) => {
                 self.unify_types(p_inner, c_inner, bindings);
             }
 
@@ -4408,10 +4408,10 @@ impl<'a> ModuleChecker<'a> {
             }
 
             // RFC-0012: mock infer statement - type check the mock value
-            Stmt::MockInfer { value, span } => {
+            Stmt::MockDivine { value, span } => {
                 // E056: mock infer outside test block
                 if !self.in_test_block {
-                    self.errors.push(CheckError::mock_infer_outside_test(span));
+                    self.errors.push(CheckError::mock_divine_outside_test(span));
                 }
 
                 match value {
@@ -4539,7 +4539,7 @@ impl<'a> ModuleChecker<'a> {
                 Type::Error
             }
 
-            Expr::Infer {
+            Expr::Divine {
                 template,
                 result_ty,
                 ..
@@ -4551,10 +4551,10 @@ impl<'a> ModuleChecker<'a> {
                     }
                 }
                 let inner = result_ty.as_ref().map_or(Type::String, resolve_type);
-                Type::Inferred(Box::new(inner))
+                Type::Oracle(Box::new(inner))
             }
 
-            Expr::Spawn {
+            Expr::Summon {
                 agent,
                 fields,
                 span,
@@ -4676,10 +4676,10 @@ impl<'a> ModuleChecker<'a> {
                 Type::Unit
             }
 
-            Expr::Emit { value, span } => {
+            Expr::Yield { value, span } => {
                 // Check for emit in stop handler
                 if self.in_stop_handler {
-                    self.errors.push(CheckError::emit_in_stop_handler(span));
+                    self.errors.push(CheckError::yield_in_stop_handler(span));
                 }
 
                 let value_ty = self.check_expr(value);
@@ -5328,8 +5328,8 @@ impl<'a> ModuleChecker<'a> {
             return Type::Error;
         }
 
-        let left = left.unwrap_inferred();
-        let right = right.unwrap_inferred();
+        let left = left.unwrap_oracle();
+        let right = right.unwrap_oracle();
 
         match op {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
@@ -5409,7 +5409,7 @@ impl<'a> ModuleChecker<'a> {
             return Type::Error;
         }
 
-        let operand = operand.unwrap_inferred();
+        let operand = operand.unwrap_oracle();
 
         match op {
             UnaryOp::Neg => {
@@ -5894,7 +5894,7 @@ impl<'a> ModuleChecker<'a> {
                     self.unify_types(p, c, bindings);
                 }
             }
-            (Type::Inferred(p_inner), Type::Inferred(c_inner)) => {
+            (Type::Oracle(p_inner), Type::Oracle(c_inner)) => {
                 self.unify_types(p_inner, c_inner, bindings);
             }
 

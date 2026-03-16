@@ -583,9 +583,9 @@ impl Formatter {
                 }
                 self.write("\n");
             }
-            Stmt::MockInfer { value, .. } => {
+            Stmt::MockDivine { value, .. } => {
                 self.write_indent();
-                self.write("mock infer -> ");
+                self.write("mock divine -> ");
                 self.format_mock_value(value);
                 self.write(";\n");
             }
@@ -842,8 +842,8 @@ impl Formatter {
             Expr::StringInterp { template, .. } => {
                 self.format_string_template(template);
             }
-            Expr::Spawn { agent, fields, .. } => {
-                self.write("spawn ");
+            Expr::Summon { agent, fields, .. } => {
+                self.write("summon ");
                 self.write(&agent.name);
                 if fields.is_empty() {
                     self.write(" {}");
@@ -884,8 +884,8 @@ impl Formatter {
                     self.write(")");
                 }
             }
-            Expr::Emit { value, .. } => {
-                self.write("emit(");
+            Expr::Yield { value, .. } => {
+                self.write("yield(");
                 self.format_expr(value);
                 self.write(")");
             }
@@ -901,12 +901,12 @@ impl Formatter {
             Expr::Receive { .. } => {
                 self.write("receive()");
             }
-            Expr::Infer {
+            Expr::Divine {
                 template,
                 result_ty,
                 ..
             } => {
-                self.write("infer(");
+                self.write("divine(");
                 self.format_string_template(template);
                 if let Some(ty) = result_ty {
                     self.write(" -> ");
@@ -1095,8 +1095,8 @@ impl Formatter {
                 }
                 self.write(")");
             }
-            TypeExpr::Inferred(inner) => {
-                self.write("Inferred<");
+            TypeExpr::Oracle(inner) => {
+                self.write("Oracle<");
                 self.format_type(inner);
                 self.write(">");
             }

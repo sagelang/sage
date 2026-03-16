@@ -1961,8 +1961,8 @@ pub fn resolve_type_with_params(
         TypeExpr::Option(inner) => {
             Type::Option(Box::new(resolve_type_with_params(inner, type_params)))
         }
-        TypeExpr::Inferred(inner) => {
-            Type::Inferred(Box::new(resolve_type_with_params(inner, type_params)))
+        TypeExpr::Oracle(inner) => {
+            Type::Oracle(Box::new(resolve_type_with_params(inner, type_params)))
         }
         TypeExpr::Agent(ident) => Type::Agent(ident.name.clone()),
         TypeExpr::Named(ident, type_args) => {
@@ -2052,10 +2052,10 @@ mod tests {
         let list_int = TypeExpr::List(Box::new(TypeExpr::Int));
         assert_eq!(resolve_type(&list_int), Type::List(Box::new(Type::Int)));
 
-        let inferred_string = TypeExpr::Inferred(Box::new(TypeExpr::String));
+        let inferred_string = TypeExpr::Oracle(Box::new(TypeExpr::String));
         assert_eq!(
             resolve_type(&inferred_string),
-            Type::Inferred(Box::new(Type::String))
+            Type::Oracle(Box::new(Type::String))
         );
     }
 

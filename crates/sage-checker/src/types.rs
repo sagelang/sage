@@ -22,8 +22,8 @@ pub enum Type {
     List(Box<Type>),
     /// Optional value.
     Option(Box<Type>),
-    /// Result of an LLM inference call.
-    Inferred(Box<Type>),
+    /// Result of an LLM oracle call.
+    Oracle(Box<Type>),
     /// Handle to a running agent.
     Agent(String),
     /// User-defined type (record or enum) by name.
@@ -63,12 +63,12 @@ impl Type {
         matches!(self, Type::Error)
     }
 
-    /// Unwrap an Inferred type to get the inner type.
-    /// For non-Inferred types, returns the type itself.
+    /// Unwrap an Oracle type to get the inner type.
+    /// For non-Oracle types, returns the type itself.
     #[must_use]
-    pub fn unwrap_inferred(&self) -> &Type {
+    pub fn unwrap_oracle(&self) -> &Type {
         match self {
-            Type::Inferred(inner) => inner.unwrap_inferred(),
+            Type::Oracle(inner) => inner.unwrap_oracle(),
             other => other,
         }
     }
@@ -125,7 +125,7 @@ impl Type {
     }
 
     /// Check if two types are compatible for assignment/comparison.
-    /// Inferred<T> is compatible with T.
+    /// Oracle<T> is compatible with T.
     #[must_use]
     pub fn is_compatible_with(&self, other: &Type) -> bool {
         if self == other {
@@ -140,8 +140,8 @@ impl Type {
             return true;
         }
         match (self, other) {
-            // Inferred<T> is compatible with T
-            (Type::Inferred(inner), other) | (other, Type::Inferred(inner)) => {
+            // Oracle<T> is compatible with T
+            (Type::Oracle(inner), other) | (other, Type::Oracle(inner)) => {
                 inner.as_ref().is_compatible_with(other)
             }
             // Type parameters are compatible with any concrete type during inference
@@ -233,7 +233,7 @@ impl Type {
             // Compound types: substitute recursively
             Type::List(elem) => Type::List(Box::new(elem.substitute(bindings))),
             Type::Option(inner) => Type::Option(Box::new(inner.substitute(bindings))),
-            Type::Inferred(inner) => Type::Inferred(Box::new(inner.substitute(bindings))),
+            Type::Oracle(inner) => Type::Oracle(Box::new(inner.substitute(bindings))),
             Type::Map(key, value) => Type::Map(
                 Box::new(key.substitute(bindings)),
                 Box::new(value.substitute(bindings)),
@@ -272,7 +272,7 @@ impl Type {
     pub fn has_type_params(&self) -> bool {
         match self {
             Type::TypeParam(_) => true,
-            Type::List(elem) | Type::Option(elem) | Type::Inferred(elem) => elem.has_type_params(),
+            Type::List(elem) | Type::Option(elem) | Type::Oracle(elem) => elem.has_type_params(),
             Type::Map(key, value) | Type::Result(key, value) => {
                 key.has_type_params() || value.has_type_params()
             }
@@ -291,7 +291,7 @@ impl Type {
             Type::TypeParam(name) => {
                 params.insert(name.clone());
             }
-            Type::List(elem) | Type::Option(elem) | Type::Inferred(elem) => {
+            Type::List(elem) | Type::Option(elem) | Type::Oracle(elem) => {
                 elem.collect_type_params(params);
             }
             Type::Map(key, value) | Type::Result(key, value) => {
@@ -329,7 +329,7 @@ impl fmt::Display for Type {
             Type::Unit => write!(f, "Unit"),
             Type::List(elem) => write!(f, "List<{elem}>"),
             Type::Option(inner) => write!(f, "Option<{inner}>"),
-            Type::Inferred(inner) => write!(f, "Inferred<{inner}>"),
+            Type::Oracle(inner) => write!(f, "Oracle<{inner}>"),
             Type::Agent(name) => write!(f, "Agent<{name}>"),
             Type::Named(name) => write!(f, "{name}"),
             Type::Generic(name, args) => {
@@ -383,8 +383,8 @@ mod tests {
             "List<String>"
         );
         assert_eq!(
-            Type::Inferred(Box::new(Type::String)).to_string(),
-            "Inferred<String>"
+            Type::Oracle(Box::new(Type::String)).to_string(),
+            "Oracle<String>"
         );
         assert_eq!(Type::Agent("Foo".to_string()).to_string(), "Agent<Foo>");
     }
@@ -398,14 +398,14 @@ mod tests {
     }
 
     #[test]
-    fn type_unwrap_inferred() {
-        let t = Type::Inferred(Box::new(Type::String));
-        assert_eq!(t.unwrap_inferred(), &Type::String);
+    fn type_unwrap_oracle() {
+        let t = Type::Oracle(Box::new(Type::String));
+        assert_eq!(t.unwrap_oracle(), &Type::String);
 
-        let nested = Type::Inferred(Box::new(Type::Inferred(Box::new(Type::Int))));
-        assert_eq!(nested.unwrap_inferred(), &Type::Int);
+        let nested = Type::Oracle(Box::new(Type::Oracle(Box::new(Type::Int))));
+        assert_eq!(nested.unwrap_oracle(), &Type::Int);
 
-        assert_eq!(Type::Int.unwrap_inferred(), &Type::Int);
+        assert_eq!(Type::Int.unwrap_oracle(), &Type::Int);
     }
 
     #[test]
@@ -414,7 +414,7 @@ mod tests {
         assert!(!Type::Int.is_compatible_with(&Type::String));
 
         // Inferred<T> is compatible with T
-        let inferred_string = Type::Inferred(Box::new(Type::String));
+        let inferred_string = Type::Oracle(Box::new(Type::String));
         assert!(inferred_string.is_compatible_with(&Type::String));
         assert!(Type::String.is_compatible_with(&inferred_string));
 

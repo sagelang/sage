@@ -15,7 +15,7 @@
 //! let source = r#"
 //!     agent Main {
 //!         on start {
-//!             emit(42);
+//!             yield(42);
 //!         }
 //!     }
 //!     run Main;
@@ -66,7 +66,7 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    emit(42);
+                    yield(42);
                 }
             }
             run Main;
@@ -81,7 +81,7 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    emit(x);
+                    yield(x);
                 }
             }
             run Main;
@@ -101,7 +101,7 @@ mod tests {
             agent Main {
                 on start {
                     let x = 1 + "hello";
-                    emit(x);
+                    yield(x);
                 }
             }
             run Main;
@@ -122,7 +122,7 @@ mod tests {
                 on start {
                     let x: Int = 42;
                     let y: String = "hello";
-                    emit(x);
+                    yield(x);
                 }
             }
             run Main;
@@ -138,7 +138,7 @@ mod tests {
             agent Main {
                 on start {
                     let x: String = 42;
-                    emit(x);
+                    yield(x);
                 }
             }
             run Main;
@@ -159,7 +159,7 @@ mod tests {
             agent Main {
                 on start {
                     let sum = add(1, 2);
-                    emit(sum);
+                    yield(sum);
                 }
             }
             run Main;
@@ -179,7 +179,7 @@ mod tests {
             agent Main {
                 on start {
                     let msg = greet("a", "b");
-                    emit(msg);
+                    yield(msg);
                 }
             }
             run Main;
@@ -197,19 +197,19 @@ mod tests {
                 name: String
 
                 on start {
-                    emit(self.name);
+                    yield(self.name);
                 }
             }
 
             agent Main {
                 on start {
-                    let w = spawn Worker { name: "test" };
+                    let w = summon Worker { name: "test" };
                     let result = try await w;
-                    emit(result);
+                    yield(result);
                 }
 
                 on error(e) {
-                    emit("error");
+                    yield("error");
                 }
             }
             run Main;
@@ -226,14 +226,14 @@ mod tests {
                 name: String
 
                 on start {
-                    emit(self.name);
+                    yield(self.name);
                 }
             }
 
             agent Main {
                 on start {
-                    let w = spawn Worker { };
-                    emit(0);
+                    let w = summon Worker { };
+                    yield(0);
                 }
             }
             run Main;
@@ -254,7 +254,7 @@ mod tests {
                 x: Int
 
                 on start {
-                    emit(self.x);
+                    yield(self.x);
                 }
             }
             run Main;
@@ -276,7 +276,7 @@ mod tests {
                     for x in [1, 2, 3] {
                         print(int_to_str(x));
                     }
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -292,9 +292,9 @@ mod tests {
             agent Main {
                 on start {
                     if 42 {
-                        emit(1);
+                        yield(1);
                     }
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -317,7 +317,7 @@ mod tests {
                     while n > 0 {
                         n = n - 1;
                     }
-                    emit(n);
+                    yield(n);
                 }
             }
             run Main;
@@ -333,9 +333,9 @@ mod tests {
             agent Main {
                 on start {
                     while 42 {
-                        emit(1);
+                        yield(1);
                     }
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -358,7 +358,7 @@ mod tests {
 
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -373,16 +373,16 @@ mod tests {
     }
 
     #[test]
-    fn check_infer_returns_inferred_type() {
+    fn check_divine_returns_oracle_type() {
         let source = r#"
             agent Main {
                 on start {
-                    let x: Inferred<String> = try infer("Hello");
-                    emit(x);
+                    let x: Oracle<String> = try divine("Hello");
+                    yield(x);
                 }
 
                 on error(e) {
-                    emit("error");
+                    yield("error");
                 }
             }
             run Main;
@@ -398,7 +398,7 @@ mod tests {
             agent Main {
                 on start {
                     let msg = "Hello, " ++ "World";
-                    emit(msg);
+                    yield(msg);
                 }
             }
             run Main;
@@ -414,7 +414,7 @@ mod tests {
             agent Main {
                 on start {
                     print("Hello");
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -431,19 +431,19 @@ mod tests {
                 unused: Int
 
                 on start {
-                    emit(42);
+                    yield(42);
                 }
             }
 
             agent Main {
                 on start {
-                    let w = spawn Worker { unused: 1 };
+                    let w = summon Worker { unused: 1 };
                     let result = try await w;
-                    emit(result);
+                    yield(result);
                 }
 
                 on error(e) {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -462,19 +462,19 @@ mod tests {
                 value: Int
 
                 on start {
-                    emit(self.value * 2);
+                    yield(self.value * 2);
                 }
             }
 
             agent Main {
                 on start {
-                    let w = spawn Worker { value: 21 };
+                    let w = summon Worker { value: 21 };
                     let result = try await w;
-                    emit(result);
+                    yield(result);
                 }
 
                 on error(e) {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -494,7 +494,7 @@ mod tests {
                     let c = str(true);
                     let d = str("hello");
                     print(a ++ b ++ c ++ d);
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -513,7 +513,7 @@ mod tests {
                     let count = 42;
                     let msg = "Hello, {name}! Count is {count}.";
                     print(msg);
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -529,7 +529,7 @@ mod tests {
             agent Main {
                 on start {
                     let msg = "Hello, {undefined}!";
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -556,7 +556,7 @@ mod tests {
             r#"
 agent Main {
     on start {
-        emit(42);
+        yield(42);
     }
 }
 run Main;
@@ -580,7 +580,7 @@ run Main;
             agent Main {
                 on start {
                     let p = Point { x: 10, y: 20 };
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -602,7 +602,7 @@ run Main;
                 on start {
                     let p = Point { x: 10, y: 20 };
                     let sum = p.x + p.y;
-                    emit(sum);
+                    yield(sum);
                 }
             }
             run Main;
@@ -623,7 +623,7 @@ run Main;
             agent Main {
                 on start {
                     let p = Point { x: 10 };
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -645,7 +645,7 @@ run Main;
             agent Main {
                 on start {
                     let p = Point { x: 10, y: 20, z: 30 };
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -662,7 +662,7 @@ run Main;
             agent Main {
                 on start {
                     let p = Unknown { x: 10 };
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -680,7 +680,7 @@ run Main;
                 on start {
                     let x = 42;
                     let y = x.field;
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -705,7 +705,7 @@ run Main;
             agent Main {
                 on start {
                     let p = Point { x: "not an int", y: 20 };
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -733,7 +733,7 @@ run Main;
 
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -761,7 +761,7 @@ run Main;
 
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -793,7 +793,7 @@ run Main;
 
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -815,7 +815,7 @@ run Main;
 
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -836,7 +836,7 @@ run Main;
 
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -862,7 +862,7 @@ run Main;
 
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -888,7 +888,7 @@ run Main;
 
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -908,7 +908,7 @@ run Main;
                 on start {
                     let x = MAX_SIZE;
                     print(GREETING);
-                    emit(x);
+                    yield(x);
                 }
             }
             run Main;
@@ -925,7 +925,7 @@ run Main;
 
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -947,7 +947,7 @@ run Main;
 
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -973,7 +973,7 @@ run Main;
                             break;
                         }
                     }
-                    emit(count);
+                    yield(count);
                 }
             }
             run Main;
@@ -989,7 +989,7 @@ run Main;
             agent Main {
                 on start {
                     break;
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -1014,12 +1014,12 @@ run Main;
             agent Worker receives WorkerMsg {
                 on start {
                     let msg = receive();
-                    emit(0);
+                    yield(0);
                 }
             }
 
             agent Main {
-                on start { emit(0); }
+                on start { yield(0); }
             }
             run Main;
         "#;
@@ -1034,7 +1034,7 @@ run Main;
             agent Main {
                 on start {
                     let msg = receive();
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -1058,7 +1058,7 @@ run Main;
             agent Main {
                 on start {
                     let f = |x: Int| x + 1;
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -1074,7 +1074,7 @@ run Main;
             agent Main {
                 on start {
                     let f = |x| x + 1;
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -1094,7 +1094,7 @@ run Main;
             agent Main {
                 on start {
                     let f = |x: Int| x + "invalid";
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -1114,7 +1114,7 @@ run Main;
             agent Main {
                 on start {
                     let f = || 42;
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -1129,13 +1129,13 @@ run Main;
     // =========================================================================
 
     #[test]
-    fn check_e013_unhandled_infer() {
+    fn check_e013_unhandled_divine() {
         // E013: infer without try or catch should produce an error
         let source = r#"
             agent Main {
                 on start {
-                    let x = infer("Hello");
-                    emit(x);
+                    let x = divine("Hello");
+                    yield(x);
                 }
             }
             run Main;
@@ -1155,15 +1155,15 @@ run Main;
         let source = r#"
             agent Worker {
                 on start {
-                    emit(42);
+                    yield(42);
                 }
             }
 
             agent Main {
                 on start {
-                    let w = spawn Worker { };
+                    let w = summon Worker { };
                     let result = await w;
-                    emit(result);
+                    yield(result);
                 }
             }
             run Main;
@@ -1183,12 +1183,12 @@ run Main;
         let source = r#"
             agent Main {
                 on start {
-                    let x = try infer("Hello");
-                    emit(x);
+                    let x = try divine("Hello");
+                    yield(x);
                 }
 
                 on error(e) {
-                    emit("error");
+                    yield("error");
                 }
             }
             run Main;
@@ -1204,8 +1204,8 @@ run Main;
         let source = r#"
             agent Main {
                 on start {
-                    let x = infer("Hello") catch { "fallback" };
-                    emit(x);
+                    let x = divine("Hello") catch { "fallback" };
+                    yield(x);
                 }
             }
             run Main;
@@ -1224,7 +1224,7 @@ run Main;
             agent Main {
                 on start {
                     let x = risky();
-                    emit(x);
+                    yield(x);
                 }
             }
             run Main;
@@ -1247,11 +1247,11 @@ run Main;
             agent Main {
                 on start {
                     let x = try risky();
-                    emit(x);
+                    yield(x);
                 }
 
                 on error(e) {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;

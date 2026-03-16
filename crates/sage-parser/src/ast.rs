@@ -442,8 +442,8 @@ pub enum Stmt {
         span: Span,
     },
 
-    /// RFC-0012: Mock infer statement: `mock infer -> expr;`
-    MockInfer {
+    /// RFC-0012: Mock divine statement: `mock divine -> expr;`
+    MockDivine {
         /// The mock value expression.
         value: MockValue,
         /// Span covering the statement.
@@ -463,12 +463,12 @@ pub enum Stmt {
     },
 }
 
-/// RFC-0012: A mock value for `mock infer -> value`.
+/// RFC-0012: A mock value for `mock divine -> value`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MockValue {
-    /// A literal value: `mock infer -> "string"` or `mock infer -> SomeRecord { ... }`
+    /// A literal value: `mock divine -> "string"` or `mock divine -> SomeRecord { ... }`
     Value(Expr),
-    /// A failure: `mock infer -> fail("error message")`
+    /// A failure: `mock divine -> fail("error message")`
     Fail(Expr),
 }
 
@@ -487,7 +487,7 @@ impl Stmt {
             | Stmt::Break { span, .. }
             | Stmt::Expr { span, .. }
             | Stmt::LetTuple { span, .. }
-            | Stmt::MockInfer { span, .. }
+            | Stmt::MockDivine { span, .. }
             | Stmt::MockTool { span, .. } => span,
         }
     }
@@ -509,8 +509,8 @@ pub enum ElseBranch {
 /// An expression.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
-    /// LLM inference: `infer("template")` or `infer("template" -> Type)`
-    Infer {
+    /// LLM divination: `divine("template")` or `divine("template" -> Type)`
+    Divine {
         /// The prompt template (may contain `{ident}` interpolations).
         template: StringTemplate,
         /// Optional result type annotation.
@@ -519,8 +519,8 @@ pub enum Expr {
         span: Span,
     },
 
-    /// Agent spawning: `spawn AgentName { field: value, ... }`
-    Spawn {
+    /// Agent summoning: `summon AgentName { field: value, ... }`
+    Summon {
         /// The agent type to spawn.
         agent: Ident,
         /// Initial belief values.
@@ -549,8 +549,8 @@ pub enum Expr {
         span: Span,
     },
 
-    /// Emit value: `emit(value)`
-    Emit {
+    /// Yield value: `yield(value)`
+    Yield {
         /// The value to emit to the awaiter.
         value: Box<Expr>,
         /// Span covering the expression.
@@ -817,11 +817,11 @@ impl Expr {
     #[must_use]
     pub fn span(&self) -> &Span {
         match self {
-            Expr::Infer { span, .. }
-            | Expr::Spawn { span, .. }
+            Expr::Divine { span, .. }
+            | Expr::Summon { span, .. }
             | Expr::Await { span, .. }
             | Expr::Send { span, .. }
-            | Expr::Emit { span, .. }
+            | Expr::Yield { span, .. }
             | Expr::Call { span, .. }
             | Expr::SelfMethodCall { span, .. }
             | Expr::SelfField { span, .. }

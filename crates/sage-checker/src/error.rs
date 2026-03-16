@@ -365,13 +365,13 @@ pub enum CheckError {
         span: SourceSpan,
     },
 
-    #[error("`emit` cannot be called in `on stop` handler")]
+    #[error("`yield` cannot be called in `on stop` handler")]
     #[diagnostic(
         code(sage::E017),
-        help("Oswyn suggests: remove the emit call - on stop is for cleanup only")
+        help("Oswyn suggests: remove the yield call - on stop is for cleanup only")
     )]
     EmitInStopHandler {
-        #[label("emit not allowed in stop handler")]
+        #[label("yield not allowed in stop handler")]
         span: SourceSpan,
     },
 
@@ -499,7 +499,7 @@ pub enum CheckError {
         span: SourceSpan,
     },
 
-    #[error("`mock infer` is only valid inside a `test` block")]
+    #[error("`mock divine` is only valid inside a `test` block")]
     #[diagnostic(code(sage::E056))]
     MockInferOutsideTest {
         #[label("must be inside a test block")]
@@ -876,8 +876,8 @@ impl CheckError {
         }
     }
 
-    /// Create an emit in stop handler error (E017).
-    pub fn emit_in_stop_handler(span: &Span) -> Self {
+    /// Create a yield in stop handler error (E017).
+    pub fn yield_in_stop_handler(span: &Span) -> Self {
         Self::EmitInStopHandler {
             span: to_source_span(span),
         }
@@ -1002,9 +1002,9 @@ impl CheckError {
         }
     }
 
-    /// Create a mock-infer-outside-test error (E056).
+    /// Create a mock-divine-outside-test error (E056).
     #[must_use]
-    pub fn mock_infer_outside_test(span: &Span) -> Self {
+    pub fn mock_divine_outside_test(span: &Span) -> Self {
         Self::MockInferOutsideTest {
             span: to_source_span(span),
         }

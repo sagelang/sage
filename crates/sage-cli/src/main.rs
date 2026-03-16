@@ -885,7 +885,7 @@ entry = "src/main.sg"
 agent Main {
     on start {
         print("Hello from Sage!");
-        emit(0);
+        yield(0);
     }
 }
 

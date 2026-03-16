@@ -22,8 +22,8 @@ pub enum TypeExpr {
     List(Box<TypeExpr>),
     /// Optional value: `Option<T>`.
     Option(Box<TypeExpr>),
-    /// LLM inference result: `Inferred<T>`.
-    Inferred(Box<TypeExpr>),
+    /// LLM oracle result: `Oracle<T>`.
+    Oracle(Box<TypeExpr>),
     /// Agent handle: `Agent<AgentName>`.
     Agent(Ident),
     /// Named type with optional type arguments (e.g., `Point`, `Pair<Int, String>`).
@@ -62,7 +62,7 @@ impl TypeExpr {
             self,
             TypeExpr::List(_)
                 | TypeExpr::Option(_)
-                | TypeExpr::Inferred(_)
+                | TypeExpr::Oracle(_)
                 | TypeExpr::Agent(_)
                 | TypeExpr::Fn(_, _)
                 | TypeExpr::Map(_, _)
@@ -75,7 +75,7 @@ impl TypeExpr {
     #[must_use]
     pub fn inner_type(&self) -> Option<&TypeExpr> {
         match self {
-            TypeExpr::List(inner) | TypeExpr::Option(inner) | TypeExpr::Inferred(inner) => {
+            TypeExpr::List(inner) | TypeExpr::Option(inner) | TypeExpr::Oracle(inner) => {
                 Some(inner)
             }
             _ => None,
@@ -94,7 +94,7 @@ impl fmt::Display for TypeExpr {
             TypeExpr::Error => write!(f, "Error"),
             TypeExpr::List(inner) => write!(f, "List<{inner}>"),
             TypeExpr::Option(inner) => write!(f, "Option<{inner}>"),
-            TypeExpr::Inferred(inner) => write!(f, "Inferred<{inner}>"),
+            TypeExpr::Oracle(inner) => write!(f, "Oracle<{inner}>"),
             TypeExpr::Agent(name) => write!(f, "Agent<{name}>"),
             TypeExpr::Named(name, type_args) => {
                 write!(f, "{name}")?;
@@ -157,8 +157,8 @@ mod tests {
         let option_int = TypeExpr::Option(Box::new(TypeExpr::Int));
         assert_eq!(format!("{option_int}"), "Option<Int>");
 
-        let inferred_str = TypeExpr::Inferred(Box::new(TypeExpr::String));
-        assert_eq!(format!("{inferred_str}"), "Inferred<String>");
+        let oracle_str = TypeExpr::Oracle(Box::new(TypeExpr::String));
+        assert_eq!(format!("{oracle_str}"), "Oracle<String>");
 
         let agent = TypeExpr::Agent(Ident::dummy("Researcher"));
         assert_eq!(format!("{agent}"), "Agent<Researcher>");
@@ -223,7 +223,7 @@ mod tests {
 
         assert!(TypeExpr::List(Box::new(TypeExpr::Int)).is_compound());
         assert!(TypeExpr::Option(Box::new(TypeExpr::Int)).is_compound());
-        assert!(TypeExpr::Inferred(Box::new(TypeExpr::String)).is_compound());
+        assert!(TypeExpr::Oracle(Box::new(TypeExpr::String)).is_compound());
         assert!(TypeExpr::Agent(Ident::dummy("Foo")).is_compound());
     }
 

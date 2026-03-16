@@ -53,7 +53,7 @@ mod tests {
         let source = r#"
 agent Main {
     on start {
-        emit(42);
+        yield(42);
     }
 }
 run Main;
@@ -71,7 +71,7 @@ run Main;
         let source = r#"
 agent Main {
     on start {
-        emit(x);
+        yield(x);
     }
 }
 run Main;
@@ -91,7 +91,7 @@ run Main;
 
     #[test]
     fn analyse_parse_error() {
-        let source = "agent Main { on start { emit( } } run Main;";
+        let source = "agent Main { on start { yield( } } run Main;";
         let diagnostics = analyse(source);
         assert!(!diagnostics.is_empty());
     }

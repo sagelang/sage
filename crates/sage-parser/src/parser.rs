@@ -801,10 +801,10 @@ fn stmt_parser(
             span: make_span(&src9, span),
         });
 
-    // RFC-0012: mock infer -> value; or mock infer -> fail("msg");
+    // RFC-0012: mock divine -> value; or mock divine -> fail("msg");
     let src12 = source.clone();
-    let mock_infer_stmt = just(Token::KwMock)
-        .ignore_then(just(Token::KwInfer))
+    let mock_divine_stmt = just(Token::KwMock)
+        .ignore_then(just(Token::KwDivine))
         .ignore_then(just(Token::Arrow))
         .ignore_then(expr_parser(src12.clone()).map(|expr| {
             // Check if this is a fail() call expression and convert to MockValue::Fail
@@ -815,7 +815,7 @@ fn stmt_parser(
             }
         }))
         .then_ignore(just(Token::Semicolon))
-        .map_with_span(move |value, span: Range<usize>| Stmt::MockInfer {
+        .map_with_span(move |value, span: Range<usize>| Stmt::MockDivine {
             value,
             span: make_span(&src12, span),
         });
@@ -873,7 +873,7 @@ fn stmt_parser(
         .or(while_stmt)
         .or(loop_stmt)
         .or(break_stmt)
-        .or(mock_infer_stmt)
+        .or(mock_divine_stmt)
         .or(mock_tool_stmt)
         .or(assign_stmt)
         .or(expr_stmt)
@@ -960,8 +960,8 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
                 }
             });
 
-        // infer("template") or infer("template" -> Type)
-        let infer_expr = just(Token::KwInfer)
+        // divine("template") or divine("template" -> Type)
+        let divine_expr = just(Token::KwDivine)
             .ignore_then(just(Token::LParen))
             .ignore_then(string_template_parser(src.clone()))
             .then(
@@ -972,15 +972,15 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
             .then_ignore(just(Token::RParen))
             .map_with_span({
                 let src = src.clone();
-                move |(template, result_ty), span: Range<usize>| Expr::Infer {
+                move |(template, result_ty), span: Range<usize>| Expr::Divine {
                     template,
                     result_ty,
                     span: make_span(&src, span),
                 }
             });
 
-        // spawn Agent { field: value, ... }
-        let spawn_field_init = ident_token_parser(src.clone())
+        // summon Agent { field: value, ... }
+        let summon_field_init = ident_token_parser(src.clone())
             .then_ignore(just(Token::Colon))
             .then(expr.clone())
             .map_with_span({
@@ -992,18 +992,18 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
                 }
             });
 
-        let spawn_expr = just(Token::KwSpawn)
+        let summon_expr = just(Token::KwSummon)
             .ignore_then(ident_token_parser(src.clone()))
             .then_ignore(just(Token::LBrace))
             .then(
-                spawn_field_init
+                summon_field_init
                     .separated_by(just(Token::Comma))
                     .allow_trailing(),
             )
             .then_ignore(just(Token::RBrace))
             .map_with_span({
                 let src = src.clone();
-                move |(agent, fields), span: Range<usize>| Expr::Spawn {
+                move |(agent, fields), span: Range<usize>| Expr::Summon {
                     agent,
                     fields,
                     span: make_span(&src, span),
@@ -1051,14 +1051,14 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
                 }
             });
 
-        // emit(value)
-        let emit_expr = just(Token::KwEmit)
+        // yield(value)
+        let yield_expr = just(Token::KwYield)
             .ignore_then(just(Token::LParen))
             .ignore_then(expr.clone())
             .then_ignore(just(Token::RParen))
             .map_with_span({
                 let src = src.clone();
-                move |value, span: Range<usize>| Expr::Emit {
+                move |value, span: Range<usize>| Expr::Yield {
                     value: Box::new(value),
                     span: make_span(&src, span),
                 }
@@ -1152,7 +1152,7 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
             });
 
         // Record construction: RecordName { field: value, ... }
-        // This is similar to spawn but without the spawn keyword
+        // This is similar to summon but without the summon keyword
         // Must come before var to avoid conflict
         let record_field_init = ident_token_parser(src.clone())
             .then_ignore(just(Token::Colon))
@@ -1311,11 +1311,11 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
         // Note: map_literal must come after record_construct (record has name before brace)
         // Note: variant_construct must come before call_expr to parse `EnumName::Variant(...)` correctly
         let atom = closure
-            .or(infer_expr)
-            .or(spawn_expr)
+            .or(divine_expr)
+            .or(summon_expr)
             .or(await_expr)
             .or(send_expr)
-            .or(emit_expr)
+            .or(yield_expr)
             .or(receive_expr)
             .or(trace_expr)
             .or(match_expr)
@@ -1742,11 +1742,11 @@ fn type_parser(source: Arc<str>) -> impl Parser<Token, TypeExpr, Error = ParseEr
             .then_ignore(just(Token::Gt))
             .map(|inner| TypeExpr::Option(Box::new(inner)));
 
-        let inferred_ty = just(Token::TyInferred)
+        let oracle_ty = just(Token::TyOracle)
             .ignore_then(just(Token::Lt))
             .ignore_then(ty.clone())
             .then_ignore(just(Token::Gt))
-            .map(|inner| TypeExpr::Inferred(Box::new(inner)));
+            .map(|inner| TypeExpr::Oracle(Box::new(inner)));
 
         let agent_ty = just(Token::TyAgent)
             .ignore_then(just(Token::Lt))
@@ -1807,7 +1807,7 @@ fn type_parser(source: Arc<str>) -> impl Parser<Token, TypeExpr, Error = ParseEr
         primitive
             .or(list_ty)
             .or(option_ty)
-            .or(inferred_ty)
+            .or(oracle_ty)
             .or(agent_ty)
             .or(fn_ty)
             .or(map_ty)
@@ -2591,7 +2591,7 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    emit(42);
+                    yield(42);
                 }
             }
             run Main;
@@ -2614,7 +2614,7 @@ mod tests {
                 max_words: Int
 
                 on start {
-                    emit(self.topic);
+                    yield(self.topic);
                 }
             }
             run Researcher;
@@ -2670,7 +2670,7 @@ mod tests {
 
             agent Main {
                 on start {
-                    emit(greet("World"));
+                    yield(greet("World"));
                 }
             }
             run Main;
@@ -2692,7 +2692,7 @@ mod tests {
                 on start {
                     let x: Int = 42;
                     let y = "hello";
-                    emit(x);
+                    yield(x);
                 }
             }
             run Main;
@@ -2713,9 +2713,9 @@ mod tests {
             agent Main {
                 on start {
                     if true {
-                        emit(1);
+                        yield(1);
                     } else {
-                        emit(2);
+                        yield(2);
                     }
                 }
             }
@@ -2738,7 +2738,7 @@ mod tests {
                     for x in [1, 2, 3] {
                         print(x);
                     }
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -2759,15 +2759,15 @@ mod tests {
                 name: String
 
                 on start {
-                    emit(self.name);
+                    yield(self.name);
                 }
             }
 
             agent Main {
                 on start {
-                    let w = spawn Worker { name: "test" };
+                    let w = summon Worker { name: "test" };
                     let result = await w;
-                    emit(result);
+                    yield(result);
                 }
             }
             run Main;
@@ -2783,15 +2783,15 @@ mod tests {
         let source = r#"
             agent Worker {
                 on start {
-                    emit("done");
+                    yield("done");
                 }
             }
 
             agent Main {
                 on start {
-                    let w = spawn Worker {};
+                    let w = summon Worker {};
                     let result = await w timeout(5000);
-                    emit(result);
+                    yield(result);
                 }
             }
             run Main;
@@ -2818,12 +2818,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_infer() {
+    fn parse_divine() {
         let source = r#"
             agent Main {
                 on start {
-                    let result = infer("What is 2+2?");
-                    emit(result);
+                    let result = divine("What is 2+2?");
+                    yield(result);
                 }
             }
             run Main;
@@ -2840,7 +2840,7 @@ mod tests {
             agent Main {
                 on start {
                     let x = 2 + 3 * 4;
-                    emit(x);
+                    yield(x);
                 }
             }
             run Main;
@@ -2866,8 +2866,8 @@ mod tests {
             agent Main {
                 on start {
                     let name = "World";
-                    let msg = infer("Greet {name}");
-                    emit(msg);
+                    let msg = divine("Greet {name}");
+                    yield(msg);
                 }
             }
             run Main;
@@ -2879,7 +2879,7 @@ mod tests {
 
         let stmts = &prog.agents[0].handlers[0].body.stmts;
         if let Stmt::Let { value, .. } = &stmts[1] {
-            if let Expr::Infer { template, .. } = value {
+            if let Expr::Divine { template, .. } = value {
                 assert!(template.has_interpolations());
             } else {
                 panic!("expected infer expression");
@@ -2893,7 +2893,7 @@ mod tests {
             agent Main {
                 on start {
                     let x = 'hello';
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -2931,7 +2931,7 @@ mod tests {
                 on start {
                     print("Result: {reverse('hello')}");
                     print("Concat: {'abc' ++ 'def'}");
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -2972,7 +2972,7 @@ mod tests {
 
             agent Main {
                 on start {
-                    emit(42);
+                    yield(42);
                 }
             }
             run Main;
@@ -2992,7 +2992,7 @@ mod tests {
             agent Main {
                 on start {
                     let x = [1, 2, 3;
-                    emit(42);
+                    yield(42);
                 }
             }
             run Main;
@@ -3012,7 +3012,7 @@ mod tests {
 
             agent Main {
                 on start {
-                    emit(42);
+                    yield(42);
                 }
             }
             run Main;
@@ -3036,7 +3036,7 @@ mod tests {
 
             agent Main {
                 on start {
-                    emit(42);
+                    yield(42);
                 }
             }
             run Main;
@@ -3061,7 +3061,7 @@ mod tests {
 
             agent Main {
                 on start {
-                    emit(42);
+                    yield(42);
                 }
             }
             run Main;
@@ -3084,13 +3084,13 @@ mod tests {
         let source = r#"
             pub agent Worker {
                 on start {
-                    emit(42);
+                    yield(42);
                 }
             }
 
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -3115,7 +3115,7 @@ mod tests {
 
             agent Main {
                 on start {
-                    emit(helper(42));
+                    yield(helper(42));
                 }
             }
             run Main;
@@ -3136,7 +3136,7 @@ mod tests {
         let source = r#"
             pub agent Worker {
                 on start {
-                    emit(42);
+                    yield(42);
                 }
             }
 
@@ -3164,7 +3164,7 @@ mod tests {
 
             agent Main {
                 on start {
-                    emit(42);
+                    yield(42);
                 }
             }
             run Main;
@@ -3192,7 +3192,7 @@ mod tests {
 
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -3219,7 +3219,7 @@ mod tests {
             }
 
             agent Main {
-                on start { emit(0); }
+                on start { yield(0); }
             }
             run Main;
         "#;
@@ -3244,7 +3244,7 @@ mod tests {
 
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -3269,7 +3269,7 @@ mod tests {
             pub enum Priority { High, Medium, Low }
 
             agent Main {
-                on start { emit(0); }
+                on start { yield(0); }
             }
             run Main;
         "#;
@@ -3290,7 +3290,7 @@ mod tests {
 
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -3312,7 +3312,7 @@ mod tests {
             pub const API_URL: String = "https://api.example.com";
 
             agent Main {
-                on start { emit(0); }
+                on start { yield(0); }
             }
             run Main;
         "#;
@@ -3334,7 +3334,7 @@ mod tests {
             const ORIGIN_X: Int = 0;
 
             agent Main {
-                on start { emit(0); }
+                on start { yield(0); }
             }
             run Main;
         "#;
@@ -3360,7 +3360,7 @@ mod tests {
                         Pending => 2,
                         Done => 3,
                     };
-                    emit(s);
+                    yield(s);
                 }
             }
             run Main;
@@ -3393,7 +3393,7 @@ mod tests {
                         2 => 20,
                         _ => 0,
                     };
-                    emit(result);
+                    yield(result);
                 }
             }
             run Main;
@@ -3414,7 +3414,7 @@ mod tests {
             agent Main {
                 on start {
                     let p = Point { x: 10, y: 20 };
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -3460,7 +3460,7 @@ mod tests {
                         Status::Active => 1,
                         Status::Pending => 0,
                     };
-                    emit(result);
+                    yield(result);
                 }
             }
             run Main;
@@ -3484,7 +3484,7 @@ mod tests {
                     let p = Point { x: 10, y: 20 };
                     let x_val = p.x;
                     let y_val = p.y;
-                    emit(x_val);
+                    yield(x_val);
                 }
             }
             run Main;
@@ -3522,7 +3522,7 @@ mod tests {
                     let inner = Inner { val: 42 };
                     let outer = Outer { inner: inner };
                     let v = outer.inner.val;
-                    emit(v);
+                    yield(v);
                 }
             }
             run Main;
@@ -3574,7 +3574,7 @@ mod tests {
                             break;
                         }
                     }
-                    emit(count);
+                    yield(count);
                 }
             }
             run Main;
@@ -3612,13 +3612,13 @@ mod tests {
                 id: Int
 
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
 
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -3654,12 +3654,12 @@ mod tests {
             agent Worker receives Msg {
                 on start {
                     let msg = receive();
-                    emit(0);
+                    yield(0);
                 }
             }
 
             agent Main {
-                on start { emit(0); }
+                on start { yield(0); }
             }
             run Main;
         "#;
@@ -3701,17 +3701,17 @@ mod tests {
                         Task => 1,
                         Shutdown => 0,
                     };
-                    emit(result);
+                    yield(result);
                 }
             }
 
             agent Main {
                 on start {
-                    let w = spawn Worker { id: 1 };
+                    let w = summon Worker { id: 1 };
                     send(w, Task);
                     send(w, Shutdown);
                     await w;
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -3741,11 +3741,11 @@ mod tests {
     fn parse_fallible_function() {
         let source = r#"
             fn get_data(url: String) -> String fails {
-                return infer("Get data from {url}" -> String);
+                return divine("Get data from {url}" -> String);
             }
 
             agent Main {
-                on start { emit(0); }
+                on start { yield(0); }
             }
             run Main;
         "#;
@@ -3766,7 +3766,7 @@ mod tests {
             agent Main {
                 on start {
                     let x = try fallible();
-                    emit(x);
+                    yield(x);
                 }
             }
             run Main;
@@ -3793,7 +3793,7 @@ mod tests {
             agent Main {
                 on start {
                     let x = fallible() catch { 0 };
-                    emit(x);
+                    yield(x);
                 }
             }
             run Main;
@@ -3824,7 +3824,7 @@ mod tests {
             agent Main {
                 on start {
                     let x = fallible() catch(e) { 0 };
-                    emit(x);
+                    yield(x);
                 }
             }
             run Main;
@@ -3856,7 +3856,7 @@ mod tests {
                     fail "something went wrong";
                 }
                 on error(e) {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -3887,13 +3887,13 @@ mod tests {
 
                 on start {
                     let result = retry(3) {
-                        try infer("Summarize: {self.topic}")
+                        try divine("Summarize: {self.topic}")
                     } catch { "fallback" };
-                    emit(result);
+                    yield(result);
                 }
 
                 on error(e) {
-                    emit("");
+                    yield("");
                 }
             }
             run Main;
@@ -3930,7 +3930,7 @@ mod tests {
                     let result = retry(3, delay: 1000) {
                         42
                     } catch { 0 };
-                    emit(result);
+                    yield(result);
                 }
             }
             run Main;
@@ -3962,11 +3962,11 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
 
                 on error(e) {
-                    emit(1);
+                    yield(1);
                 }
             }
             run Main;
@@ -4006,7 +4006,7 @@ mod tests {
 
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -4037,7 +4037,7 @@ mod tests {
             agent Main {
                 on start {
                     let f = |x: Int| x + 1;
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -4071,7 +4071,7 @@ mod tests {
             agent Main {
                 on start {
                     let f = || 42;
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -4103,7 +4103,7 @@ mod tests {
             agent Main {
                 on start {
                     let add = |x: Int, y: Int| x + y;
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -4136,7 +4136,7 @@ mod tests {
 
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -4163,7 +4163,7 @@ mod tests {
             agent Main {
                 on start {
                     let t = (1, 2);
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -4197,7 +4197,7 @@ mod tests {
                 fn post(url: String, body: String) -> Result<String, String>
             }
             agent Main {
-                on start { emit(0); }
+                on start { yield(0); }
             }
             run Main;
         "#;
@@ -4220,7 +4220,7 @@ mod tests {
                 fn query(sql: String) -> Result<List<String>, String>
             }
             agent Main {
-                on start { emit(0); }
+                on start { yield(0); }
             }
             run Main;
         "#;
@@ -4242,7 +4242,7 @@ mod tests {
                 url: String
 
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Fetcher;
@@ -4264,7 +4264,7 @@ mod tests {
                 use Http, Fs
 
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Pipeline;
@@ -4287,7 +4287,7 @@ mod tests {
 
                 on start {
                     let response = Http.get("https://example.com");
-                    emit(0);
+                    yield(0);
                 }
             }
             run Fetcher;
@@ -4325,7 +4325,7 @@ mod tests {
 
                 on start {
                     let result = Fs.write("/tmp/test.txt", "hello world");
-                    emit(0);
+                    yield(0);
                 }
             }
             run Writer;
@@ -4355,7 +4355,7 @@ mod tests {
                 on start {
                     let p = Person { name: "Alice" };
                     print("Hello, {p.name}!");
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -4403,7 +4403,7 @@ mod tests {
                 on start {
                     let pair = (1, 2);
                     print("First: {pair.0}");
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -4511,7 +4511,7 @@ mod tests {
             }
 
             agent Main {
-                on start { emit(0); }
+                on start { yield(0); }
             }
             run Main;
         "#;
@@ -4535,7 +4535,7 @@ mod tests {
             }
 
             agent Main {
-                on start { emit(0); }
+                on start { yield(0); }
             }
             run Main;
         "#;
@@ -4560,7 +4560,7 @@ mod tests {
             }
 
             agent Main {
-                on start { emit(0); }
+                on start { yield(0); }
             }
             run Main;
         "#;
@@ -4586,7 +4586,7 @@ mod tests {
             }
 
             agent Main {
-                on start { emit(0); }
+                on start { yield(0); }
             }
             run Main;
         "#;
@@ -4614,7 +4614,7 @@ mod tests {
             }
 
             agent Main {
-                on start { emit(0); }
+                on start { yield(0); }
             }
             run Main;
         "#;
@@ -4648,7 +4648,7 @@ mod tests {
             agent Main {
                 on start {
                     let result = identity::<Int>(42);
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -4685,7 +4685,7 @@ mod tests {
             agent Main {
                 on start {
                     let pair = make_pair::<Int, String>(42, "hello");
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -4724,7 +4724,7 @@ mod tests {
             agent Main {
                 on start {
                     let p = Pair::<Int, String> { first: 42, second: "hi" };
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -4763,7 +4763,7 @@ mod tests {
             agent Main {
                 on start {
                     let e = Either::<String, Int>::Left("hello");
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -4806,7 +4806,7 @@ mod tests {
             agent Main {
                 on start {
                     let page: Page<String> = Page { items: [], count: 0 };
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -4838,7 +4838,7 @@ mod tests {
             }
 
             agent Main {
-                on start { emit(0); }
+                on start { yield(0); }
             }
             run Main;
         "#;

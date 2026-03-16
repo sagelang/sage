@@ -543,7 +543,7 @@ mod tests {
             r#"
 agent Main {
     on start {
-        emit(42);
+        yield(42);
     }
 }
 run Main;
@@ -578,7 +578,7 @@ entry = "src/main.sg"
             r#"
 agent Main {
     on start {
-        emit(0);
+        yield(0);
     }
 }
 run Main;
@@ -614,7 +614,7 @@ mod agents;
 
 agent Main {
     on start {
-        emit(0);
+        yield(0);
     }
 }
 run Main;
@@ -628,7 +628,7 @@ run Main;
             r#"
 pub agent Worker {
     on start {
-        emit(1);
+        yield(1);
     }
 }
 "#,
@@ -649,7 +649,7 @@ pub agent Worker {
         // Create main file and test files
         fs::write(
             dir.path().join("src/main.sg"),
-            "agent Main { on start { emit(0); } } run Main;",
+            "agent Main { on start { yield(0); } } run Main;",
         )
         .unwrap();
         fs::write(
@@ -677,7 +677,7 @@ pub agent Worker {
 
         fs::write(
             dir.path().join("src/main.sg"),
-            "agent Main { on start { emit(0); } } run Main;",
+            "agent Main { on start { yield(0); } } run Main;",
         )
         .unwrap();
         fs::write(
@@ -704,7 +704,7 @@ pub agent Worker {
 
         fs::write(
             dir.path().join("src/main.sg"),
-            "agent Main { on start { emit(0); } } run Main;",
+            "agent Main { on start { yield(0); } } run Main;",
         )
         .unwrap();
         fs::write(

@@ -29,7 +29,7 @@ class Sage < Formula
     (testpath/"hello.sg").write <<~EOS
       agent Main {
         on start {
-          emit(42);
+          yield(42);
         }
       }
       run Main;

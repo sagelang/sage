@@ -442,7 +442,7 @@ serde_json = "1"
         self.emit.writeln("() {");
         self.emit.indent();
 
-        // Generate mock LLM client if there are mock infers
+        // Generate mock LLM client if there are mock divines
         if !mock_infers.is_empty() {
             self.emit
                 .writeln("let _mock_client = MockLlmClient::with_responses(vec![");
@@ -503,7 +503,7 @@ serde_json = "1"
     fn collect_mock_infers(&self, block: &Block) -> Vec<MockValue> {
         let mut mocks = Vec::new();
         for stmt in &block.stmts {
-            if let Stmt::MockInfer { value, .. } = stmt {
+            if let Stmt::MockDivine { value, .. } = stmt {
                 mocks.push(value.clone());
             }
         }
@@ -528,8 +528,8 @@ serde_json = "1"
 
     fn generate_test_block(&mut self, block: &Block) {
         for stmt in &block.stmts {
-            // Skip mock infer and mock tool statements - they were collected separately
-            if matches!(stmt, Stmt::MockInfer { .. } | Stmt::MockTool { .. }) {
+            // Skip mock divine and mock tool statements - they were collected separately
+            if matches!(stmt, Stmt::MockDivine { .. } | Stmt::MockTool { .. }) {
                 continue;
             }
             self.generate_test_stmt(stmt);
@@ -916,7 +916,7 @@ serde_json = "1"
     fn generate_agent(&mut self, agent: &AgentDecl) {
         let name = &agent.name.name;
 
-        // Track if this agent has an error handler for spawn generation
+        // Track if this agent has an error handler for summon generation
         let has_error_handler = agent
             .handlers
             .iter()
@@ -1264,8 +1264,8 @@ serde_json = "1"
 
             Stmt::Expr { expr, .. } => {
                 // Handle emit specially
-                if let Expr::Emit { value, .. } = expr {
-                    self.emit.write("return ctx.emit(");
+                if let Expr::Yield { value, .. } = expr {
+                    self.emit.write("return ctx.yield(");
                     self.generate_expr(value);
                     self.emit.writeln(");");
                 } else {
@@ -1287,11 +1287,11 @@ serde_json = "1"
                 self.emit.writeln(";");
             }
 
-            // RFC-0012: mock infer - codegen will be handled in test harness generation
-            Stmt::MockInfer { value, .. } => {
+            // RFC-0012: mock divine - codegen will be handled in test harness generation
+            Stmt::MockDivine { value, .. } => {
                 // Mock statements are collected during test codegen, not emitted inline
                 // This placeholder ensures the match is exhaustive
-                self.emit.write("// mock infer: ");
+                self.emit.write("// mock divine: ");
                 match value {
                     sage_parser::MockValue::Value(expr) => {
                         self.generate_expr(expr);
@@ -2102,14 +2102,14 @@ serde_json = "1"
                 self.emit.write(")");
             }
 
-            Expr::Infer { template, .. } => {
+            Expr::Divine { template, .. } => {
                 // Note: No ? here - the try wrapper is responsible for error propagation
                 self.emit.write("ctx.infer_string(&");
                 self.emit_string_template(template);
                 self.emit.write(").await");
             }
 
-            Expr::Spawn { agent, fields, .. } => {
+            Expr::Summon { agent, fields, .. } => {
                 let has_error_handler = self.agents_with_error_handlers.contains(&agent.name);
                 self.emit
                     .write("sage_runtime::spawn(|mut ctx| async move { ");
@@ -2170,8 +2170,8 @@ serde_json = "1"
                 self.emit.write(")?).await?");
             }
 
-            Expr::Emit { value, .. } => {
-                self.emit.write("ctx.emit(");
+            Expr::Yield { value, .. } => {
+                self.emit.write("ctx.yield(");
                 self.generate_expr(value);
                 self.emit.write(")");
             }
@@ -2582,7 +2582,7 @@ serde_json = "1"
                 self.emit_type(inner);
                 self.emit.write(">");
             }
-            TypeExpr::Inferred(inner) => {
+            TypeExpr::Oracle(inner) => {
                 // Inferred<T> just becomes T at runtime
                 self.emit_type(inner);
             }
@@ -2696,7 +2696,7 @@ serde_json = "1"
     }
 
     fn find_emit_type(&self, block: &Block) -> Option<String> {
-        // Track variable assignments to resolve emit(var) types
+        // Track variable assignments to resolve yield(var) types
         let mut var_types: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
 
@@ -2708,7 +2708,7 @@ serde_json = "1"
             }
 
             if let Stmt::Expr { expr, .. } = stmt {
-                if let Expr::Emit { value, .. } = expr {
+                if let Expr::Yield { value, .. } = expr {
                     return Some(self.infer_expr_type_with_vars(value, &var_types));
                 }
             }
@@ -2777,7 +2777,7 @@ serde_json = "1"
                     "i64".to_string()
                 }
             }
-            Expr::Infer { .. } | Expr::StringInterp { .. } => "String".to_string(),
+            Expr::Divine { .. } | Expr::StringInterp { .. } => "String".to_string(),
             Expr::Call { name, .. } if name.name == "str" => "String".to_string(),
             Expr::Call { name, .. } if name.name == "len" => "i64".to_string(),
             _ => "i64".to_string(),
@@ -2805,7 +2805,7 @@ mod tests {
         let source = r#"
             agent Main {
                 on start {
-                    emit(42);
+                    yield(42);
                 }
             }
             run Main;
@@ -2814,7 +2814,7 @@ mod tests {
         let output = generate_source(source);
         assert!(output.contains("struct Main;"));
         assert!(output.contains("async fn on_start"));
-        assert!(output.contains("ctx.emit(42_i64)"));
+        assert!(output.contains("ctx.yield(42_i64)"));
         assert!(output.contains("#[tokio::main]"));
     }
 
@@ -2826,7 +2826,7 @@ mod tests {
             }
             agent Main {
                 on start {
-                    emit(add(1, 2));
+                    yield(add(1, 2));
                 }
             }
             run Main;
@@ -2844,12 +2844,12 @@ mod tests {
                 value: Int
 
                 on start {
-                    emit(self.value * 2);
+                    yield(self.value * 2);
                 }
             }
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -2869,7 +2869,7 @@ mod tests {
                     let name = "World";
                     let msg = "Hello, {name}!";
                     print(msg);
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -2886,9 +2886,9 @@ mod tests {
                 on start {
                     let x = 10;
                     if x > 5 {
-                        emit(1);
+                        yield(1);
                     } else {
-                        emit(0);
+                        yield(0);
                     }
                 }
             }
@@ -2913,7 +2913,7 @@ mod tests {
                     while n < 5 {
                         n = n + 1;
                     }
-                    emit(n);
+                    yield(n);
                 }
             }
             run Main;
@@ -2932,7 +2932,7 @@ mod tests {
             }
             agent Main {
                 on start {
-                    emit(helper(21));
+                    yield(helper(21));
                 }
             }
             run Main;
@@ -2947,12 +2947,12 @@ mod tests {
         let source = r#"
             pub agent Worker {
                 on start {
-                    emit(42);
+                    yield(42);
                 }
             }
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -2975,7 +2975,7 @@ mod tests {
             r#"
 agent Main {
     on start {
-        emit(42);
+        yield(42);
     }
 }
 run Main;
@@ -3001,7 +3001,7 @@ run Main;
             agent Main {
                 on start {
                     let p = Point { x: 10, y: 20 };
-                    emit(p.x);
+                    yield(p.x);
                 }
             }
             run Main;
@@ -3026,7 +3026,7 @@ run Main;
             }
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -3047,7 +3047,7 @@ run Main;
             const GREETING: String = "Hello";
             agent Main {
                 on start {
-                    emit(MAX_SIZE);
+                    yield(MAX_SIZE);
                 }
             }
             run Main;
@@ -3074,7 +3074,7 @@ run Main;
             }
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
             }
             run Main;
@@ -3097,7 +3097,7 @@ run Main;
                 return url;
             }
             agent Main {
-                on start { emit(0); }
+                on start { yield(0); }
             }
             run Main;
         "#;
@@ -3116,7 +3116,7 @@ run Main;
                 return x;
             }
             agent Main {
-                on start { emit(0); }
+                on start { yield(0); }
             }
             run Main;
         "#;
@@ -3133,7 +3133,7 @@ run Main;
             agent Main {
                 on start {
                     let x = fallible() catch { 0 };
-                    emit(x);
+                    yield(x);
                 }
             }
             run Main;
@@ -3153,7 +3153,7 @@ run Main;
             agent Main {
                 on start {
                     let x = fallible() catch(e) { 0 };
-                    emit(x);
+                    yield(x);
                 }
             }
             run Main;
@@ -3169,10 +3169,10 @@ run Main;
         let source = r#"
             agent Main {
                 on start {
-                    emit(0);
+                    yield(0);
                 }
                 on error(e) {
-                    emit(1);
+                    yield(1);
                 }
             }
             run Main;
@@ -3197,7 +3197,7 @@ run Main;
 
                 on start {
                     let r = Http.get("https://example.com");
-                    emit(0);
+                    yield(0);
                 }
             }
             run Fetcher;
@@ -3221,7 +3221,7 @@ run Main;
 
                 on start {
                     let response = Http.get("https://httpbin.org/get");
-                    emit(0);
+                    yield(0);
                 }
             }
             run Fetcher;
@@ -3263,7 +3263,7 @@ run Main;
     fn generate_mock_infer_and_tool() {
         let source = r#"
             test "mocks both infer and tool" {
-                mock infer -> "hello";
+                mock divine -> "hello";
                 mock tool Http.get -> "response";
                 assert_true(true);
             }
