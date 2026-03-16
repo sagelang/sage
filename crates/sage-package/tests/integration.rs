@@ -13,24 +13,32 @@ fn dependency_spec_serialization_roundtrip() {
 }
 
 #[test]
+fn path_dependency_spec_serialization_roundtrip() {
+    let spec = DependencySpec::with_path("../my-local-lib");
+    let toml = toml::to_string(&spec).unwrap();
+    let parsed: DependencySpec = toml::from_str(&toml).unwrap();
+    assert_eq!(spec, parsed);
+}
+
+#[test]
 fn lock_file_roundtrip() {
     let lock = LockFile {
         version: 1,
         packages: vec![
-            LockedPackage {
-                name: "foo".to_string(),
-                version: "1.0.0".to_string(),
-                git: "https://github.com/example/foo".to_string(),
-                rev: "abc123def456789".to_string(),
-                dependencies: vec![],
-            },
-            LockedPackage {
-                name: "bar".to_string(),
-                version: "2.0.0".to_string(),
-                git: "https://github.com/example/bar".to_string(),
-                rev: "def456abc789xyz".to_string(),
-                dependencies: vec!["foo".to_string()],
-            },
+            LockedPackage::git(
+                "foo".to_string(),
+                "1.0.0".to_string(),
+                "https://github.com/example/foo".to_string(),
+                "abc123def456789".to_string(),
+                vec![],
+            ),
+            LockedPackage::git(
+                "bar".to_string(),
+                "2.0.0".to_string(),
+                "https://github.com/example/bar".to_string(),
+                "def456abc789xyz".to_string(),
+                vec!["foo".to_string()],
+            ),
         ],
     };
 
@@ -44,6 +52,29 @@ fn lock_file_roundtrip() {
     assert_eq!(loaded.packages.len(), lock.packages.len());
     assert_eq!(loaded.packages[0].name, "foo");
     assert_eq!(loaded.packages[1].dependencies, vec!["foo"]);
+}
+
+#[test]
+fn lock_file_path_dependency_roundtrip() {
+    let lock = LockFile {
+        version: 1,
+        packages: vec![LockedPackage::path(
+            "local-lib".to_string(),
+            "0.1.0".to_string(),
+            "../local-lib".to_string(),
+            vec![],
+        )],
+    };
+
+    let dir = TempDir::new().unwrap();
+    let lock_path = dir.path().join("sage.lock");
+
+    lock.save(&lock_path).unwrap();
+    let loaded = LockFile::load(&lock_path).unwrap();
+
+    assert_eq!(loaded.packages.len(), 1);
+    assert!(loaded.packages[0].is_path());
+    assert_eq!(loaded.packages[0].path, Some("../local-lib".to_string()));
 }
 
 #[test]
@@ -61,21 +92,28 @@ branch = "main"
 [utils]
 git = "https://github.com/sage-packages/utils"
 rev = "abc123"
+
+[local]
+path = "../local-lib"
 "#,
     )
     .unwrap();
 
     let deps = parse_dependencies(&table).unwrap();
-    assert_eq!(deps.len(), 3);
+    assert_eq!(deps.len(), 4);
 
     assert!(deps.contains_key("http_client"));
-    assert_eq!(deps["http_client"].tag, Some("v1.0.0".to_string()));
+    assert!(deps["http_client"].is_git());
 
     assert!(deps.contains_key("json_parser"));
-    assert_eq!(deps["json_parser"].branch, Some("main".to_string()));
+    assert!(deps["json_parser"].is_git());
 
     assert!(deps.contains_key("utils"));
-    assert_eq!(deps["utils"].rev, Some("abc123".to_string()));
+    assert!(deps["utils"].is_git());
+
+    assert!(deps.contains_key("local"));
+    assert!(deps["local"].is_path());
+    assert_eq!(deps["local"].path(), Some("../local-lib"));
 }
 
 #[test]
@@ -88,13 +126,31 @@ fn lock_file_matches_deps() {
 
     let lock = LockFile {
         version: 1,
-        packages: vec![LockedPackage {
-            name: "foo".to_string(),
-            version: "1.0.0".to_string(),
-            git: "https://github.com/example/foo".to_string(),
-            rev: "abc123".to_string(),
-            dependencies: vec![],
-        }],
+        packages: vec![LockedPackage::git(
+            "foo".to_string(),
+            "1.0.0".to_string(),
+            "https://github.com/example/foo".to_string(),
+            "abc123".to_string(),
+            vec![],
+        )],
+    };
+
+    assert!(lock.matches_dependencies(&deps));
+}
+
+#[test]
+fn lock_file_matches_path_deps() {
+    let mut deps = HashMap::new();
+    deps.insert("local".to_string(), DependencySpec::with_path("../lib"));
+
+    let lock = LockFile {
+        version: 1,
+        packages: vec![LockedPackage::path(
+            "local".to_string(),
+            "0.1.0".to_string(),
+            "../lib".to_string(),
+            vec![],
+        )],
     };
 
     assert!(lock.matches_dependencies(&deps));
@@ -114,13 +170,13 @@ fn lock_file_does_not_match_missing_dep() {
 
     let lock = LockFile {
         version: 1,
-        packages: vec![LockedPackage {
-            name: "foo".to_string(),
-            version: "1.0.0".to_string(),
-            git: "https://github.com/example/foo".to_string(),
-            rev: "abc123".to_string(),
-            dependencies: vec![],
-        }],
+        packages: vec![LockedPackage::git(
+            "foo".to_string(),
+            "1.0.0".to_string(),
+            "https://github.com/example/foo".to_string(),
+            "abc123".to_string(),
+            vec![],
+        )],
     };
 
     assert!(!lock.matches_dependencies(&deps));
@@ -139,27 +195,27 @@ fn lock_file_dependency_ordering() {
         version: 1,
         packages: vec![
             // Define in reverse order to test sorting
-            LockedPackage {
-                name: "app".to_string(),
-                version: "1.0.0".to_string(),
-                git: "https://example.com/app".to_string(),
-                rev: "app123".to_string(),
-                dependencies: vec!["core".to_string(), "utils".to_string()],
-            },
-            LockedPackage {
-                name: "utils".to_string(),
-                version: "1.0.0".to_string(),
-                git: "https://example.com/utils".to_string(),
-                rev: "utils123".to_string(),
-                dependencies: vec!["core".to_string()],
-            },
-            LockedPackage {
-                name: "core".to_string(),
-                version: "1.0.0".to_string(),
-                git: "https://example.com/core".to_string(),
-                rev: "core123".to_string(),
-                dependencies: vec![],
-            },
+            LockedPackage::git(
+                "app".to_string(),
+                "1.0.0".to_string(),
+                "https://example.com/app".to_string(),
+                "app123".to_string(),
+                vec!["core".to_string(), "utils".to_string()],
+            ),
+            LockedPackage::git(
+                "utils".to_string(),
+                "1.0.0".to_string(),
+                "https://example.com/utils".to_string(),
+                "utils123".to_string(),
+                vec!["core".to_string()],
+            ),
+            LockedPackage::git(
+                "core".to_string(),
+                "1.0.0".to_string(),
+                "https://example.com/core".to_string(),
+                "core123".to_string(),
+                vec![],
+            ),
         ],
     };
 

@@ -711,6 +711,27 @@ impl Checker {
                     }
                 }
             }
+
+            // mock tool statement - type check the mock value
+            Stmt::MockTool { value, span, .. } => {
+                // E057: mock tool outside test block
+                if !self.in_test_block {
+                    self.errors.push(CheckError::mock_tool_outside_test(span));
+                }
+
+                match value {
+                    sage_parser::MockValue::Value(expr) => {
+                        self.check_expr(expr);
+                    }
+                    sage_parser::MockValue::Fail(expr) => {
+                        let ty = self.check_expr(expr);
+                        if !ty.is_compatible_with(&Type::String) {
+                            self.errors
+                                .push(CheckError::mock_fail_not_string(ty.to_string(), expr.span()));
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -4003,6 +4024,27 @@ impl<'a> ModuleChecker<'a> {
                 // E056: mock infer outside test block
                 if !self.in_test_block {
                     self.errors.push(CheckError::mock_infer_outside_test(span));
+                }
+
+                match value {
+                    sage_parser::MockValue::Value(expr) => {
+                        self.check_expr(expr);
+                    }
+                    sage_parser::MockValue::Fail(expr) => {
+                        let ty = self.check_expr(expr);
+                        if !ty.is_compatible_with(&Type::String) {
+                            self.errors
+                                .push(CheckError::mock_fail_not_string(ty.to_string(), expr.span()));
+                        }
+                    }
+                }
+            }
+
+            // mock tool statement - type check the mock value
+            Stmt::MockTool { value, span, .. } => {
+                // E057: mock tool outside test block
+                if !self.in_test_block {
+                    self.errors.push(CheckError::mock_tool_outside_test(span));
                 }
 
                 match value {

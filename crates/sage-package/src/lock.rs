@@ -27,13 +27,60 @@ pub struct LockedPackage {
     pub name: String,
     /// Package version from its sage.toml.
     pub version: String,
-    /// Git repository URL.
-    pub git: String,
-    /// Pinned full SHA.
-    pub rev: String,
+    /// Git repository URL (None for path dependencies).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git: Option<String>,
+    /// Pinned full SHA (None for path dependencies).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rev: Option<String>,
+    /// Local path (for path dependencies).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     /// List of package names this depends on (for ordering).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<String>,
+}
+
+impl LockedPackage {
+    /// Create a new locked package for a git dependency.
+    pub fn git(
+        name: String,
+        version: String,
+        git: String,
+        rev: String,
+        dependencies: Vec<String>,
+    ) -> Self {
+        Self {
+            name,
+            version,
+            git: Some(git),
+            rev: Some(rev),
+            path: None,
+            dependencies,
+        }
+    }
+
+    /// Create a new locked package for a path dependency.
+    pub fn path(name: String, version: String, path: String, dependencies: Vec<String>) -> Self {
+        Self {
+            name,
+            version,
+            git: None,
+            rev: None,
+            path: Some(path),
+            dependencies,
+        }
+    }
+
+    /// Check if this is a path dependency.
+    pub fn is_path(&self) -> bool {
+        self.path.is_some()
+    }
+
+    /// Check if this is a git dependency.
+    pub fn is_git(&self) -> bool {
+        self.git.is_some()
+    }
 }
 
 impl LockFile {
@@ -80,14 +127,25 @@ impl LockFile {
 
     /// Check if the lock file matches the given dependencies.
     pub fn matches_dependencies(&self, deps: &HashMap<String, crate::DependencySpec>) -> bool {
-        // All deps must be in lock file with matching git URL
+        use crate::DependencySpec;
+
+        // All deps must be in lock file with matching source
         for (name, spec) in deps {
             match self.find(name) {
-                Some(locked) => {
-                    if locked.git != spec.git {
-                        return false;
+                Some(locked) => match spec {
+                    DependencySpec::Git(g) => {
+                        // Git dep must match git URL
+                        if locked.git.as_ref() != Some(&g.git) {
+                            return false;
+                        }
                     }
-                }
+                    DependencySpec::Path(p) => {
+                        // Path dep must match path
+                        if locked.path.as_ref() != Some(&p.path) {
+                            return false;
+                        }
+                    }
+                },
                 None => return false,
             }
         }
@@ -137,20 +195,20 @@ mod tests {
         let lock = LockFile {
             version: 1,
             packages: vec![
-                LockedPackage {
-                    name: "foo".to_string(),
-                    version: "1.0.0".to_string(),
-                    git: "https://github.com/example/foo".to_string(),
-                    rev: "abc123def456".to_string(),
-                    dependencies: vec![],
-                },
-                LockedPackage {
-                    name: "bar".to_string(),
-                    version: "2.0.0".to_string(),
-                    git: "https://github.com/example/bar".to_string(),
-                    rev: "789xyz".to_string(),
-                    dependencies: vec!["foo".to_string()],
-                },
+                LockedPackage::git(
+                    "foo".to_string(),
+                    "1.0.0".to_string(),
+                    "https://github.com/example/foo".to_string(),
+                    "abc123def456".to_string(),
+                    vec![],
+                ),
+                LockedPackage::git(
+                    "bar".to_string(),
+                    "2.0.0".to_string(),
+                    "https://github.com/example/bar".to_string(),
+                    "789xyz".to_string(),
+                    vec!["foo".to_string()],
+                ),
             ],
         };
 
@@ -158,6 +216,25 @@ mod tests {
         assert!(serialized.contains("name = \"foo\""));
         assert!(serialized.contains("name = \"bar\""));
         assert!(serialized.contains("dependencies = [\"foo\"]"));
+    }
+
+    #[test]
+    fn serialize_path_dependency() {
+        let lock = LockFile {
+            version: 1,
+            packages: vec![LockedPackage::path(
+                "local-lib".to_string(),
+                "0.1.0".to_string(),
+                "../my-local-lib".to_string(),
+                vec![],
+            )],
+        };
+
+        let serialized = toml::to_string_pretty(&lock).unwrap();
+        assert!(serialized.contains("name = \"local-lib\""));
+        assert!(serialized.contains("path = \"../my-local-lib\""));
+        assert!(!serialized.contains("git ="));
+        assert!(!serialized.contains("rev ="));
     }
 
     #[test]
@@ -186,16 +263,33 @@ dependencies = ["foo"]
     }
 
     #[test]
+    fn deserialize_path_dependency() {
+        let toml_str = r#"
+version = 1
+
+[[packages]]
+name = "local"
+version = "0.1.0"
+path = "../local-lib"
+"#;
+
+        let lock: LockFile = toml::from_str(toml_str).unwrap();
+        assert_eq!(lock.packages.len(), 1);
+        assert!(lock.packages[0].is_path());
+        assert_eq!(lock.packages[0].path, Some("../local-lib".to_string()));
+    }
+
+    #[test]
     fn find_package() {
         let lock = LockFile {
             version: 1,
-            packages: vec![LockedPackage {
-                name: "test".to_string(),
-                version: "1.0.0".to_string(),
-                git: "https://example.com/test".to_string(),
-                rev: "abc".to_string(),
-                dependencies: vec![],
-            }],
+            packages: vec![LockedPackage::git(
+                "test".to_string(),
+                "1.0.0".to_string(),
+                "https://example.com/test".to_string(),
+                "abc".to_string(),
+                vec![],
+            )],
         };
 
         assert!(lock.find("test").is_some());
@@ -207,27 +301,27 @@ dependencies = ["foo"]
         let lock = LockFile {
             version: 1,
             packages: vec![
-                LockedPackage {
-                    name: "c".to_string(),
-                    version: "1.0.0".to_string(),
-                    git: "https://example.com/c".to_string(),
-                    rev: "ccc".to_string(),
-                    dependencies: vec!["a".to_string(), "b".to_string()],
-                },
-                LockedPackage {
-                    name: "a".to_string(),
-                    version: "1.0.0".to_string(),
-                    git: "https://example.com/a".to_string(),
-                    rev: "aaa".to_string(),
-                    dependencies: vec![],
-                },
-                LockedPackage {
-                    name: "b".to_string(),
-                    version: "1.0.0".to_string(),
-                    git: "https://example.com/b".to_string(),
-                    rev: "bbb".to_string(),
-                    dependencies: vec!["a".to_string()],
-                },
+                LockedPackage::git(
+                    "c".to_string(),
+                    "1.0.0".to_string(),
+                    "https://example.com/c".to_string(),
+                    "ccc".to_string(),
+                    vec!["a".to_string(), "b".to_string()],
+                ),
+                LockedPackage::git(
+                    "a".to_string(),
+                    "1.0.0".to_string(),
+                    "https://example.com/a".to_string(),
+                    "aaa".to_string(),
+                    vec![],
+                ),
+                LockedPackage::git(
+                    "b".to_string(),
+                    "1.0.0".to_string(),
+                    "https://example.com/b".to_string(),
+                    "bbb".to_string(),
+                    vec!["a".to_string()],
+                ),
             ],
         };
 
@@ -242,5 +336,27 @@ dependencies = ["foo"]
         assert!(a_pos < b_pos);
         assert!(a_pos < c_pos);
         assert!(b_pos < c_pos);
+    }
+
+    #[test]
+    fn locked_package_helpers() {
+        let git_pkg = LockedPackage::git(
+            "foo".to_string(),
+            "1.0.0".to_string(),
+            "https://example.com".to_string(),
+            "abc123".to_string(),
+            vec![],
+        );
+        assert!(git_pkg.is_git());
+        assert!(!git_pkg.is_path());
+
+        let path_pkg = LockedPackage::path(
+            "bar".to_string(),
+            "0.1.0".to_string(),
+            "../bar".to_string(),
+            vec![],
+        );
+        assert!(path_pkg.is_path());
+        assert!(!path_pkg.is_git());
     }
 }

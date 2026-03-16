@@ -4,6 +4,7 @@
 //! - `MockResponse` - represents either a value or error response
 //! - `MockQueue` - thread-safe queue of mock responses
 //! - `MockLlmClient` - mock implementation of LLM inference
+//! - `MockToolRegistry` - mock implementations for tool calls
 
 use crate::error::{SageError, SageResult};
 use serde::de::DeserializeOwned;
@@ -177,6 +178,83 @@ impl Default for MockLlmClient {
     }
 }
 
+/// Mock registry for tool calls.
+///
+/// Stores mock responses for specific tool.function combinations.
+#[derive(Debug, Clone, Default)]
+pub struct MockToolRegistry {
+    mocks: Arc<Mutex<std::collections::HashMap<String, MockQueue>>>,
+}
+
+impl MockToolRegistry {
+    /// Create a new empty mock registry.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a mock response for a tool function.
+    ///
+    /// The key is in the format "ToolName.function_name".
+    pub fn register(&self, tool: &str, function: &str, response: MockResponse) {
+        let key = format!("{}.{}", tool, function);
+        let mut mocks = self.mocks.lock().unwrap();
+        mocks
+            .entry(key)
+            .or_insert_with(MockQueue::new)
+            .push(response);
+    }
+
+    /// Get the next mock response for a tool function.
+    ///
+    /// Returns `None` if no mock is registered for this function.
+    pub fn get(&self, tool: &str, function: &str) -> Option<MockResponse> {
+        let key = format!("{}.{}", tool, function);
+        let mocks = self.mocks.lock().unwrap();
+        mocks.get(&key).and_then(|q| q.pop())
+    }
+
+    /// Check if a mock is registered for a tool function.
+    pub fn has_mock(&self, tool: &str, function: &str) -> bool {
+        let key = format!("{}.{}", tool, function);
+        let mocks = self.mocks.lock().unwrap();
+        mocks.get(&key).is_some_and(|q| !q.is_empty())
+    }
+
+    /// Call a mocked tool function and return the result.
+    ///
+    /// Returns an error if no mock is registered.
+    pub async fn call<T>(&self, tool: &str, function: &str) -> SageResult<T>
+    where
+        T: DeserializeOwned,
+    {
+        match self.get(tool, function) {
+            Some(MockResponse::Value(value)) => serde_json::from_value(value).map_err(|e| {
+                SageError::Tool(format!("failed to deserialize mock tool response: {e}"))
+            }),
+            Some(MockResponse::Fail(msg)) => Err(SageError::Tool(msg)),
+            None => Err(SageError::Tool(format!(
+                "no mock registered for {}.{}",
+                tool, function
+            ))),
+        }
+    }
+
+    /// Call a mocked tool function and return the raw string.
+    pub async fn call_string(&self, tool: &str, function: &str) -> SageResult<String> {
+        match self.get(tool, function) {
+            Some(MockResponse::Value(value)) => match value {
+                serde_json::Value::String(s) => Ok(s),
+                other => Ok(other.to_string()),
+            },
+            Some(MockResponse::Fail(msg)) => Err(SageError::Tool(msg)),
+            None => Err(SageError::Tool(format!(
+                "no mock registered for {}.{}",
+                tool, function
+            ))),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,5 +349,58 @@ mod tests {
         let summary: Summary = client.infer_structured("summarize", "schema").await.unwrap();
         assert_eq!(summary.text, "A summary");
         assert!((summary.confidence - 0.95).abs() < 0.001);
+    }
+
+    #[tokio::test]
+    async fn mock_tool_registry_basic() {
+        let registry = MockToolRegistry::new();
+
+        // Register a mock
+        registry.register("Http", "get", MockResponse::string("mocked response"));
+
+        // Should have mock
+        assert!(registry.has_mock("Http", "get"));
+
+        // Call and get result
+        let result: String = registry.call("Http", "get").await.unwrap();
+        assert_eq!(result, "mocked response");
+
+        // Queue should be empty now
+        assert!(!registry.has_mock("Http", "get"));
+    }
+
+    #[tokio::test]
+    async fn mock_tool_registry_multiple() {
+        let registry = MockToolRegistry::new();
+
+        // Register multiple mocks for same function
+        registry.register("Http", "get", MockResponse::string("first"));
+        registry.register("Http", "get", MockResponse::string("second"));
+
+        // Should get them in order
+        let r1: String = registry.call("Http", "get").await.unwrap();
+        let r2: String = registry.call("Http", "get").await.unwrap();
+
+        assert_eq!(r1, "first");
+        assert_eq!(r2, "second");
+    }
+
+    #[tokio::test]
+    async fn mock_tool_registry_fail() {
+        let registry = MockToolRegistry::new();
+        registry.register("Http", "get", MockResponse::fail("network error"));
+
+        let result: Result<String, _> = registry.call("Http", "get").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("network error"));
+    }
+
+    #[tokio::test]
+    async fn mock_tool_registry_no_mock() {
+        let registry = MockToolRegistry::new();
+
+        let result: Result<String, _> = registry.call("Http", "get").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("no mock registered"));
     }
 }

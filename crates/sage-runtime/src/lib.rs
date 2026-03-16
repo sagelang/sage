@@ -24,7 +24,7 @@ pub mod tracing;
 pub use agent::{spawn, AgentContext, AgentHandle};
 pub use error::{ErrorKind, SageError, SageResult};
 pub use llm::LlmClient;
-pub use mock::{MockLlmClient, MockQueue, MockResponse};
+pub use mock::{MockLlmClient, MockQueue, MockResponse, MockToolRegistry};
 pub use tools::{HttpClient, HttpResponse};
 pub use tracing as trace;
 
@@ -33,7 +33,7 @@ pub mod prelude {
     pub use crate::agent::{spawn, AgentContext, AgentHandle};
     pub use crate::error::{ErrorKind, SageError, SageResult};
     pub use crate::llm::LlmClient;
-    pub use crate::mock::{MockLlmClient, MockQueue, MockResponse};
+    pub use crate::mock::{MockLlmClient, MockQueue, MockResponse, MockToolRegistry};
     pub use crate::tools::{HttpClient, HttpResponse};
     pub use crate::tracing as trace;
 }

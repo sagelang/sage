@@ -773,33 +773,48 @@ fn stmt_parser(
         });
 
     // RFC-0012: mock infer -> value; or mock infer -> fail("msg");
-    let src11 = source.clone();
     let src12 = source.clone();
     let mock_infer_stmt = just(Token::KwMock)
         .ignore_then(just(Token::KwInfer))
         .ignore_then(just(Token::Arrow))
-        .ignore_then(
-            // Check for fail(...) pattern
-            filter(|t: &Token| matches!(t, Token::Ident))
-                .then(
-                    expr_parser(src11.clone())
-                        .delimited_by(just(Token::LParen), just(Token::RParen)),
-                )
-                .try_map(move |(_, arg), span: Range<usize>| {
-                    // We expect "fail" identifier - check by examining the source
-                    let ident_text = &src11[span.clone()];
-                    if ident_text.starts_with("fail") {
-                        Ok(MockValue::Fail(arg))
-                    } else {
-                        Err(Simple::custom(span, "expected 'fail' or a value"))
-                    }
-                })
-                .or(expr_parser(src12.clone()).map(MockValue::Value)),
-        )
+        .ignore_then(expr_parser(src12.clone()).map(|expr| {
+            // Check if this is a fail() call expression and convert to MockValue::Fail
+            if let Expr::Fail { error, .. } = expr {
+                MockValue::Fail(*error)
+            } else {
+                MockValue::Value(expr)
+            }
+        }))
         .then_ignore(just(Token::Semicolon))
         .map_with_span(move |value, span: Range<usize>| Stmt::MockInfer {
             value,
             span: make_span(&src12, span),
+        });
+
+    // mock tool ToolName.fn_name -> value; or mock tool ToolName.fn_name -> fail("msg");
+    let src13 = source.clone();
+    let src14 = source.clone();
+    let src15 = source.clone();
+    let mock_tool_stmt = just(Token::KwMock)
+        .ignore_then(just(Token::KwTool))
+        .ignore_then(ident_token_parser(src13.clone())) // Tool name
+        .then_ignore(just(Token::Dot))
+        .then(ident_token_parser(src14.clone())) // Function name
+        .then_ignore(just(Token::Arrow))
+        .then(expr_parser(src15.clone()).map(|expr| {
+            // Check if this is a fail() call expression and convert to MockValue::Fail
+            if let Expr::Fail { error, .. } = expr {
+                MockValue::Fail(*error)
+            } else {
+                MockValue::Value(expr)
+            }
+        }))
+        .then_ignore(just(Token::Semicolon))
+        .map_with_span(move |((tool_name, fn_name), value), span: Range<usize>| Stmt::MockTool {
+            tool_name,
+            fn_name,
+            value,
+            span: make_span(&src15, span),
         });
 
     let assign_stmt = ident_token_parser(src5.clone())
@@ -828,6 +843,7 @@ fn stmt_parser(
         .or(loop_stmt)
         .or(break_stmt)
         .or(mock_infer_stmt)
+        .or(mock_tool_stmt)
         .or(assign_stmt)
         .or(expr_stmt)
 }
@@ -3871,6 +3887,64 @@ mod tests {
             }
         } else {
             panic!("expected Expr statement");
+        }
+    }
+
+    #[test]
+    fn parse_mock_tool_with_fail() {
+        let source = r#"
+            test "mock tool fail" {
+                mock tool Http.get -> fail("network error");
+            }
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let test = &prog.tests[0];
+        assert_eq!(test.body.stmts.len(), 1);
+
+        if let Stmt::MockTool {
+            tool_name,
+            fn_name,
+            value,
+            ..
+        } = &test.body.stmts[0]
+        {
+            assert_eq!(tool_name.name, "Http");
+            assert_eq!(fn_name.name, "get");
+            assert!(
+                matches!(value, MockValue::Fail(_)),
+                "expected MockValue::Fail, got {:?}",
+                value
+            );
+        } else {
+            panic!("expected MockTool statement, got {:?}", test.body.stmts[0]);
+        }
+    }
+
+    #[test]
+    fn parse_mock_tool_with_value() {
+        let source = r#"
+            test "mock tool value" {
+                mock tool Http.get -> "response";
+            }
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let test = &prog.tests[0];
+        if let Stmt::MockTool { value, .. } = &test.body.stmts[0] {
+            assert!(
+                matches!(value, MockValue::Value(_)),
+                "expected MockValue::Value, got {:?}",
+                value
+            );
+        } else {
+            panic!("expected MockTool statement");
         }
     }
 }

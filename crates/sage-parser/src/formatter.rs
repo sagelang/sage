@@ -575,6 +575,21 @@ impl Formatter {
                 self.format_mock_value(value);
                 self.write(";\n");
             }
+            Stmt::MockTool {
+                tool_name,
+                fn_name,
+                value,
+                ..
+            } => {
+                self.write_indent();
+                self.write("mock tool ");
+                self.write(&tool_name.name);
+                self.write(".");
+                self.write(&fn_name.name);
+                self.write(" -> ");
+                self.format_mock_value(value);
+                self.write(";\n");
+            }
         }
     }
 

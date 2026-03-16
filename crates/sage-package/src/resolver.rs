@@ -1,7 +1,7 @@
 //! Dependency resolution.
 
 use crate::cache::{PackageCache, ResolvedPackage, ResolvedPackagesMap};
-use crate::dependency::{parse_dependencies, DependencySpec};
+use crate::dependency::{parse_dependencies, resolve_path, DependencySpec, GitDependency};
 use crate::error::PackageError;
 use crate::lock::{LockFile, LockedPackage};
 use serde::Deserialize;
@@ -43,7 +43,7 @@ pub fn resolve_dependencies(
     existing_lock: Option<&LockFile>,
 ) -> Result<ResolvedPackages, PackageError> {
     let cache = PackageCache::new()?;
-    let mut resolver = Resolver::new(cache, existing_lock);
+    let mut resolver = Resolver::new(cache, existing_lock, project_root);
 
     // Resolve all direct dependencies
     for (name, spec) in deps {
@@ -56,12 +56,23 @@ pub fn resolve_dependencies(
         version: 1,
         packages: packages
             .values()
-            .map(|p| LockedPackage {
-                name: p.name.clone(),
-                version: p.version.clone(),
-                git: p.git.clone(),
-                rev: p.rev.clone(),
-                dependencies: p.dependencies.clone(),
+            .map(|p| {
+                if let Some(ref path) = p.source_path {
+                    LockedPackage::path(
+                        p.name.clone(),
+                        p.version.clone(),
+                        path.clone(),
+                        p.dependencies.clone(),
+                    )
+                } else {
+                    LockedPackage::git(
+                        p.name.clone(),
+                        p.version.clone(),
+                        p.git.clone().unwrap_or_default(),
+                        p.rev.clone().unwrap_or_default(),
+                        p.dependencies.clone(),
+                    )
+                }
             })
             .collect(),
     };
@@ -82,28 +93,72 @@ pub fn check_lock_freshness(deps: &HashMap<String, DependencySpec>, lock: &LockF
 }
 
 /// Install dependencies from an existing lock file.
-pub fn install_from_lock(lock: &LockFile) -> Result<ResolvedPackagesMap, PackageError> {
+pub fn install_from_lock(
+    project_root: &Path,
+    lock: &LockFile,
+) -> Result<ResolvedPackagesMap, PackageError> {
     let cache = PackageCache::new()?;
     let mut packages = ResolvedPackagesMap::new();
 
     for locked in lock.in_dependency_order() {
-        // Create a spec from the locked info
-        let spec = DependencySpec::with_rev(&locked.git, &locked.rev);
+        if locked.is_path() {
+            // Path dependency - resolve directly
+            let path_str = locked.path.as_ref().unwrap();
+            let resolved_path = resolve_path(project_root, path_str);
 
-        // Fetch (will use cache if available)
-        let (path, _) = cache.fetch(&locked.name, &spec)?;
+            if !resolved_path.exists() {
+                return Err(PackageError::IoError {
+                    message: format!(
+                        "path dependency '{}' not found at {}",
+                        locked.name,
+                        resolved_path.display()
+                    ),
+                    source: std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "path dependency not found",
+                    ),
+                });
+            }
 
-        packages.insert(
-            locked.name.clone(),
-            ResolvedPackage {
-                name: locked.name.clone(),
-                version: locked.version.clone(),
-                path,
-                rev: locked.rev.clone(),
-                git: locked.git.clone(),
-                dependencies: locked.dependencies.clone(),
-            },
-        );
+            packages.insert(
+                locked.name.clone(),
+                ResolvedPackage {
+                    name: locked.name.clone(),
+                    version: locked.version.clone(),
+                    path: resolved_path,
+                    rev: None,
+                    git: None,
+                    source_path: Some(path_str.clone()),
+                    dependencies: locked.dependencies.clone(),
+                },
+            );
+        } else {
+            // Git dependency - fetch via cache
+            let git_url = locked.git.as_ref().unwrap();
+            let rev = locked.rev.as_ref().unwrap();
+            let spec = GitDependency {
+                git: git_url.clone(),
+                tag: None,
+                branch: None,
+                rev: Some(rev.clone()),
+            };
+
+            // Fetch (will use cache if available)
+            let (path, _) = cache.fetch(&locked.name, &spec)?;
+
+            packages.insert(
+                locked.name.clone(),
+                ResolvedPackage {
+                    name: locked.name.clone(),
+                    version: locked.version.clone(),
+                    path,
+                    rev: Some(rev.clone()),
+                    git: Some(git_url.clone()),
+                    source_path: None,
+                    dependencies: locked.dependencies.clone(),
+                },
+            );
+        }
     }
 
     Ok(packages)
@@ -114,15 +169,17 @@ struct Resolver<'a> {
     resolved: ResolvedPackagesMap,
     in_progress: HashSet<String>,
     existing_lock: Option<&'a LockFile>,
+    project_root: &'a Path,
 }
 
 impl<'a> Resolver<'a> {
-    fn new(cache: PackageCache, existing_lock: Option<&'a LockFile>) -> Self {
+    fn new(cache: PackageCache, existing_lock: Option<&'a LockFile>, project_root: &'a Path) -> Self {
         Self {
             cache,
             resolved: ResolvedPackagesMap::new(),
             in_progress: HashSet::new(),
             existing_lock,
+            project_root,
         }
     }
 
@@ -141,39 +198,85 @@ impl<'a> Resolver<'a> {
 
         // Already resolved?
         if let Some(existing) = self.resolved.get(name) {
-            // Check for version conflict
-            if existing.git != spec.git {
-                return Err(PackageError::IncompatibleVersions {
-                    package: name.to_string(),
-                    version_a: existing.rev.clone(),
-                    requirer_a: "previously resolved".to_string(),
-                    version_b: spec.ref_string().to_string(),
-                    requirer_b: requirer.to_string(),
-                });
+            // Check for source conflict
+            match spec {
+                DependencySpec::Git(g) => {
+                    if existing.git.as_ref() != Some(&g.git) {
+                        return Err(PackageError::IncompatibleVersions {
+                            package: name.to_string(),
+                            version_a: existing.rev.clone().unwrap_or_default(),
+                            requirer_a: "previously resolved".to_string(),
+                            version_b: g.ref_string().to_string(),
+                            requirer_b: requirer.to_string(),
+                        });
+                    }
+                }
+                DependencySpec::Path(p) => {
+                    if existing.source_path.as_ref() != Some(&p.path) {
+                        return Err(PackageError::IncompatibleVersions {
+                            package: name.to_string(),
+                            version_a: existing.source_path.clone().unwrap_or_default(),
+                            requirer_a: "previously resolved".to_string(),
+                            version_b: p.path.clone(),
+                            requirer_b: requirer.to_string(),
+                        });
+                    }
+                }
             }
             return Ok(());
         }
 
         self.in_progress.insert(name.to_string());
 
-        // Check if we can use the lock file
-        let (path, rev) = if let Some(lock) = self.existing_lock {
-            if let Some(locked) = lock.find(name) {
-                if locked.git == spec.git {
-                    // Use locked version
-                    let locked_spec = DependencySpec::with_rev(&locked.git, &locked.rev);
-                    self.cache.fetch(name, &locked_spec)?
-                } else {
-                    // Git URL changed - resolve fresh
-                    self.cache.fetch(name, spec)?
+        let (path, rev, git, source_path) = match spec {
+            DependencySpec::Path(p) => {
+                // Resolve path dependency directly
+                let resolved_path = resolve_path(self.project_root, &p.path);
+
+                if !resolved_path.exists() {
+                    return Err(PackageError::IoError {
+                        message: format!(
+                            "path dependency '{}' not found at {}",
+                            name,
+                            resolved_path.display()
+                        ),
+                        source: std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            "path dependency not found",
+                        ),
+                    });
                 }
-            } else {
-                // Not in lock file - resolve fresh
-                self.cache.fetch(name, spec)?
+
+                (resolved_path, None, None, Some(p.path.clone()))
             }
-        } else {
-            // No lock file - resolve fresh
-            self.cache.fetch(name, spec)?
+            DependencySpec::Git(g) => {
+                // Check if we can use the lock file
+                let (path, rev) = if let Some(lock) = self.existing_lock {
+                    if let Some(locked) = lock.find(name) {
+                        if locked.git.as_ref() == Some(&g.git) {
+                            // Use locked version
+                            let locked_spec = GitDependency {
+                                git: g.git.clone(),
+                                tag: None,
+                                branch: None,
+                                rev: locked.rev.clone(),
+                            };
+                            self.cache.fetch(name, &locked_spec)?
+                        } else {
+                            // Git URL changed - resolve fresh
+                            self.cache.fetch(name, g)?
+                        }
+                    } else {
+                        // Not in lock file - resolve fresh
+                        self.cache.fetch(name, g)?
+                    }
+                } else {
+                    // No lock file - resolve fresh
+                    self.cache.fetch(name, g)?
+                };
+
+                (path, Some(rev), Some(g.git.clone()), None)
+            }
         };
 
         // Read the package's manifest
@@ -198,8 +301,9 @@ impl<'a> Resolver<'a> {
                 name: name.to_string(),
                 version: manifest.project.version,
                 path: path.clone(),
-                rev: rev.clone(),
-                git: spec.git.clone(),
+                rev,
+                git,
+                source_path,
                 dependencies: dep_names.clone(),
             },
         );
@@ -282,7 +386,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn check_lock_freshness_matches() {
+    fn check_lock_freshness_matches_git() {
         let mut deps = HashMap::new();
         deps.insert(
             "foo".to_string(),
@@ -291,13 +395,31 @@ mod tests {
 
         let lock = LockFile {
             version: 1,
-            packages: vec![LockedPackage {
-                name: "foo".to_string(),
-                version: "1.0.0".to_string(),
-                git: "https://github.com/example/foo".to_string(),
-                rev: "abc123".to_string(),
-                dependencies: vec![],
-            }],
+            packages: vec![LockedPackage::git(
+                "foo".to_string(),
+                "1.0.0".to_string(),
+                "https://github.com/example/foo".to_string(),
+                "abc123".to_string(),
+                vec![],
+            )],
+        };
+
+        assert!(check_lock_freshness(&deps, &lock));
+    }
+
+    #[test]
+    fn check_lock_freshness_matches_path() {
+        let mut deps = HashMap::new();
+        deps.insert("local".to_string(), DependencySpec::with_path("../lib"));
+
+        let lock = LockFile {
+            version: 1,
+            packages: vec![LockedPackage::path(
+                "local".to_string(),
+                "0.1.0".to_string(),
+                "../lib".to_string(),
+                vec![],
+            )],
         };
 
         assert!(check_lock_freshness(&deps, &lock));
@@ -317,13 +439,34 @@ mod tests {
 
         let lock = LockFile {
             version: 1,
-            packages: vec![LockedPackage {
-                name: "foo".to_string(),
-                version: "1.0.0".to_string(),
-                git: "https://github.com/example/foo".to_string(),
-                rev: "abc123".to_string(),
-                dependencies: vec![],
-            }],
+            packages: vec![LockedPackage::git(
+                "foo".to_string(),
+                "1.0.0".to_string(),
+                "https://github.com/example/foo".to_string(),
+                "abc123".to_string(),
+                vec![],
+            )],
+        };
+
+        assert!(!check_lock_freshness(&deps, &lock));
+    }
+
+    #[test]
+    fn check_lock_freshness_path_mismatch() {
+        let mut deps = HashMap::new();
+        deps.insert(
+            "local".to_string(),
+            DependencySpec::with_path("../different-path"),
+        );
+
+        let lock = LockFile {
+            version: 1,
+            packages: vec![LockedPackage::path(
+                "local".to_string(),
+                "0.1.0".to_string(),
+                "../original-path".to_string(),
+                vec![],
+            )],
         };
 
         assert!(!check_lock_freshness(&deps, &lock));

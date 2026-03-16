@@ -443,6 +443,18 @@ pub enum Stmt {
         /// Span covering the statement.
         span: Span,
     },
+
+    /// Mock tool statement: `mock tool Http.get -> value;`
+    MockTool {
+        /// The tool name.
+        tool_name: Ident,
+        /// The function name.
+        fn_name: Ident,
+        /// The mock value expression.
+        value: MockValue,
+        /// Span covering the statement.
+        span: Span,
+    },
 }
 
 /// RFC-0012: A mock value for `mock infer -> value`.
@@ -469,7 +481,8 @@ impl Stmt {
             | Stmt::Break { span, .. }
             | Stmt::Expr { span, .. }
             | Stmt::LetTuple { span, .. }
-            | Stmt::MockInfer { span, .. } => span,
+            | Stmt::MockInfer { span, .. }
+            | Stmt::MockTool { span, .. } => span,
         }
     }
 }

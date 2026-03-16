@@ -104,20 +104,24 @@ enum Commands {
         package: String,
 
         /// Git repository URL
-        #[arg(long)]
-        git: String,
+        #[arg(long, conflicts_with = "path")]
+        git: Option<String>,
 
         /// Git tag (e.g., v1.0.0)
-        #[arg(long, conflicts_with_all = ["branch", "rev"])]
+        #[arg(long, conflicts_with_all = ["branch", "rev", "path"])]
         tag: Option<String>,
 
         /// Git branch (e.g., main)
-        #[arg(long, conflicts_with_all = ["tag", "rev"])]
+        #[arg(long, conflicts_with_all = ["tag", "rev", "path"])]
         branch: Option<String>,
 
         /// Git revision (full or short SHA)
-        #[arg(long, conflicts_with_all = ["tag", "branch"])]
+        #[arg(long, conflicts_with_all = ["tag", "branch", "path"])]
         rev: Option<String>,
+
+        /// Local path to the package (relative or absolute)
+        #[arg(long, conflicts_with_all = ["git", "tag", "branch", "rev"])]
+        path: Option<String>,
     },
 
     /// Remove a package dependency
@@ -187,6 +191,49 @@ enum Commands {
         #[arg(long)]
         check: bool,
     },
+
+    /// Analyse trace files from sage run --trace-file
+    Trace {
+        #[command(subcommand)]
+        action: TraceAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum TraceAction {
+    /// Pretty-print trace events in a human-readable format
+    Pretty {
+        /// Path to the trace file (NDJSON format)
+        file: PathBuf,
+    },
+
+    /// Show a summary of the trace (agent timeline, totals, durations)
+    Summary {
+        /// Path to the trace file (NDJSON format)
+        file: PathBuf,
+    },
+
+    /// Filter trace events by agent name
+    Filter {
+        /// Path to the trace file (NDJSON format)
+        file: PathBuf,
+
+        /// Agent name to filter on
+        #[arg(long)]
+        agent: String,
+    },
+
+    /// Show all infer (LLM) calls with their durations
+    Infer {
+        /// Path to the trace file (NDJSON format)
+        file: PathBuf,
+    },
+
+    /// Estimate token costs from infer calls (experimental)
+    Cost {
+        /// Path to the trace file (NDJSON format)
+        file: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -235,7 +282,8 @@ fn main() -> Result<()> {
             tag,
             branch,
             rev,
-        } => cmd_add(&package, &git, tag, branch, rev),
+            path,
+        } => cmd_add(&package, git, tag, branch, rev, path),
         Commands::Remove { package } => cmd_remove(&package),
         Commands::Install => cmd_install(),
         Commands::Update { package } => cmd_update(package.as_deref()),
@@ -255,6 +303,13 @@ fn main() -> Result<()> {
         } => cmd_test(&path, filter, file, serial, verbose, no_colour),
         Commands::Eval { code } => cmd_eval(&code),
         Commands::Fmt { paths, check } => cmd_fmt(&paths, check),
+        Commands::Trace { action } => match action {
+            TraceAction::Pretty { file } => cmd_trace_pretty(&file),
+            TraceAction::Summary { file } => cmd_trace_summary(&file),
+            TraceAction::Filter { file, agent } => cmd_trace_filter(&file, &agent),
+            TraceAction::Infer { file } => cmd_trace_infer(&file),
+            TraceAction::Cost { file } => cmd_trace_cost(&file),
+        },
     }
 }
 
@@ -884,15 +939,25 @@ fn is_valid_project_name(name: &str) -> bool {
 /// Add a package dependency to sage.toml.
 fn cmd_add(
     package: &str,
-    git: &str,
+    git: Option<String>,
     tag: Option<String>,
     branch: Option<String>,
     rev: Option<String>,
+    path: Option<String>,
 ) -> Result<()> {
-    // Validate exactly one ref type
-    let ref_count = [&tag, &branch, &rev].iter().filter(|x| x.is_some()).count();
-    if ref_count != 1 {
-        miette::bail!("Specify exactly one of --tag, --branch, or --rev");
+    // Validate: must have either path OR (git + exactly one ref type)
+    let is_path = path.is_some();
+    let is_git = git.is_some();
+
+    if !is_path && !is_git {
+        miette::bail!("Specify either --path or --git with a ref (--tag, --branch, or --rev)");
+    }
+
+    if is_git {
+        let ref_count = [&tag, &branch, &rev].iter().filter(|x| x.is_some()).count();
+        if ref_count != 1 {
+            miette::bail!("For git dependencies, specify exactly one of --tag, --branch, or --rev");
+        }
     }
 
     // Find or create sage.toml
@@ -918,15 +983,22 @@ fn cmd_add(
 
     // Build the dependency entry
     let mut dep_table = toml_edit::InlineTable::new();
-    dep_table.insert("git", git.into());
-    if let Some(t) = &tag {
-        dep_table.insert("tag", t.as_str().into());
-    }
-    if let Some(b) = &branch {
-        dep_table.insert("branch", b.as_str().into());
-    }
-    if let Some(r) = &rev {
-        dep_table.insert("rev", r.as_str().into());
+
+    if let Some(p) = &path {
+        // Path dependency
+        dep_table.insert("path", p.as_str().into());
+    } else {
+        // Git dependency
+        dep_table.insert("git", git.as_ref().unwrap().as_str().into());
+        if let Some(t) = &tag {
+            dep_table.insert("tag", t.as_str().into());
+        }
+        if let Some(b) = &branch {
+            dep_table.insert("branch", b.as_str().into());
+        }
+        if let Some(r) = &rev {
+            dep_table.insert("rev", r.as_str().into());
+        }
     }
 
     doc["dependencies"][package] = toml_edit::value(dep_table);
@@ -936,22 +1008,32 @@ fn cmd_add(
         .into_diagnostic()
         .wrap_err("Failed to write sage.toml")?;
 
-    let ref_type = if tag.is_some() {
-        "tag"
-    } else if branch.is_some() {
-        "branch"
+    if let Some(p) = &path {
+        println!(
+            "{} added {} (path = {})",
+            style(GROVE.to_string()).cyan().bold(),
+            style(package).green().bold(),
+            style(p).yellow()
+        );
     } else {
-        "rev"
-    };
-    let ref_val = tag.or(branch).or(rev).unwrap();
+        let ref_type = if tag.is_some() {
+            "tag"
+        } else if branch.is_some() {
+            "branch"
+        } else {
+            "rev"
+        };
+        let ref_val = tag.or(branch).or(rev).unwrap();
 
-    println!(
-        "{} added {} ({} = {})",
-        style(GROVE.to_string()).cyan().bold(),
-        style(package).green().bold(),
-        ref_type,
-        style(&ref_val).yellow()
-    );
+        println!(
+            "{} added {} ({} = {})",
+            style(GROVE.to_string()).cyan().bold(),
+            style(package).green().bold(),
+            ref_type,
+            style(&ref_val).yellow()
+        );
+    }
+
     println!();
     println!(
         "  {} Run {} to install",
@@ -1029,7 +1111,7 @@ fn cmd_install() -> Result<()> {
         if sage_package::check_lock_freshness(&deps, &lock) {
             // Use existing lock
             println!("  Using existing sage.lock");
-            install_from_lock(&lock).map_err(|e| miette::miette!("{}", e))?;
+            install_from_lock(&project_root, &lock).map_err(|e| miette::miette!("{}", e))?;
             lock.packages.len()
         } else {
             // Re-resolve
@@ -1838,4 +1920,544 @@ fn format_file(path: &Path, check: bool) -> Result<bool> {
     }
 
     Ok(true)
+}
+
+// ============================================================================
+// Trace Commands
+// ============================================================================
+
+use serde::Deserialize;
+
+/// A trace event from an NDJSON trace file.
+#[derive(Debug, Deserialize)]
+struct TraceEvent {
+    /// Timestamp in milliseconds since Unix epoch.
+    t: u64,
+    /// Event kind.
+    kind: String,
+    /// Agent name (if applicable).
+    agent: Option<String>,
+    /// Agent ID (if applicable).
+    id: Option<String>,
+    /// Duration in milliseconds (for complete/stop events).
+    duration_ms: Option<u64>,
+    /// Model name (for infer events).
+    model: Option<String>,
+    /// Prompt length (for infer.start).
+    prompt_len: Option<usize>,
+    /// Response length (for infer.complete).
+    response_len: Option<usize>,
+    /// Value type (for agent.emit).
+    value_type: Option<String>,
+    /// Error details (for error events).
+    error: Option<TraceError>,
+    /// User message (for user events).
+    message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TraceError {
+    kind: String,
+    message: String,
+}
+
+/// Load and parse trace events from an NDJSON file.
+fn load_trace_events(file: &Path) -> Result<Vec<TraceEvent>> {
+    let contents = std::fs::read_to_string(file)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("Failed to read trace file: {}", file.display()))?;
+
+    let mut events = Vec::new();
+    for (i, line) in contents.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let event: TraceEvent = serde_json::from_str(line)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("Failed to parse trace event on line {}", i + 1))?;
+        events.push(event);
+    }
+
+    Ok(events)
+}
+
+/// Format a timestamp as HH:MM:SS.mmm relative to the first event.
+fn format_relative_time(ts: u64, base: u64) -> String {
+    let relative_ms = ts.saturating_sub(base);
+    let secs = relative_ms / 1000;
+    let ms = relative_ms % 1000;
+    let mins = secs / 60;
+    let secs = secs % 60;
+    let hours = mins / 60;
+    let mins = mins % 60;
+
+    if hours > 0 {
+        format!("{:02}:{:02}:{:02}.{:03}", hours, mins, secs, ms)
+    } else {
+        format!("{:02}:{:02}.{:03}", mins, secs, ms)
+    }
+}
+
+/// Pretty-print trace events.
+fn cmd_trace_pretty(file: &Path) -> Result<()> {
+    let events = load_trace_events(file)?;
+
+    if events.is_empty() {
+        println!("No trace events found.");
+        return Ok(());
+    }
+
+    let base_ts = events.first().map(|e| e.t).unwrap_or(0);
+
+    for event in &events {
+        let time = format_relative_time(event.t, base_ts);
+        let agent_info = match (&event.agent, &event.id) {
+            (Some(a), Some(id)) => format!("[{}:{}]", a, &id[..id.len().min(8)]),
+            (Some(a), None) => format!("[{}]", a),
+            _ => String::new(),
+        };
+
+        let details = match event.kind.as_str() {
+            "agent.spawn" => {
+                format!("{} agent spawned", style("→").green())
+            }
+            "agent.emit" => {
+                let vt = event.value_type.as_deref().unwrap_or("?");
+                format!("{} emitted {}", style("◆").cyan(), style(vt).yellow())
+            }
+            "agent.stop" => {
+                let dur = event.duration_ms.unwrap_or(0);
+                format!("{} stopped ({}ms)", style("■").dim(), dur)
+            }
+            "agent.error" => {
+                let msg = event
+                    .error
+                    .as_ref()
+                    .map(|e| e.message.as_str())
+                    .unwrap_or("unknown error");
+                format!("{} {}", style("✗").red().bold(), style(msg).red())
+            }
+            "infer.start" => {
+                let model = event.model.as_deref().unwrap_or("?");
+                let len = event.prompt_len.unwrap_or(0);
+                format!(
+                    "{} infer {} ({} chars)",
+                    style("⚡").yellow(),
+                    style(model).cyan(),
+                    len
+                )
+            }
+            "infer.complete" => {
+                let dur = event.duration_ms.unwrap_or(0);
+                let len = event.response_len.unwrap_or(0);
+                format!(
+                    "{} complete ({}ms, {} chars)",
+                    style("✓").green(),
+                    dur,
+                    len
+                )
+            }
+            "infer.error" => {
+                let msg = event
+                    .error
+                    .as_ref()
+                    .map(|e| e.message.as_str())
+                    .unwrap_or("unknown error");
+                format!("{} infer failed: {}", style("✗").red(), msg)
+            }
+            "user" => {
+                let msg = event.message.as_deref().unwrap_or("");
+                format!("{} {}", style("📝").dim(), msg)
+            }
+            _ => format!("{}", event.kind),
+        };
+
+        println!(
+            "{} {:16} {}",
+            style(time).dim(),
+            style(agent_info).cyan(),
+            details
+        );
+    }
+
+    Ok(())
+}
+
+/// Show trace summary.
+fn cmd_trace_summary(file: &Path) -> Result<()> {
+    let events = load_trace_events(file)?;
+
+    if events.is_empty() {
+        println!("No trace events found.");
+        return Ok(());
+    }
+
+    let base_ts = events.first().map(|e| e.t).unwrap_or(0);
+    let end_ts = events.last().map(|e| e.t).unwrap_or(0);
+    let total_duration = end_ts.saturating_sub(base_ts);
+
+    // Collect stats
+    let mut agent_spawns = 0;
+    let mut agent_errors = 0;
+    let mut infer_calls = 0;
+    let mut infer_errors = 0;
+    let mut total_infer_duration = 0u64;
+    let mut total_prompt_chars = 0usize;
+    let mut total_response_chars = 0usize;
+
+    for event in &events {
+        match event.kind.as_str() {
+            "agent.spawn" => agent_spawns += 1,
+            "agent.error" => agent_errors += 1,
+            "infer.start" => {
+                infer_calls += 1;
+                total_prompt_chars += event.prompt_len.unwrap_or(0);
+            }
+            "infer.complete" => {
+                total_infer_duration += event.duration_ms.unwrap_or(0);
+                total_response_chars += event.response_len.unwrap_or(0);
+            }
+            "infer.error" => infer_errors += 1,
+            _ => {}
+        }
+    }
+
+    println!("{}", style("Trace Summary").cyan().bold());
+    println!("{}", style("═".repeat(50)).dim());
+    println!();
+
+    println!(
+        "  {} {}ms",
+        style("Total duration:").bold(),
+        total_duration
+    );
+    println!(
+        "  {} {}",
+        style("Total events:").bold(),
+        events.len()
+    );
+    println!();
+
+    println!("{}", style("Agents").cyan());
+    println!(
+        "  {} {}",
+        style("Spawned:").bold(),
+        agent_spawns
+    );
+    if agent_errors > 0 {
+        println!(
+            "  {} {}",
+            style("Errors:").red().bold(),
+            agent_errors
+        );
+    }
+    println!();
+
+    println!("{}", style("LLM Inference").cyan());
+    println!(
+        "  {} {}",
+        style("Calls:").bold(),
+        infer_calls
+    );
+    if infer_errors > 0 {
+        println!(
+            "  {} {}",
+            style("Errors:").red().bold(),
+            infer_errors
+        );
+    }
+    println!(
+        "  {} {}ms",
+        style("Total time:").bold(),
+        total_infer_duration
+    );
+    if infer_calls > 0 {
+        println!(
+            "  {} {}ms",
+            style("Avg time:").bold(),
+            total_infer_duration / infer_calls as u64
+        );
+    }
+    println!(
+        "  {} {} chars",
+        style("Prompt chars:").bold(),
+        total_prompt_chars
+    );
+    println!(
+        "  {} {} chars",
+        style("Response chars:").bold(),
+        total_response_chars
+    );
+
+    Ok(())
+}
+
+/// Filter trace events by agent name.
+fn cmd_trace_filter(file: &Path, agent_name: &str) -> Result<()> {
+    let events = load_trace_events(file)?;
+
+    let filtered: Vec<_> = events
+        .iter()
+        .filter(|e| e.agent.as_deref() == Some(agent_name))
+        .collect();
+
+    if filtered.is_empty() {
+        println!("No events found for agent '{}'.", agent_name);
+        return Ok(());
+    }
+
+    let base_ts = events.first().map(|e| e.t).unwrap_or(0);
+
+    println!(
+        "{} events for agent {}:",
+        filtered.len(),
+        style(agent_name).cyan().bold()
+    );
+    println!();
+
+    for event in filtered {
+        let time = format_relative_time(event.t, base_ts);
+        let details = match event.kind.as_str() {
+            "agent.spawn" => "spawned".to_string(),
+            "agent.emit" => format!(
+                "emitted {}",
+                event.value_type.as_deref().unwrap_or("?")
+            ),
+            "agent.stop" => format!("stopped ({}ms)", event.duration_ms.unwrap_or(0)),
+            "agent.error" => format!(
+                "error: {}",
+                event.error.as_ref().map(|e| e.message.as_str()).unwrap_or("?")
+            ),
+            "infer.start" => format!(
+                "infer started ({} chars)",
+                event.prompt_len.unwrap_or(0)
+            ),
+            "infer.complete" => format!(
+                "infer complete ({}ms)",
+                event.duration_ms.unwrap_or(0)
+            ),
+            "infer.error" => "infer error".to_string(),
+            _ => event.kind.clone(),
+        };
+
+        println!("  {} {}", style(time).dim(), details);
+    }
+
+    Ok(())
+}
+
+/// Show all infer calls with durations.
+fn cmd_trace_infer(file: &Path) -> Result<()> {
+    let events = load_trace_events(file)?;
+
+    // Pair up infer.start and infer.complete events
+    let starts: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "infer.start")
+        .collect();
+    let completes: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "infer.complete" || e.kind == "infer.error")
+        .collect();
+
+    if starts.is_empty() {
+        println!("No infer calls found in trace.");
+        return Ok(());
+    }
+
+    let base_ts = events.first().map(|e| e.t).unwrap_or(0);
+
+    println!(
+        "{} ({} calls)",
+        style("LLM Inference Calls").cyan().bold(),
+        starts.len()
+    );
+    println!("{}", style("─".repeat(70)).dim());
+    println!(
+        "{:12} {:16} {:>10} {:>10} {:>12}",
+        style("Time").dim(),
+        style("Agent").dim(),
+        style("Model").dim(),
+        style("Duration").dim(),
+        style("Response").dim()
+    );
+    println!("{}", style("─".repeat(70)).dim());
+
+    for start in &starts {
+        let time = format_relative_time(start.t, base_ts);
+        let agent = start.agent.as_deref().unwrap_or("-");
+        let model = start.model.as_deref().unwrap_or("-");
+
+        // Find matching complete/error
+        let complete = completes.iter().find(|c| {
+            c.agent == start.agent && c.id == start.id && c.t >= start.t
+        });
+
+        let (duration, response, is_error) = match complete {
+            Some(c) if c.kind == "infer.complete" => {
+                let dur = format!("{}ms", c.duration_ms.unwrap_or(0));
+                let resp = format!("{} chars", c.response_len.unwrap_or(0));
+                (dur, resp, false)
+            }
+            Some(_) => ("error".to_string(), "-".to_string(), true),
+            None => ("?".to_string(), "?".to_string(), false),
+        };
+
+        if is_error {
+            println!(
+                "{:12} {:16} {:>10} {:>10} {:>12}",
+                time,
+                agent,
+                model,
+                style(duration).red(),
+                response
+            );
+        } else {
+            println!(
+                "{:12} {:16} {:>10} {:>10} {:>12}",
+                time,
+                agent,
+                model,
+                duration,
+                response
+            );
+        }
+    }
+
+    // Total summary
+    let total_duration: u64 = completes
+        .iter()
+        .filter(|c| c.kind == "infer.complete")
+        .filter_map(|c| c.duration_ms)
+        .sum();
+    let total_response: usize = completes
+        .iter()
+        .filter(|c| c.kind == "infer.complete")
+        .filter_map(|c| c.response_len)
+        .sum();
+
+    println!("{}", style("─".repeat(70)).dim());
+    println!(
+        "{:12} {:16} {:>10} {:>10} {:>12}",
+        "",
+        style("TOTAL").bold(),
+        "",
+        format!("{}ms", total_duration),
+        format!("{} chars", total_response)
+    );
+
+    Ok(())
+}
+
+/// Estimate costs from infer calls.
+fn cmd_trace_cost(file: &Path) -> Result<()> {
+    let events = load_trace_events(file)?;
+
+    let infer_starts: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "infer.start")
+        .collect();
+    let infer_completes: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "infer.complete")
+        .collect();
+
+    if infer_starts.is_empty() {
+        println!("No infer calls found in trace.");
+        return Ok(());
+    }
+
+    // Rough token estimation: ~4 chars per token (common approximation)
+    const CHARS_PER_TOKEN: f64 = 4.0;
+
+    let total_prompt_chars: usize = infer_starts
+        .iter()
+        .filter_map(|e| e.prompt_len)
+        .sum();
+    let total_response_chars: usize = infer_completes
+        .iter()
+        .filter_map(|e| e.response_len)
+        .sum();
+
+    let prompt_tokens = (total_prompt_chars as f64 / CHARS_PER_TOKEN).ceil() as usize;
+    let response_tokens = (total_response_chars as f64 / CHARS_PER_TOKEN).ceil() as usize;
+
+    // Get model from first event
+    let model = infer_starts
+        .first()
+        .and_then(|e| e.model.as_deref())
+        .unwrap_or("unknown");
+
+    // Rough pricing (USD per 1M tokens) - these are approximations
+    let (input_price, output_price) = match model {
+        m if m.contains("gpt-4o-mini") => (0.15, 0.60),
+        m if m.contains("gpt-4o") => (2.50, 10.00),
+        m if m.contains("gpt-4") => (30.00, 60.00),
+        m if m.contains("gpt-3.5") => (0.50, 1.50),
+        m if m.contains("claude-3-opus") => (15.00, 75.00),
+        m if m.contains("claude-3-sonnet") => (3.00, 15.00),
+        m if m.contains("claude-3-haiku") => (0.25, 1.25),
+        _ => (1.00, 2.00), // Default fallback
+    };
+
+    let input_cost = (prompt_tokens as f64 / 1_000_000.0) * input_price;
+    let output_cost = (response_tokens as f64 / 1_000_000.0) * output_price;
+    let total_cost = input_cost + output_cost;
+
+    println!(
+        "{} {}",
+        style("Cost Estimate").cyan().bold(),
+        style("(experimental)").dim()
+    );
+    println!("{}", style("═".repeat(50)).dim());
+    println!();
+
+    println!("  {} {}", style("Model:").bold(), model);
+    println!("  {} {}", style("Infer calls:").bold(), infer_starts.len());
+    println!();
+
+    println!("{}", style("Token Estimates").cyan());
+    println!(
+        "  {} ~{} tokens ({} chars)",
+        style("Input:").bold(),
+        prompt_tokens,
+        total_prompt_chars
+    );
+    println!(
+        "  {} ~{} tokens ({} chars)",
+        style("Output:").bold(),
+        response_tokens,
+        total_response_chars
+    );
+    println!();
+
+    println!("{}", style("Cost Breakdown").cyan());
+    println!(
+        "  {} ${:.6}",
+        style("Input cost:").bold(),
+        input_cost
+    );
+    println!(
+        "  {} ${:.6}",
+        style("Output cost:").bold(),
+        output_cost
+    );
+    println!("{}", style("─".repeat(30)).dim());
+    println!(
+        "  {} {}",
+        style("Total:").bold(),
+        style(format!("${:.6}", total_cost)).green().bold()
+    );
+    println!();
+
+    println!(
+        "{}",
+        style("Note: Token counts are rough estimates (~4 chars/token).").dim()
+    );
+    println!(
+        "{}",
+        style("Actual costs may vary based on model and tokenization.").dim()
+    );
+
+    Ok(())
 }

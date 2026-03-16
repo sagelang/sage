@@ -503,6 +503,13 @@ pub enum CheckError {
         span: SourceSpan,
     },
 
+    #[error("`mock tool` is only valid inside a `test` block")]
+    #[diagnostic(code(sage::E057))]
+    MockToolOutsideTest {
+        #[label("must be inside a test block")]
+        span: SourceSpan,
+    },
+
     #[error("`fail` argument must be a String")]
     #[diagnostic(code(sage::E058))]
     MockFailNotString {
@@ -985,6 +992,14 @@ impl CheckError {
     #[must_use]
     pub fn mock_infer_outside_test(span: &Span) -> Self {
         Self::MockInferOutsideTest {
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a mock-tool-outside-test error (E057).
+    #[must_use]
+    pub fn mock_tool_outside_test(span: &Span) -> Self {
+        Self::MockToolOutsideTest {
             span: to_source_span(span),
         }
     }

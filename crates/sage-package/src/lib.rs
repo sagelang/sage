@@ -15,7 +15,7 @@ mod lock;
 mod resolver;
 
 pub use cache::PackageCache;
-pub use dependency::{parse_dependencies, DependencySpec};
+pub use dependency::{parse_dependencies, resolve_path, DependencySpec, GitDependency, PathDependency};
 pub use error::PackageError;
 pub use lock::{LockFile, LockedPackage};
 pub use resolver::{

@@ -199,7 +199,8 @@ pub fn load_project_with_packages(
                 .map_err(|e| vec![LoadError::PackageError { source: e }])?;
             if check_lock_freshness(&deps, &lock) {
                 // Lock file is fresh - install from lock
-                install_from_lock(&lock).map_err(|e| vec![LoadError::PackageError { source: e }])?
+                install_from_lock(&project_root, &lock)
+                    .map_err(|e| vec![LoadError::PackageError { source: e }])?
             } else {
                 // Lock file is stale - re-resolve
                 let resolved = resolve_dependencies(&project_root, &deps, Some(&lock))

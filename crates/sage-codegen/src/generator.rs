@@ -380,8 +380,9 @@ serde_json = "1"
     }
 
     fn generate_test_function(&mut self, test: &TestDecl) {
-        // Collect mock infer statements from the test body
-        let mocks = self.collect_mock_infers(&test.body);
+        // Collect mock statements from the test body
+        let mock_infers = self.collect_mock_infers(&test.body);
+        let mock_tools = self.collect_mock_tools(&test.body);
 
         // Generate test function
         self.emit.writeln("#[tokio::test]");
@@ -392,11 +393,12 @@ serde_json = "1"
         self.emit.writeln("() {");
         self.emit.indent();
 
-        // Generate mock client if there are mocks
-        if !mocks.is_empty() {
-            self.emit.writeln("let _mock_client = MockLlmClient::with_responses(vec![");
+        // Generate mock LLM client if there are mock infers
+        if !mock_infers.is_empty() {
+            self.emit
+                .writeln("let _mock_client = MockLlmClient::with_responses(vec![");
             self.emit.indent();
-            for mock in &mocks {
+            for mock in &mock_infers {
                 match mock {
                     MockValue::Value(expr) => {
                         self.emit.write("MockResponse::value(");
@@ -415,7 +417,33 @@ serde_json = "1"
             self.emit.blank_line();
         }
 
-        // Generate test body (excluding mock infer statements)
+        // Generate mock tool registry if there are mock tools
+        if !mock_tools.is_empty() {
+            self.emit.writeln("let _mock_tools = MockToolRegistry::new();");
+            for (tool_name, fn_name, value) in &mock_tools {
+                self.emit.write("_mock_tools.register(\"");
+                self.emit.write(tool_name);
+                self.emit.write("\", \"");
+                self.emit.write(fn_name);
+                self.emit.write("\", ");
+                match value {
+                    MockValue::Value(expr) => {
+                        self.emit.write("MockResponse::value(");
+                        self.generate_expr(expr);
+                        self.emit.write(")");
+                    }
+                    MockValue::Fail(expr) => {
+                        self.emit.write("MockResponse::fail(");
+                        self.generate_expr(expr);
+                        self.emit.write(")");
+                    }
+                }
+                self.emit.writeln(");");
+            }
+            self.emit.blank_line();
+        }
+
+        // Generate test body (excluding mock statements)
         self.generate_test_block(&test.body);
 
         self.emit.dedent();
@@ -432,10 +460,26 @@ serde_json = "1"
         mocks
     }
 
+    fn collect_mock_tools(&self, block: &Block) -> Vec<(String, String, MockValue)> {
+        let mut mocks = Vec::new();
+        for stmt in &block.stmts {
+            if let Stmt::MockTool {
+                tool_name,
+                fn_name,
+                value,
+                ..
+            } = stmt
+            {
+                mocks.push((tool_name.name.clone(), fn_name.name.clone(), value.clone()));
+            }
+        }
+        mocks
+    }
+
     fn generate_test_block(&mut self, block: &Block) {
         for stmt in &block.stmts {
-            // Skip mock infer statements - they were collected separately
-            if matches!(stmt, Stmt::MockInfer { .. }) {
+            // Skip mock infer and mock tool statements - they were collected separately
+            if matches!(stmt, Stmt::MockInfer { .. } | Stmt::MockTool { .. }) {
                 continue;
             }
             self.generate_test_stmt(stmt);
@@ -1124,6 +1168,33 @@ serde_json = "1"
                 // Mock statements are collected during test codegen, not emitted inline
                 // This placeholder ensures the match is exhaustive
                 self.emit.write("// mock infer: ");
+                match value {
+                    sage_parser::MockValue::Value(expr) => {
+                        self.generate_expr(expr);
+                    }
+                    sage_parser::MockValue::Fail(expr) => {
+                        self.emit.write("fail(");
+                        self.generate_expr(expr);
+                        self.emit.write(")");
+                    }
+                }
+                self.emit.writeln(";");
+            }
+
+            // RFC-0012: mock tool - codegen will be handled in test harness generation
+            Stmt::MockTool {
+                tool_name,
+                fn_name,
+                value,
+                ..
+            } => {
+                // Mock statements are collected during test codegen, not emitted inline
+                // This placeholder ensures the match is exhaustive
+                self.emit.write("// mock tool ");
+                self.emit.write(&tool_name.name);
+                self.emit.write(".");
+                self.emit.write(&fn_name.name);
+                self.emit.write(": ");
                 match value {
                     sage_parser::MockValue::Value(expr) => {
                         self.generate_expr(expr);
@@ -2941,5 +3012,48 @@ run Main;
         let output = generate_source(source);
         // Tool call should generate self.http.get(...).await (no ?, handled by try/catch)
         assert!(output.contains("self.http.get(\"https://httpbin.org/get\".to_string()).await"));
+    }
+
+    fn generate_test_source(source: &str) -> String {
+        let lex_result = lex(source).expect("lexing failed");
+        let source_arc: Arc<str> = Arc::from(source);
+        let (program, errors) = parse(lex_result.tokens(), source_arc);
+        assert!(errors.is_empty(), "parse errors: {errors:?}");
+        let program = program.expect("should parse");
+        super::generate_test_program(&program, "test").main_rs
+    }
+
+    #[test]
+    fn generate_mock_tool() {
+        let source = r#"
+            test "mocks http tool" {
+                mock tool Http.get -> "mocked response";
+                mock tool Http.post -> fail("network error");
+                assert_eq(1, 1);
+            }
+        "#;
+
+        let output = generate_test_source(source);
+        // Should generate MockToolRegistry
+        assert!(output.contains("let _mock_tools = MockToolRegistry::new();"));
+        // Should register mock responses
+        assert!(output.contains("_mock_tools.register(\"Http\", \"get\", MockResponse::value("));
+        assert!(output.contains("_mock_tools.register(\"Http\", \"post\", MockResponse::fail("));
+    }
+
+    #[test]
+    fn generate_mock_infer_and_tool() {
+        let source = r#"
+            test "mocks both infer and tool" {
+                mock infer -> "hello";
+                mock tool Http.get -> "response";
+                assert_true(true);
+            }
+        "#;
+
+        let output = generate_test_source(source);
+        // Should have both mock client and registry
+        assert!(output.contains("MockLlmClient::with_responses"));
+        assert!(output.contains("MockToolRegistry::new()"));
     }
 }

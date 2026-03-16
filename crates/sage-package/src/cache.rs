@@ -2,7 +2,7 @@
 //!
 //! Packages are cached at `~/.sage/packages/<name>/<rev>/`
 
-use crate::dependency::DependencySpec;
+use crate::dependency::GitDependency;
 use crate::error::PackageError;
 use git2::{FetchOptions, RemoteCallbacks, Repository};
 use serde::{Deserialize, Serialize};
@@ -80,11 +80,11 @@ impl PackageCache {
         }
     }
 
-    /// Fetch a package to the cache, returning its path.
+    /// Fetch a git package to the cache, returning its path.
     pub fn fetch(
         &self,
         name: &str,
-        spec: &DependencySpec,
+        spec: &GitDependency,
     ) -> Result<(PathBuf, String), PackageError> {
         // First resolve the ref to a SHA
         let sha = self.resolve_ref(&spec.git, spec.ref_string())?;
@@ -379,12 +379,14 @@ pub struct ResolvedPackage {
     pub name: String,
     /// Package version.
     pub version: String,
-    /// Path to the cached package.
+    /// Path to the package (cached for git, local for path deps).
     pub path: PathBuf,
-    /// Full SHA.
-    pub rev: String,
-    /// Git URL.
-    pub git: String,
+    /// Full SHA (None for path dependencies).
+    pub rev: Option<String>,
+    /// Git URL (None for path dependencies).
+    pub git: Option<String>,
+    /// Original path string (for path dependencies).
+    pub source_path: Option<String>,
     /// Dependencies of this package.
     pub dependencies: Vec<String>,
 }
