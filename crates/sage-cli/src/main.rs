@@ -5,9 +5,13 @@ use console::{style, Emoji};
 use indicatif::{ProgressBar, ProgressStyle};
 use miette::{Diagnostic, IntoDiagnostic, Result, Severity, WrapErr};
 use sage_checker::{check_module_tree, Checker};
-use sage_codegen::{generate_module_tree, generate_test_program_with_config, RuntimeDep};
+use sage_codegen::{
+    generate_module_tree_with_full_config, generate_test_program_with_config, CodegenConfig,
+    PersistenceBackend, RuntimeDep,
+};
 use sage_loader::{
     discover_test_files, load_project, load_project_with_packages, load_test_files, ModuleTree,
+    PersistenceConfig, ProjectManifest,
 };
 use sage_package::{LockFile, PackageCache};
 use std::fs;
@@ -636,6 +640,64 @@ fn compile_with_cargo(project_dir: &PathBuf, release: bool) -> Result<()> {
     Ok(())
 }
 
+/// Convert manifest persistence config to codegen's PersistenceBackend.
+fn convert_persistence_config(config: &PersistenceConfig) -> PersistenceBackend {
+    match config.backend.as_str() {
+        "sqlite" => PersistenceBackend::Sqlite {
+            path: config.path.clone(),
+        },
+        "postgres" => PersistenceBackend::Postgres {
+            url: config.url.clone().unwrap_or_default(),
+        },
+        "file" => PersistenceBackend::File {
+            path: config.path.clone(),
+        },
+        "memory" | _ => PersistenceBackend::Memory,
+    }
+}
+
+/// Load persistence configuration from the project manifest.
+/// Returns Memory backend if no manifest is found or on error.
+fn load_persistence_config(path: &Path) -> PersistenceBackend {
+    // Find the grove.toml manifest
+    let manifest_path = if path.is_file() && path.ends_with("grove.toml") {
+        path.to_path_buf()
+    } else if path.is_dir() {
+        let grove_path = path.join("grove.toml");
+        let sage_path = path.join("sage.toml");
+        if grove_path.exists() {
+            grove_path
+        } else if sage_path.exists() {
+            sage_path
+        } else {
+            return PersistenceBackend::Memory;
+        }
+    } else if path.is_file() {
+        // Single .sg file - check parent directory for manifest
+        if let Some(parent) = path.parent() {
+            let grove_path = parent.join("grove.toml");
+            let sage_path = parent.join("sage.toml");
+            if grove_path.exists() {
+                grove_path
+            } else if sage_path.exists() {
+                sage_path
+            } else {
+                return PersistenceBackend::Memory;
+            }
+        } else {
+            return PersistenceBackend::Memory;
+        }
+    } else {
+        return PersistenceBackend::Memory;
+    };
+
+    // Load and parse the manifest
+    match ProjectManifest::load(&manifest_path) {
+        Ok(manifest) => convert_persistence_config(&manifest.persistence),
+        Err(_) => PersistenceBackend::Memory,
+    }
+}
+
 /// Build a Sage program or project to a native binary.
 /// Returns the path to the binary if compilation succeeded.
 fn build_file(
@@ -749,8 +811,17 @@ fn build_file(
         sp.set_message(format!("{} is generating Rust...", WARD));
     }
 
-    // Generate Rust code from module tree
-    let generated = generate_module_tree(&module_tree, &project_name);
+    // Try to load the manifest for persistence configuration
+    let persistence = load_persistence_config(path);
+
+    // Build the codegen configuration
+    let config = CodegenConfig {
+        runtime_dep: RuntimeDep::default(),
+        persistence,
+    };
+
+    // Generate Rust code from module tree with full config
+    let generated = generate_module_tree_with_full_config(&module_tree, &project_name, config);
 
     // Determine compilation mode
     let toolchain = find_toolchain();

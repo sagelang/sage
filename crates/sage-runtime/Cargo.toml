@@ -9,8 +9,14 @@ description = "Runtime library for compiled Sage programs"
 [features]
 default = []
 database = ["sqlx"]
+# Persistence backends for @persistent fields
+persistence-sqlite = ["sage-persistence/sqlite"]
+persistence-postgres = ["sage-persistence/postgres"]
+persistence-file = ["sage-persistence/file"]
 
 [dependencies]
+# Optional persistence dependency for sync adapters
+sage-persistence = { path = "../sage-persistence", optional = true }
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1", features = ["derive"] }

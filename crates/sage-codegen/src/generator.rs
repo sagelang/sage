@@ -28,16 +28,59 @@ impl Default for RuntimeDep {
 
 impl RuntimeDep {
     /// Generate the Cargo.toml dependency line.
-    fn to_cargo_dep(&self) -> String {
+    fn to_cargo_dep(&self, feature: Option<&str>) -> String {
         match self {
             RuntimeDep::CratesIo { version } => {
-                format!("sage-runtime = \"{version}\"")
+                if let Some(feat) = feature {
+                    format!("sage-runtime = {{ version = \"{version}\", features = [\"{feat}\"] }}")
+                } else {
+                    format!("sage-runtime = \"{version}\"")
+                }
             }
             RuntimeDep::Path { path } => {
-                format!("sage-runtime = {{ path = \"{path}\" }}")
+                if let Some(feat) = feature {
+                    format!("sage-runtime = {{ path = \"{path}\", features = [\"{feat}\"] }}")
+                } else {
+                    format!("sage-runtime = {{ path = \"{path}\" }}")
+                }
             }
         }
     }
+}
+
+/// Persistence backend configuration for @persistent fields.
+#[derive(Debug, Clone, Default)]
+pub enum PersistenceBackend {
+    /// In-memory storage (no persistence across restarts).
+    #[default]
+    Memory,
+    /// SQLite database storage.
+    Sqlite { path: String },
+    /// PostgreSQL database storage.
+    Postgres { url: String },
+    /// File-based JSON storage.
+    File { path: String },
+}
+
+impl PersistenceBackend {
+    /// Get the feature flag name for this backend, if any.
+    fn feature_flag(&self) -> Option<&'static str> {
+        match self {
+            PersistenceBackend::Memory => None,
+            PersistenceBackend::Sqlite { .. } => Some("persistence-sqlite"),
+            PersistenceBackend::Postgres { .. } => Some("persistence-postgres"),
+            PersistenceBackend::File { .. } => Some("persistence-file"),
+        }
+    }
+}
+
+/// Full configuration for code generation.
+#[derive(Debug, Clone, Default)]
+pub struct CodegenConfig {
+    /// How to specify the sage-runtime dependency.
+    pub runtime_dep: RuntimeDep,
+    /// Persistence backend configuration.
+    pub persistence: PersistenceBackend,
 }
 
 /// Generated Rust project files.
@@ -59,7 +102,23 @@ pub fn generate_with_config(
     project_name: &str,
     runtime_dep: RuntimeDep,
 ) -> GeneratedProject {
-    let mut gen = Generator::new(runtime_dep);
+    generate_with_full_config(
+        program,
+        project_name,
+        CodegenConfig {
+            runtime_dep,
+            persistence: PersistenceBackend::Memory,
+        },
+    )
+}
+
+/// Generate Rust code from a Sage program with full configuration.
+pub fn generate_with_full_config(
+    program: &Program,
+    project_name: &str,
+    config: CodegenConfig,
+) -> GeneratedProject {
+    let mut gen = Generator::new(config);
     let main_rs = gen.generate_program(program);
     let needs_persistence = Generator::has_persistent_fields(program);
     let cargo_toml = gen.generate_cargo_toml_with_persistence(project_name, needs_persistence);
@@ -83,7 +142,23 @@ pub fn generate_module_tree_with_config(
     project_name: &str,
     runtime_dep: RuntimeDep,
 ) -> GeneratedProject {
-    let mut gen = Generator::new(runtime_dep);
+    generate_module_tree_with_full_config(
+        tree,
+        project_name,
+        CodegenConfig {
+            runtime_dep,
+            persistence: PersistenceBackend::Memory,
+        },
+    )
+}
+
+/// Generate Rust code from a module tree with full configuration.
+pub fn generate_module_tree_with_full_config(
+    tree: &ModuleTree,
+    project_name: &str,
+    config: CodegenConfig,
+) -> GeneratedProject {
+    let mut gen = Generator::new(config);
     let main_rs = gen.generate_module_tree(tree);
     let needs_persistence = Generator::has_persistent_fields_in_tree(tree);
     let cargo_toml = gen.generate_cargo_toml_with_persistence(project_name, needs_persistence);
@@ -112,7 +187,7 @@ pub fn generate_test_program_with_config(
     test_name: &str,
     runtime_dep: RuntimeDep,
 ) -> GeneratedTestProject {
-    let mut gen = Generator::new(runtime_dep);
+    let mut gen = Generator::with_runtime_dep(runtime_dep);
     let main_rs = gen.generate_test_binary(program);
     let cargo_toml = gen.generate_test_cargo_toml(test_name);
     GeneratedTestProject {
@@ -123,7 +198,7 @@ pub fn generate_test_program_with_config(
 
 struct Generator {
     emit: Emitter,
-    runtime_dep: RuntimeDep,
+    config: CodegenConfig,
     /// Variables that are reassigned in the current scope
     reassigned_vars: std::collections::HashSet<String>,
     /// Agents that have on_error handlers
@@ -131,12 +206,45 @@ struct Generator {
 }
 
 impl Generator {
-    fn new(runtime_dep: RuntimeDep) -> Self {
+    fn new(config: CodegenConfig) -> Self {
         Self {
             emit: Emitter::new(),
-            runtime_dep,
+            config,
             reassigned_vars: std::collections::HashSet::new(),
             agents_with_error_handlers: std::collections::HashSet::new(),
+        }
+    }
+
+    /// Create a generator with only a runtime dependency (backwards compatible).
+    fn with_runtime_dep(runtime_dep: RuntimeDep) -> Self {
+        Self::new(CodegenConfig {
+            runtime_dep,
+            persistence: PersistenceBackend::Memory,
+        })
+    }
+
+    /// Emit the checkpoint store initialization based on configured backend.
+    fn emit_checkpoint_store_init(&mut self) {
+        match &self.config.persistence {
+            PersistenceBackend::Memory => {
+                self.emit
+                    .writeln("sage_runtime::persistence::MemoryCheckpointStore::new()");
+            }
+            PersistenceBackend::Sqlite { path } => {
+                self.emit.write("sage_runtime::persistence::SyncSqliteStore::open(\"");
+                self.emit.write(path);
+                self.emit.writeln("\").expect(\"Failed to open checkpoint database\")");
+            }
+            PersistenceBackend::Postgres { url } => {
+                self.emit.write("sage_runtime::persistence::SyncPostgresStore::connect(\"");
+                self.emit.write(url);
+                self.emit.writeln("\").expect(\"Failed to connect to checkpoint database\")");
+            }
+            PersistenceBackend::File { path } => {
+                self.emit.write("sage_runtime::persistence::SyncFileStore::open(\"");
+                self.emit.write(path);
+                self.emit.writeln("\").expect(\"Failed to open checkpoint directory\")");
+            }
         }
     }
 
@@ -358,6 +466,7 @@ impl Generator {
         std::mem::take(&mut self.emit).finish()
     }
 
+    #[allow(dead_code)]
     fn generate_cargo_toml(&self, name: &str) -> String {
         self.generate_cargo_toml_impl(name, false)
     }
@@ -367,13 +476,14 @@ impl Generator {
     }
 
     fn generate_cargo_toml_impl(&self, name: &str, needs_persistence: bool) -> String {
-        let runtime_dep = self.runtime_dep.to_cargo_dep();
-        let persistence_dep = if needs_persistence {
-            // TODO: Once sage-persistence is published, use version from runtime_dep
-            "sage-persistence = { version = \"1.0\", features = [\"sqlite\"] }\n"
+        // Get the feature flag for the configured persistence backend
+        let feature_flag = if needs_persistence {
+            self.config.persistence.feature_flag()
         } else {
-            ""
+            None
         };
+        let runtime_dep = self.config.runtime_dep.to_cargo_dep(feature_flag);
+
         format!(
             r#"[package]
 name = "{name}"
@@ -382,7 +492,7 @@ edition = "2021"
 
 [dependencies]
 {runtime_dep}
-{persistence_dep}tokio = {{ version = "1", features = ["full"] }}
+tokio = {{ version = "1", features = ["full"] }}
 serde = {{ version = "1", features = ["derive"] }}
 serde_json = "1"
 
@@ -474,7 +584,7 @@ serde_json = "1"
     }
 
     fn generate_test_cargo_toml(&self, name: &str) -> String {
-        let runtime_dep = self.runtime_dep.to_cargo_dep();
+        let runtime_dep = self.config.runtime_dep.to_cargo_dep(None);
         format!(
             r#"[package]
 name = "{name}"
@@ -1174,7 +1284,7 @@ serde_json = "1"
             self.emit.writeln("// Initialize persistence checkpoint store");
             self.emit.writeln("let _checkpoint: std::sync::Arc<dyn CheckpointStore> = std::sync::Arc::new(");
             self.emit.indent();
-            self.emit.writeln("sage_runtime::persistence::MemoryCheckpointStore::new()");
+            self.emit_checkpoint_store_init();
             self.emit.dedent();
             self.emit.writeln(");");
             self.emit.write("let _checkpoint_key = \"");
@@ -1420,7 +1530,7 @@ serde_json = "1"
             if has_persistent {
                 self.emit.writeln("let _checkpoint: std::sync::Arc<dyn CheckpointStore> = std::sync::Arc::new(");
                 self.emit.indent();
-                self.emit.writeln("sage_runtime::persistence::MemoryCheckpointStore::new()");
+                self.emit_checkpoint_store_init();
                 self.emit.dedent();
                 self.emit.writeln(");");
                 self.emit.write("let _checkpoint_key = \"");
@@ -3801,5 +3911,176 @@ run Main;
         assert!(output.contains("RestartConfig::default()"));
         assert!(output.contains("supervisor.add_child(\"Worker\", RestartPolicy::Transient"));
         assert!(output.contains("supervisor.run()"));
+    }
+
+    // =========================================================================
+    // Persistence backend configuration tests
+    // =========================================================================
+
+    fn generate_with_backend(source: &str, backend: PersistenceBackend) -> String {
+        let lex_result = lex(source).expect("lexing failed");
+        let source_arc: Arc<str> = Arc::from(source);
+        let (program, errors) = parse(lex_result.tokens(), source_arc);
+        assert!(errors.is_empty(), "parse errors: {errors:?}");
+        let program = program.expect("should parse");
+
+        let config = CodegenConfig {
+            runtime_dep: RuntimeDep::default(),
+            persistence: backend,
+        };
+        generate_with_full_config(&program, "test", config).main_rs
+    }
+
+    #[test]
+    fn generate_persistence_memory_backend() {
+        let source = r#"
+            agent Counter {
+                @persistent count: Int
+                on start {
+                    yield(self.count.get());
+                }
+            }
+            run Counter;
+        "#;
+
+        let output = generate_with_backend(source, PersistenceBackend::Memory);
+        assert!(
+            output.contains("MemoryCheckpointStore::new()"),
+            "memory backend should use MemoryCheckpointStore"
+        );
+    }
+
+    #[test]
+    fn generate_persistence_sqlite_backend() {
+        let source = r#"
+            agent Counter {
+                @persistent count: Int
+                on start {
+                    yield(self.count.get());
+                }
+            }
+            run Counter;
+        "#;
+
+        let output = generate_with_backend(
+            source,
+            PersistenceBackend::Sqlite {
+                path: ".sage/data.db".to_string(),
+            },
+        );
+        assert!(
+            output.contains("SyncSqliteStore::open(\".sage/data.db\")"),
+            "sqlite backend should use SyncSqliteStore with correct path"
+        );
+    }
+
+    #[test]
+    fn generate_persistence_postgres_backend() {
+        let source = r#"
+            agent Counter {
+                @persistent count: Int
+                on start {
+                    yield(self.count.get());
+                }
+            }
+            run Counter;
+        "#;
+
+        let output = generate_with_backend(
+            source,
+            PersistenceBackend::Postgres {
+                url: "postgres://localhost/mydb".to_string(),
+            },
+        );
+        assert!(
+            output.contains("SyncPostgresStore::connect(\"postgres://localhost/mydb\")"),
+            "postgres backend should use SyncPostgresStore with correct url"
+        );
+    }
+
+    #[test]
+    fn generate_persistence_file_backend() {
+        let source = r#"
+            agent Counter {
+                @persistent count: Int
+                on start {
+                    yield(self.count.get());
+                }
+            }
+            run Counter;
+        "#;
+
+        let output = generate_with_backend(
+            source,
+            PersistenceBackend::File {
+                path: "./state".to_string(),
+            },
+        );
+        assert!(
+            output.contains("SyncFileStore::open(\"./state\")"),
+            "file backend should use SyncFileStore with correct path"
+        );
+    }
+
+    #[test]
+    fn generate_cargo_toml_with_sqlite_feature() {
+        let source = r#"
+            agent Counter {
+                @persistent count: Int
+                on start { yield(0); }
+            }
+            run Counter;
+        "#;
+
+        let lex_result = lex(source).expect("lexing failed");
+        let source_arc: Arc<str> = Arc::from(source);
+        let (program, errors) = parse(lex_result.tokens(), source_arc);
+        assert!(errors.is_empty());
+        let program = program.expect("should parse");
+
+        let config = CodegenConfig {
+            runtime_dep: RuntimeDep::CratesIo {
+                version: "1.0.0".to_string(),
+            },
+            persistence: PersistenceBackend::Sqlite {
+                path: ".sage/data.db".to_string(),
+            },
+        };
+        let project = generate_with_full_config(&program, "test", config);
+
+        assert!(
+            project.cargo_toml.contains("persistence-sqlite"),
+            "Cargo.toml should include persistence-sqlite feature"
+        );
+    }
+
+    #[test]
+    fn generate_cargo_toml_no_feature_for_memory() {
+        let source = r#"
+            agent Counter {
+                @persistent count: Int
+                on start { yield(0); }
+            }
+            run Counter;
+        "#;
+
+        let lex_result = lex(source).expect("lexing failed");
+        let source_arc: Arc<str> = Arc::from(source);
+        let (program, errors) = parse(lex_result.tokens(), source_arc);
+        assert!(errors.is_empty());
+        let program = program.expect("should parse");
+
+        let config = CodegenConfig {
+            runtime_dep: RuntimeDep::CratesIo {
+                version: "1.0.0".to_string(),
+            },
+            persistence: PersistenceBackend::Memory,
+        };
+        let project = generate_with_full_config(&program, "test", config);
+
+        assert!(
+            !project.cargo_toml.contains("persistence-"),
+            "Cargo.toml should NOT include any persistence feature for memory backend"
+        );
     }
 }

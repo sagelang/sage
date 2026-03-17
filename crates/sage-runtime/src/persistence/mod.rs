@@ -4,6 +4,30 @@
 //! - `CheckpointStore` trait for storage backends
 //! - `Persisted<T>` wrapper for auto-checkpointing fields
 //! - `AgentCheckpoint` for managing agent-level persistence
+//!
+//! # Backends
+//!
+//! The following backends are available via feature flags:
+//! - `persistence-sqlite`: SQLite database (recommended for local development)
+//! - `persistence-postgres`: PostgreSQL (recommended for production)
+//! - `persistence-file`: JSON files (useful for debugging)
+//!
+//! Without any persistence feature, only `MemoryCheckpointStore` is available.
+
+// Sync adapters for async persistence backends
+#[cfg(any(
+    feature = "persistence-sqlite",
+    feature = "persistence-postgres",
+    feature = "persistence-file"
+))]
+mod backends;
+
+#[cfg(feature = "persistence-sqlite")]
+pub use backends::SyncSqliteStore;
+#[cfg(feature = "persistence-postgres")]
+pub use backends::SyncPostgresStore;
+#[cfg(feature = "persistence-file")]
+pub use backends::SyncFileStore;
 
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
