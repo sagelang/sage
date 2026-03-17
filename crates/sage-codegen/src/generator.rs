@@ -1,7 +1,7 @@
 //! Main code generator.
 
 use crate::emit::Emitter;
-use sage_loader::ModuleTree;
+use sage_loader::{ModuleTree, SupervisionConfig};
 use sage_parser::{
     AgentDecl, BinOp, Block, ConstDecl, EnumDecl, EventKind, Expr, FnDecl, Literal, MockValue,
     Program, RecordDecl, RestartPolicy, Stmt, StringPart, SupervisionStrategy, SupervisorDecl,
@@ -81,6 +81,8 @@ pub struct CodegenConfig {
     pub runtime_dep: RuntimeDep,
     /// Persistence backend configuration.
     pub persistence: PersistenceBackend,
+    /// Supervision configuration (restart intensity limits).
+    pub supervision: SupervisionConfig,
 }
 
 /// Generated Rust project files.
@@ -108,6 +110,7 @@ pub fn generate_with_config(
         CodegenConfig {
             runtime_dep,
             persistence: PersistenceBackend::Memory,
+            supervision: SupervisionConfig::default(),
         },
     )
 }
@@ -148,6 +151,7 @@ pub fn generate_module_tree_with_config(
         CodegenConfig {
             runtime_dep,
             persistence: PersistenceBackend::Memory,
+            supervision: SupervisionConfig::default(),
         },
     )
 }
@@ -220,6 +224,7 @@ impl Generator {
         Self::new(CodegenConfig {
             runtime_dep,
             persistence: PersistenceBackend::Memory,
+            supervision: SupervisionConfig::default(),
         })
     }
 
@@ -1478,14 +1483,17 @@ serde_json = "1"
         self.emit.writeln("");
 
         // Create the supervisor with the configured strategy
-        // TODO: Pass supervision config from grove.toml instead of using defaults
         self.emit.write("let mut supervisor = Supervisor::new(Strategy::");
         match supervisor.strategy {
             SupervisionStrategy::OneForOne => self.emit.write("OneForOne"),
             SupervisionStrategy::OneForAll => self.emit.write("OneForAll"),
             SupervisionStrategy::RestForOne => self.emit.write("RestForOne"),
         }
-        self.emit.writeln(", RestartConfig::default());");
+        self.emit.writeln(&format!(
+            ", RestartConfig {{ max_restarts: {}, within: std::time::Duration::from_secs({}) }});",
+            self.config.supervision.max_restarts,
+            self.config.supervision.within_seconds
+        ));
         self.emit.writeln("");
 
         // Add each child with its spawn function
@@ -3951,11 +3959,53 @@ run Main;
         assert!(output.contains("// Supervisor: AppSupervisor"));
         assert!(output.contains("struct AppSupervisor;"));
 
-        // Check supervisor main is generated
+        // Check supervisor main is generated with config from grove.toml (defaults)
         assert!(output.contains("Supervisor::new(Strategy::OneForOne"));
-        assert!(output.contains("RestartConfig::default()"));
+        assert!(output.contains("RestartConfig { max_restarts: 5"));
+        assert!(output.contains("Duration::from_secs(60)"));
         assert!(output.contains("supervisor.add_child(\"Worker\", RestartPolicy::Transient"));
         assert!(output.contains("supervisor.run()"));
+    }
+
+    #[test]
+    fn generate_supervisor_with_custom_config() {
+        let source = r#"
+            agent Worker {
+                on start { yield(0); }
+            }
+
+            supervisor AppSupervisor {
+                strategy: OneForAll
+
+                children {
+                    Worker { restart: Permanent }
+                }
+            }
+
+            run AppSupervisor;
+        "#;
+
+        let lex_result = lex(source).expect("lexing failed");
+        let source_arc: Arc<str> = Arc::from(source);
+        let (program, errors) = parse(lex_result.tokens(), source_arc);
+        assert!(errors.is_empty());
+        let program = program.expect("should parse");
+
+        // Use custom supervision config (simulating grove.toml values)
+        let config = CodegenConfig {
+            runtime_dep: RuntimeDep::default(),
+            persistence: PersistenceBackend::Memory,
+            supervision: SupervisionConfig {
+                max_restarts: 10,
+                within_seconds: 120,
+            },
+        };
+        let output = generate_with_full_config(&program, "test", config).main_rs;
+
+        // Check custom config values are used
+        assert!(output.contains("RestartConfig { max_restarts: 10"));
+        assert!(output.contains("Duration::from_secs(120)"));
+        assert!(output.contains("Strategy::OneForAll"));
     }
 
     // =========================================================================
@@ -3972,6 +4022,7 @@ run Main;
         let config = CodegenConfig {
             runtime_dep: RuntimeDep::default(),
             persistence: backend,
+            supervision: SupervisionConfig::default(),
         };
         generate_with_full_config(&program, "test", config).main_rs
     }
@@ -4090,6 +4141,7 @@ run Main;
             persistence: PersistenceBackend::Sqlite {
                 path: ".sage/data.db".to_string(),
             },
+            supervision: SupervisionConfig::default(),
         };
         let project = generate_with_full_config(&program, "test", config);
 
@@ -4120,6 +4172,7 @@ run Main;
                 version: "1.0.0".to_string(),
             },
             persistence: PersistenceBackend::Memory,
+            supervision: SupervisionConfig::default(),
         };
         let project = generate_with_full_config(&program, "test", config);
 

@@ -465,6 +465,9 @@ run Fetcher;
 | Tool | Methods | Description |
 |------|---------|-------------|
 | `Http` | `get(url)`, `post(url, body)` | HTTP client for web requests |
+| `Database` | `query(sql)`, `execute(sql)` | SQL database client |
+| `Fs` | `read(path)`, `write(path, content)`, `exists(path)`, `list(path)`, `delete(path)` | Filesystem operations |
+| `Shell` | `run(command)` | Execute shell commands |
 
 **HttpResponse fields:**
 
@@ -473,6 +476,104 @@ run Fetcher;
 | `status` | `Int` | HTTP status code (e.g., 200, 404) |
 | `body` | `String` | Response body as text |
 | `headers` | `Map<String, String>` | Response headers |
+
+**Database methods:**
+
+```sage
+agent DataAgent {
+    use Database
+
+    on start {
+        // Execute a query (SELECT)
+        let rows = try Database.query("SELECT id, name FROM users");
+        for row in rows {
+            print(row.values);  // ["1", "Alice"]
+        }
+
+        // Execute a statement (INSERT, UPDATE, DELETE)
+        let affected = try Database.execute("INSERT INTO users (name) VALUES ('Bob')");
+        print("Rows affected: " ++ int_to_str(affected));
+
+        yield(0);
+    }
+
+    on error(e) { yield(1); }
+}
+```
+
+Configure database connection in environment:
+```bash
+SAGE_DATABASE_URL="sqlite:./data.db" sage run myprogram.sg
+SAGE_DATABASE_URL="postgres://localhost/mydb" sage run myprogram.sg
+```
+
+**Fs methods:**
+
+```sage
+agent FileAgent {
+    use Fs
+
+    on start {
+        // Write a file
+        try Fs.write("output.txt", "Hello, World!");
+
+        // Read a file
+        let content = try Fs.read("output.txt");
+        print(content);
+
+        // Check if file exists
+        if try Fs.exists("output.txt") {
+            print("File exists");
+        }
+
+        // List directory contents
+        let files = try Fs.list(".");
+        for file in files {
+            print(file);
+        }
+
+        // Delete a file
+        try Fs.delete("output.txt");
+
+        yield(0);
+    }
+
+    on error(e) { yield(1); }
+}
+```
+
+Configure filesystem root directory:
+```bash
+SAGE_FS_ROOT="/tmp/myapp" sage run myprogram.sg
+```
+
+**Shell methods:**
+
+```sage
+agent ShellAgent {
+    use Shell
+
+    on start {
+        let result = try Shell.run("echo 'Hello from shell'");
+        print(result.stdout);       // "Hello from shell\n"
+        print(result.exit_code);    // 0
+        if result.stderr != "" {
+            print("Error: " ++ result.stderr);
+        }
+        yield(result.exit_code);
+    }
+
+    on error(e) { yield(1); }
+}
+```
+
+**ShellResult fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `exit_code` | `Int` | Exit code from the command |
+| `stdout` | `String` | Standard output |
+| `stderr` | `String` | Standard error |
 
 Tool calls are fallible and must be wrapped in `try` or `catch`.
 

@@ -11,7 +11,7 @@ use sage_codegen::{
 };
 use sage_loader::{
     discover_test_files, load_project, load_project_with_packages, load_test_files, ModuleTree,
-    PersistenceConfig, ProjectManifest,
+    PersistenceConfig, ProjectManifest, SupervisionConfig,
 };
 use sage_package::{LockFile, PackageCache};
 use std::fs;
@@ -656,9 +656,11 @@ fn convert_persistence_config(config: &PersistenceConfig) -> PersistenceBackend 
     }
 }
 
-/// Load persistence configuration from the project manifest.
-/// Returns Memory backend if no manifest is found or on error.
-fn load_persistence_config(path: &Path) -> PersistenceBackend {
+/// Load configuration from the project manifest.
+/// Returns defaults if no manifest is found or on error.
+fn load_manifest_configs(path: &Path) -> (PersistenceBackend, SupervisionConfig) {
+    let defaults = (PersistenceBackend::Memory, SupervisionConfig::default());
+
     // Find the grove.toml manifest
     let manifest_path = if path.is_file() && path.ends_with("grove.toml") {
         path.to_path_buf()
@@ -670,7 +672,7 @@ fn load_persistence_config(path: &Path) -> PersistenceBackend {
         } else if sage_path.exists() {
             sage_path
         } else {
-            return PersistenceBackend::Memory;
+            return defaults;
         }
     } else if path.is_file() {
         // Single .sg file - check parent directory for manifest
@@ -682,19 +684,22 @@ fn load_persistence_config(path: &Path) -> PersistenceBackend {
             } else if sage_path.exists() {
                 sage_path
             } else {
-                return PersistenceBackend::Memory;
+                return defaults;
             }
         } else {
-            return PersistenceBackend::Memory;
+            return defaults;
         }
     } else {
-        return PersistenceBackend::Memory;
+        return defaults;
     };
 
     // Load and parse the manifest
     match ProjectManifest::load(&manifest_path) {
-        Ok(manifest) => convert_persistence_config(&manifest.persistence),
-        Err(_) => PersistenceBackend::Memory,
+        Ok(manifest) => (
+            convert_persistence_config(&manifest.persistence),
+            manifest.supervision.clone(),
+        ),
+        Err(_) => defaults,
     }
 }
 
@@ -811,13 +816,14 @@ fn build_file(
         sp.set_message(format!("{} is generating Rust...", WARD));
     }
 
-    // Try to load the manifest for persistence configuration
-    let persistence = load_persistence_config(path);
+    // Load configuration from manifest
+    let (persistence, supervision) = load_manifest_configs(path);
 
     // Build the codegen configuration
     let config = CodegenConfig {
         runtime_dep: RuntimeDep::default(),
         persistence,
+        supervision,
     };
 
     // Generate Rust code from module tree with full config

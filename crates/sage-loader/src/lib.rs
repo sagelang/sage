@@ -13,7 +13,7 @@ mod manifest;
 mod tree;
 
 pub use error::LoadError;
-pub use manifest::{PersistenceConfig, ProjectManifest, TestConfig};
+pub use manifest::{PersistenceConfig, ProjectManifest, SupervisionConfig, TestConfig};
 pub use tree::{
     discover_test_files, load_project, load_project_with_packages, load_single_file,
     load_test_files, ModulePath, ModuleTree, ParsedModule, TestFile,

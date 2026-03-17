@@ -2655,14 +2655,41 @@ impl<'a> InterpExprParser<'a> {
                         _ => break,
                     }
                 }
+                Some(Token::ColonColon) if matches!(expr, Expr::Var { .. }) => {
+                    // Turbofish: name::<Type1, Type2>(args)
+                    if let Expr::Var { name, .. } = expr {
+                        self.advance(); // consume ::
+                        let type_args = self.parse_turbofish();
+                        // Now expect (
+                        if matches!(self.current(), Some(Token::LParen)) {
+                            self.advance();
+                            let args = self.parse_args();
+                            expr = Expr::Call {
+                                name,
+                                type_args,
+                                args,
+                                span: self.span.clone(),
+                            };
+                        } else {
+                            // Turbofish without call - just treat as var with type args
+                            // This shouldn't normally happen, but handle gracefully
+                            expr = Expr::Call {
+                                name,
+                                type_args,
+                                args: vec![],
+                                span: self.span.clone(),
+                            };
+                        }
+                    }
+                }
                 Some(Token::LParen) if matches!(expr, Expr::Var { .. }) => {
-                    // Function call
+                    // Function call without turbofish
                     if let Expr::Var { name, .. } = expr {
                         self.advance();
                         let args = self.parse_args();
                         expr = Expr::Call {
                             name,
-                            type_args: vec![], // TODO: Parse turbofish
+                            type_args: vec![],
                             args,
                             span: self.span.clone(),
                         };
@@ -2806,6 +2833,130 @@ impl<'a> InterpExprParser<'a> {
             self.advance();
         }
         args
+    }
+
+    /// Parse turbofish type arguments: `<Type1, Type2>`
+    /// Assumes `::` has already been consumed.
+    fn parse_turbofish(&mut self) -> Vec<TypeExpr> {
+        let mut type_args = Vec::new();
+
+        // Expect <
+        if !matches!(self.current(), Some(Token::Lt)) {
+            return type_args;
+        }
+        self.advance();
+
+        // Parse comma-separated types until >
+        loop {
+            if matches!(self.current(), Some(Token::Gt) | None) {
+                break;
+            }
+
+            if let Some(ty) = self.parse_type() {
+                type_args.push(ty);
+            }
+
+            if matches!(self.current(), Some(Token::Comma)) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        // Consume >
+        if matches!(self.current(), Some(Token::Gt)) {
+            self.advance();
+        }
+
+        type_args
+    }
+
+    /// Parse a type expression: `Int`, `String`, `List<T>`, `Map<K, V>`, etc.
+    fn parse_type(&mut self) -> Option<TypeExpr> {
+        let name = match self.current() {
+            Some(Token::Ident) => self.current_text().unwrap_or("").to_string(),
+            Some(Token::TyInt) => "Int".to_string(),
+            Some(Token::TyFloat) => "Float".to_string(),
+            Some(Token::TyBool) => "Bool".to_string(),
+            Some(Token::TyString) => "String".to_string(),
+            Some(Token::TyUnit) => "Unit".to_string(),
+            _ => return None,
+        };
+        self.advance();
+
+        // Check for type parameters: <T, U>
+        if matches!(self.current(), Some(Token::Lt)) {
+            self.advance();
+            let mut params = Vec::new();
+
+            loop {
+                if matches!(self.current(), Some(Token::Gt) | None) {
+                    break;
+                }
+
+                if let Some(param) = self.parse_type() {
+                    params.push(param);
+                }
+
+                if matches!(self.current(), Some(Token::Comma)) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+
+            if matches!(self.current(), Some(Token::Gt)) {
+                self.advance();
+            }
+
+            // Return generic type
+            Some(match name.as_str() {
+                "List" => {
+                    if let Some(elem) = params.into_iter().next() {
+                        TypeExpr::List(Box::new(elem))
+                    } else {
+                        TypeExpr::Named(Ident::new(name, self.span.clone()), vec![])
+                    }
+                }
+                "Map" => {
+                    let mut iter = params.into_iter();
+                    if let (Some(k), Some(v)) = (iter.next(), iter.next()) {
+                        TypeExpr::Map(Box::new(k), Box::new(v))
+                    } else {
+                        TypeExpr::Named(Ident::new(name, self.span.clone()), vec![])
+                    }
+                }
+                "Option" => {
+                    if let Some(inner) = params.into_iter().next() {
+                        TypeExpr::Option(Box::new(inner))
+                    } else {
+                        TypeExpr::Named(Ident::new(name, self.span.clone()), vec![])
+                    }
+                }
+                "Result" => {
+                    let mut iter = params.into_iter();
+                    if let (Some(ok), Some(err)) = (iter.next(), iter.next()) {
+                        TypeExpr::Result(Box::new(ok), Box::new(err))
+                    } else {
+                        TypeExpr::Named(Ident::new(name, self.span.clone()), vec![])
+                    }
+                }
+                _ => {
+                    // Generic named type
+                    TypeExpr::Named(Ident::new(name, self.span.clone()), params)
+                }
+            })
+        } else {
+            // Simple type
+            Some(match name.as_str() {
+                "Int" => TypeExpr::Int,
+                "Float" => TypeExpr::Float,
+                "Bool" => TypeExpr::Bool,
+                "String" => TypeExpr::String,
+                "Unit" => TypeExpr::Unit,
+                _ => TypeExpr::Named(Ident::new(name, self.span.clone()), vec![]),
+            })
+        }
     }
 }
 
@@ -5209,6 +5360,49 @@ mod tests {
             assert_eq!(body.stmts.len(), 2);
         } else {
             panic!("expected SpanBlock statement");
+        }
+    }
+
+    #[test]
+    fn parse_turbofish_in_interpolation() {
+        let source = r#"
+            fn identity<T>(x: T) -> T { return x; }
+
+            agent Main {
+                on start {
+                    let msg = "result: {identity::<Int>(42)}";
+                    yield(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Let { value, .. } = &handler.body.stmts[0] {
+            if let Expr::StringInterp { template, .. } = value {
+                // Should have 2 parts: "result: " and the interpolated expression
+                assert_eq!(template.parts.len(), 2);
+                if let StringPart::Interpolation(call_expr) = &template.parts[1] {
+                    if let Expr::Call { name, type_args, args, .. } = call_expr.as_ref() {
+                        assert_eq!(name.name, "identity");
+                        assert_eq!(type_args.len(), 1);
+                        assert!(matches!(type_args[0], TypeExpr::Int));
+                        assert_eq!(args.len(), 1);
+                    } else {
+                        panic!("expected Call expression in interpolation, got {:?}", call_expr);
+                    }
+                } else {
+                    panic!("expected Interpolation part in template");
+                }
+            } else {
+                panic!("expected StringInterp expression");
+            }
+        } else {
+            panic!("expected Let statement");
         }
     }
 }

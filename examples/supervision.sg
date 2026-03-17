@@ -34,4 +34,10 @@ supervisor WorkerPool {
     }
 }
 
+// Configure restart intensity limits in grove.toml:
+//
+// [supervision]
+// max_restarts = 5       # Max restarts within window (default: 5)
+// within_seconds = 60    # Time window in seconds (default: 60)
+
 run WorkerPool;
