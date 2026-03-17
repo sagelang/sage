@@ -529,6 +529,17 @@ pub enum Stmt {
         span: Span,
     },
 
+    /// Span block: `span "name" { body }` for timed observability blocks.
+    /// Records start/end times and emits trace events.
+    SpanBlock {
+        /// The span name (should be a string literal or expression).
+        name: Expr,
+        /// The block body.
+        body: Block,
+        /// Span covering the statement.
+        span: Span,
+    },
+
     /// Expression statement: `expr`
     Expr {
         /// The expression.
@@ -592,6 +603,7 @@ impl Stmt {
             | Stmt::While { span, .. }
             | Stmt::Loop { span, .. }
             | Stmt::Break { span, .. }
+            | Stmt::SpanBlock { span, .. }
             | Stmt::Expr { span, .. }
             | Stmt::LetTuple { span, .. }
             | Stmt::MockDivine { span, .. }

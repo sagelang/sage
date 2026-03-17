@@ -173,6 +173,10 @@ pub enum Token {
     #[token("trace")]
     KwTrace,
 
+    /// Span keyword for timed observability blocks.
+    #[token("span")]
+    KwSpan,
+
     // =========================================================================
     // Supervision tree keywords (v2)
     // =========================================================================
@@ -427,6 +431,7 @@ impl Token {
                 | Token::KwError
                 | Token::KwTool
                 | Token::KwTrace
+                | Token::KwSpan
                 | Token::KwSupervisor
                 | Token::KwChildren
                 | Token::KwStrategy
@@ -546,6 +551,7 @@ impl std::fmt::Display for Token {
             Token::KwTest => write!(f, "test"),
             Token::KwMock => write!(f, "mock"),
             Token::KwTrace => write!(f, "trace"),
+            Token::KwSpan => write!(f, "span"),
             Token::KwSupervisor => write!(f, "supervisor"),
             Token::KwChildren => write!(f, "children"),
             Token::KwStrategy => write!(f, "strategy"),
@@ -1220,6 +1226,38 @@ mod tests {
         assert_eq!(lexer.next(), Some(Ok(Token::LBrace)));
         assert_eq!(lexer.next(), Some(Ok(Token::KwUse)));
         assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // Http
+        assert_eq!(lexer.next(), Some(Ok(Token::RBrace)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    // =========================================================================
+    // Observability: trace and span
+    // =========================================================================
+
+    #[test]
+    fn lex_trace_span_keywords() {
+        let mut lexer = Token::lexer("trace span");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwTrace)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwSpan)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn trace_span_are_keywords() {
+        assert!(Token::KwTrace.is_keyword());
+        assert!(Token::KwSpan.is_keyword());
+    }
+
+    #[test]
+    fn lex_span_block() {
+        let mut lexer = Token::lexer("span \"fetch_data\" { let x = 1 }");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwSpan)));
+        assert_eq!(lexer.next(), Some(Ok(Token::StringLit)));
+        assert_eq!(lexer.next(), Some(Ok(Token::LBrace)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwLet)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Eq)));
+        assert_eq!(lexer.next(), Some(Ok(Token::IntLit)));
         assert_eq!(lexer.next(), Some(Ok(Token::RBrace)));
         assert_eq!(lexer.next(), None);
     }

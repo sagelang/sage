@@ -1042,6 +1042,17 @@ fn stmt_parser(
             span: make_span(&src5, span),
         });
 
+    // span "name" { body } - timed observability block
+    let src16 = source.clone();
+    let span_block_stmt = just(Token::KwSpan)
+        .ignore_then(expr_parser(src16.clone()))
+        .then(block.clone())
+        .map_with_span(move |(name, body), span: Range<usize>| Stmt::SpanBlock {
+            name,
+            body,
+            span: make_span(&src16, span),
+        });
+
     let expr_stmt = expr_parser(src6.clone())
         .then_ignore(just(Token::Semicolon))
         .map_with_span(move |expr, span: Range<usize>| Stmt::Expr {
@@ -1057,6 +1068,7 @@ fn stmt_parser(
         .or(while_stmt)
         .or(loop_stmt)
         .or(break_stmt)
+        .or(span_block_stmt)
         .or(mock_divine_stmt)
         .or(mock_tool_stmt)
         .or(assign_stmt)
@@ -5158,6 +5170,45 @@ mod tests {
             }
         } else {
             panic!("expected Option type");
+        }
+    }
+
+    #[test]
+    fn parse_span_block() {
+        let source = r#"
+            agent Main {
+                on start {
+                    span "fetch_data" {
+                        let x = 1;
+                        let y = 2;
+                    }
+                    yield(42);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let handler = &prog.agents[0].handlers[0];
+        // First statement should be a SpanBlock
+        if let Stmt::SpanBlock { name, body, .. } = &handler.body.stmts[0] {
+            // Name should be a string literal
+            if let Expr::Literal {
+                value: Literal::String(s),
+                ..
+            } = name
+            {
+                assert_eq!(s, "fetch_data");
+            } else {
+                panic!("expected string literal for span name");
+            }
+            // Body should have 2 statements
+            assert_eq!(body.stmts.len(), 2);
+        } else {
+            panic!("expected SpanBlock statement");
         }
     }
 }

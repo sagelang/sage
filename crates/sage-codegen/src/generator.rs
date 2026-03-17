@@ -1835,6 +1835,28 @@ serde_json = "1"
                 self.emit.writeln("break;");
             }
 
+            Stmt::SpanBlock { name, body, .. } => {
+                // Generate a block that:
+                // 1. Records start time
+                // 2. Emits span_start event
+                // 3. Runs body
+                // 4. Emits span_end event with duration
+                self.emit.writeln("{");
+                self.emit.indent();
+                self.emit.write("let __span_name = ");
+                self.generate_expr(name);
+                self.emit.writeln(";");
+                self.emit.writeln("let __span_start = std::time::Instant::now();");
+                self.emit.writeln("sage_runtime::trace::span_start(&__span_name);");
+                // Generate body statements
+                self.generate_block(body);
+                self.emit.writeln(
+                    "sage_runtime::trace::span_end(&__span_name, __span_start.elapsed().as_millis() as u64);",
+                );
+                self.emit.dedent();
+                self.emit.writeln("}");
+            }
+
             Stmt::Expr { expr, .. } => {
                 // Handle emit specially
                 if let Expr::Yield { value, .. } = expr {

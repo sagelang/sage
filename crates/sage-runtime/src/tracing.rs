@@ -199,6 +199,27 @@ pub fn user(message: &str) {
     );
 }
 
+/// Trace the start of a span block.
+pub fn span_start(name: &str) {
+    emit_event(
+        "span.start",
+        serde_json::json!({
+            "name": name,
+        }),
+    );
+}
+
+/// Trace the end of a span block with duration.
+pub fn span_end(name: &str, duration_ms: u64) {
+    emit_event(
+        "span.end",
+        serde_json::json!({
+            "name": name,
+            "duration_ms": duration_ms,
+        }),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

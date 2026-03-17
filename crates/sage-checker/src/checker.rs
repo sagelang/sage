@@ -791,6 +791,21 @@ impl Checker {
                 }
             }
 
+            Stmt::SpanBlock { name, body, span } => {
+                let name_ty = self.check_expr(name);
+                if !matches!(name_ty, Type::String) && !name_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "String".to_string(),
+                        name_ty.to_string(),
+                        span,
+                    ));
+                }
+                // Check all statements in the body
+                for stmt in &body.stmts {
+                    self.check_stmt(stmt);
+                }
+            }
+
             Stmt::Expr { expr, .. } => {
                 self.check_expr(expr);
             }
@@ -4626,6 +4641,21 @@ impl<'a> ModuleChecker<'a> {
             Stmt::Break { span } => {
                 if !self.in_loop {
                     self.errors.push(CheckError::break_outside_loop(span));
+                }
+            }
+
+            Stmt::SpanBlock { name, body, span } => {
+                let name_ty = self.check_expr(name);
+                if !matches!(name_ty, Type::String) && !name_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "String".to_string(),
+                        name_ty.to_string(),
+                        span,
+                    ));
+                }
+                // Check all statements in the body
+                for stmt in &body.stmts {
+                    self.check_stmt(stmt);
                 }
             }
 

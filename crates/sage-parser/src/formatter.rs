@@ -550,6 +550,17 @@ impl Formatter {
             Stmt::Break { .. } => {
                 self.writeln("break;");
             }
+            Stmt::SpanBlock { name, body, .. } => {
+                self.write_indent();
+                self.write("span ");
+                self.format_expr(name);
+                self.write(" {\n");
+                self.indent();
+                self.format_block(body);
+                self.dedent();
+                self.write_indent();
+                self.writeln("}");
+            }
             Stmt::If {
                 condition,
                 then_block,
