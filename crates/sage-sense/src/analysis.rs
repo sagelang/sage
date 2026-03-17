@@ -8,7 +8,12 @@ use tower_lsp::lsp_types::Diagnostic;
 
 /// Run the full compiler pipeline on source and return LSP diagnostics.
 /// Never panics - all errors are caught and converted.
-pub fn analyse(source: &str) -> Vec<Diagnostic> {
+///
+/// If `filename` is provided and ends with `_test.sg`, test constructs are allowed.
+pub fn analyse(source: &str, filename: Option<&str>) -> Vec<Diagnostic> {
+    let is_test_file = filename
+        .map(|f| f.ends_with("_test.sg"))
+        .unwrap_or(false);
     let mut diagnostics = Vec::new();
 
     // Step 1: Lex (with error recovery)
@@ -33,7 +38,11 @@ pub fn analyse(source: &str) -> Vec<Diagnostic> {
 
     // Step 3: Type check (only if we have a usable AST)
     if let Some(program) = program_opt {
-        let check_result = sage_checker::check(&program);
+        let check_result = if is_test_file {
+            sage_checker::check_test_file(&program)
+        } else {
+            sage_checker::check(&program)
+        };
         for error in &check_result.errors {
             if let Some(d) = check_error_to_diagnostic(error, source) {
                 diagnostics.push(d);
@@ -58,7 +67,7 @@ agent Main {
 }
 run Main;
 "#;
-        let diagnostics = analyse(source);
+        let diagnostics = analyse(source, None);
         assert!(
             diagnostics.is_empty(),
             "Expected no errors: {:?}",
@@ -76,7 +85,7 @@ agent Main {
 }
 run Main;
 "#;
-        let diagnostics = analyse(source);
+        let diagnostics = analyse(source, None);
         assert!(!diagnostics.is_empty());
         assert!(diagnostics[0].message.contains("undefined"));
     }
@@ -84,7 +93,7 @@ run Main;
     #[test]
     fn analyse_lex_error() {
         let source = "let # = 42";
-        let diagnostics = analyse(source);
+        let diagnostics = analyse(source, None);
         assert!(!diagnostics.is_empty());
         assert!(diagnostics[0].message.contains("invalid token"));
     }
@@ -92,7 +101,7 @@ run Main;
     #[test]
     fn analyse_parse_error() {
         let source = "agent Main { on start { yield( } } run Main;";
-        let diagnostics = analyse(source);
+        let diagnostics = analyse(source, None);
         assert!(!diagnostics.is_empty());
     }
 }

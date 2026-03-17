@@ -98,6 +98,9 @@ enum Commands {
         file: Option<PathBuf>,
     },
 
+    /// Remove build artifacts (hearth directory)
+    Clean,
+
     /// Add a package dependency
     Add {
         /// Package name
@@ -283,6 +286,7 @@ fn main() -> Result<()> {
             let resolved_file = resolve_entry_file(file)?;
             check_file(&resolved_file)
         }
+        Commands::Clean => cmd_clean(),
         Commands::Add {
             package,
             git,
@@ -803,11 +807,7 @@ fn build_file(
     }
 
     if let Some(ref sp) = spinner {
-        if use_toolchain {
-            sp.set_message(format!("{} is compiling...", WARD));
-        } else {
-            sp.set_message(format!("{} is building with cargo...", WARD));
-        }
+        sp.set_message(format!("{} is conjuring...", WARD));
     }
 
     // Compile
@@ -1312,6 +1312,19 @@ fn cmd_cache_remove(package: &str) -> Result<()> {
         style(package).red().bold()
     );
 
+    Ok(())
+}
+
+/// Remove build artifacts (hearth directory).
+fn cmd_clean() -> Result<()> {
+    let hearth_path = Path::new("hearth");
+    if hearth_path.exists() {
+        std::fs::remove_dir_all(hearth_path)
+            .map_err(|e| miette::miette!("Failed to remove hearth directory: {}", e))?;
+        println!("{} cleared build artifacts", style(WARD.to_string()).cyan().bold());
+    } else {
+        println!("{} nothing to clean", style(WARD.to_string()).cyan().bold());
+    }
     Ok(())
 }
 

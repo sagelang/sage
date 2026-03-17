@@ -353,6 +353,8 @@ serde_json = "1"
         self.emit
             .writeln("//! Generated test file by Sage compiler. Do not edit.");
         self.emit.blank_line();
+        self.emit.writeln("#![allow(unused_imports, dead_code)]");
+        self.emit.blank_line();
         self.emit.writeln("use sage_runtime::prelude::*;");
         self.emit.blank_line();
 
@@ -1265,7 +1267,7 @@ serde_json = "1"
             Stmt::Expr { expr, .. } => {
                 // Handle emit specially
                 if let Expr::Yield { value, .. } = expr {
-                    self.emit.write("return ctx.yield(");
+                    self.emit.write("return ctx.emit(");
                     self.generate_expr(value);
                     self.emit.writeln(");");
                 } else {
@@ -2171,7 +2173,7 @@ serde_json = "1"
             }
 
             Expr::Yield { value, .. } => {
-                self.emit.write("ctx.yield(");
+                self.emit.write("ctx.emit(");
                 self.generate_expr(value);
                 self.emit.write(")");
             }
@@ -2814,7 +2816,7 @@ mod tests {
         let output = generate_source(source);
         assert!(output.contains("struct Main;"));
         assert!(output.contains("async fn on_start"));
-        assert!(output.contains("ctx.yield(42_i64)"));
+        assert!(output.contains("ctx.emit(42_i64)"));
         assert!(output.contains("#[tokio::main]"));
     }
 

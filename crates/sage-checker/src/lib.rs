@@ -40,7 +40,7 @@ mod error;
 mod scope;
 mod types;
 
-pub use checker::{check, check_module_tree, CheckResult, Checker, ModuleCheckResult, ModulePath};
+pub use checker::{check, check_test_file, check_module_tree, CheckResult, Checker, ModuleCheckResult, ModulePath};
 pub use error::CheckError;
 pub use scope::{AgentInfo, FunctionInfo, Scope, SymbolTable};
 pub use types::Type;

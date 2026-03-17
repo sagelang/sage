@@ -3521,6 +3521,19 @@ pub fn check(program: &Program) -> CheckResult {
     Checker::new().check(program)
 }
 
+/// Type-check a test file (`*_test.sg`).
+///
+/// RFC-0012: Test files may contain `test` blocks and assertion builtins.
+///
+/// # Errors
+///
+/// Returns errors if the program contains semantic errors such as
+/// undefined variables, type mismatches, or invalid operations.
+#[must_use]
+pub fn check_test_file(program: &Program) -> CheckResult {
+    Checker::for_test_file().check(program)
+}
+
 // =============================================================================
 // Multi-module checking
 // =============================================================================
