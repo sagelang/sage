@@ -1117,7 +1117,7 @@ impl Checker {
                 // Check exhaustiveness
                 if !has_wildcard {
                     let is_exhaustive = match &scrutinee_ty {
-                        Type::Named(name) => {
+                        Type::Named(name) | Type::Generic(name, _) => {
                             // Check if it's an enum and all variants are covered
                             if let Some(enum_info) = self.symbols.get_enum(name) {
                                 enum_info
@@ -1128,6 +1128,14 @@ impl Checker {
                                 // Not an enum - needs wildcard
                                 false
                             }
+                        }
+                        // Option<T> requires Some and None
+                        Type::Option(_) => {
+                            covered_variants.contains("Some") && covered_variants.contains("None")
+                        }
+                        // Result<T, E> requires Ok and Err
+                        Type::Result(_, _) => {
+                            covered_variants.contains("Ok") && covered_variants.contains("Err")
                         }
                         Type::Bool => covered_bool_true && covered_bool_false,
                         Type::Error => true, // Don't report exhaustiveness errors on error types
@@ -1881,10 +1889,34 @@ impl Checker {
                 span,
             } => {
                 // Check that the scrutinee is the correct enum type
-                let expected_enum = match scrutinee_ty {
-                    Type::Named(name) => Some(name.clone()),
+                // Handle built-in Option/Result types specially
+                let (expected_enum, type_bindings): (Option<String>, std::collections::HashMap<String, Type>) = match scrutinee_ty {
+                    Type::Named(name) => (Some(name.clone()), std::collections::HashMap::new()),
+                    Type::Option(inner) => {
+                        let mut bindings = std::collections::HashMap::new();
+                        bindings.insert("T".to_string(), (**inner).clone());
+                        (Some("Option".to_string()), bindings)
+                    }
+                    Type::Result(ok, err) => {
+                        let mut bindings = std::collections::HashMap::new();
+                        bindings.insert("T".to_string(), (**ok).clone());
+                        bindings.insert("E".to_string(), (**err).clone());
+                        (Some("Result".to_string()), bindings)
+                    }
+                    Type::Generic(name, args) => {
+                        // For generic enums, build type bindings from args
+                        if let Some(enum_info) = self.symbols.get_enum(name) {
+                            let mut bindings = std::collections::HashMap::new();
+                            for (param, arg) in enum_info.type_params.iter().zip(args.iter()) {
+                                bindings.insert(param.clone(), arg.clone());
+                            }
+                            (Some(name.clone()), bindings)
+                        } else {
+                            (Some(name.clone()), std::collections::HashMap::new())
+                        }
+                    }
                     Type::Error => return, // Don't cascade errors
-                    _ => None,
+                    _ => (None, std::collections::HashMap::new()),
                 };
 
                 // Determine the enum name to use for lookup
@@ -1949,8 +1981,14 @@ impl Checker {
                         {
                             match (payload, expected_payload_ty) {
                                 (Some(inner_pattern), Some(payload_ty)) => {
+                                    // Substitute type parameters in the payload type
+                                    let resolved_payload_ty = if type_bindings.is_empty() {
+                                        payload_ty.clone()
+                                    } else {
+                                        payload_ty.substitute(&type_bindings)
+                                    };
                                     // Recursively check the inner pattern
-                                    self.check_pattern(inner_pattern, payload_ty);
+                                    self.check_pattern(inner_pattern, &resolved_payload_ty);
                                 }
                                 (None, Some(_)) => {
                                     // Variant has payload but pattern doesn't bind it
@@ -4860,7 +4898,7 @@ impl<'a> ModuleChecker<'a> {
                 // Check exhaustiveness
                 if !has_wildcard {
                     let is_exhaustive = match &scrutinee_ty {
-                        Type::Named(name) => {
+                        Type::Named(name) | Type::Generic(name, _) => {
                             // Check if it's an enum and all variants are covered
                             if let Some(enum_info) = self.lookup_enum(name) {
                                 enum_info
@@ -4871,6 +4909,14 @@ impl<'a> ModuleChecker<'a> {
                                 // Not an enum - needs wildcard
                                 false
                             }
+                        }
+                        // Option<T> requires Some and None
+                        Type::Option(_) => {
+                            covered_variants.contains("Some") && covered_variants.contains("None")
+                        }
+                        // Result<T, E> requires Ok and Err
+                        Type::Result(_, _) => {
+                            covered_variants.contains("Ok") && covered_variants.contains("Err")
                         }
                         Type::Bool => covered_bool_true && covered_bool_false,
                         Type::Error => true, // Don't report exhaustiveness errors on error types
@@ -5562,10 +5608,34 @@ impl<'a> ModuleChecker<'a> {
                 span,
             } => {
                 // Check that the scrutinee is the correct enum type
-                let expected_enum = match scrutinee_ty {
-                    Type::Named(name) => Some(name.clone()),
+                // Handle built-in Option/Result types specially
+                let (expected_enum, type_bindings): (Option<String>, std::collections::HashMap<String, Type>) = match scrutinee_ty {
+                    Type::Named(name) => (Some(name.clone()), std::collections::HashMap::new()),
+                    Type::Option(inner) => {
+                        let mut bindings = std::collections::HashMap::new();
+                        bindings.insert("T".to_string(), (**inner).clone());
+                        (Some("Option".to_string()), bindings)
+                    }
+                    Type::Result(ok, err) => {
+                        let mut bindings = std::collections::HashMap::new();
+                        bindings.insert("T".to_string(), (**ok).clone());
+                        bindings.insert("E".to_string(), (**err).clone());
+                        (Some("Result".to_string()), bindings)
+                    }
+                    Type::Generic(name, args) => {
+                        // For generic enums, build type bindings from args
+                        if let Some(enum_info) = self.symbols.get_enum(name) {
+                            let mut bindings = std::collections::HashMap::new();
+                            for (param, arg) in enum_info.type_params.iter().zip(args.iter()) {
+                                bindings.insert(param.clone(), arg.clone());
+                            }
+                            (Some(name.clone()), bindings)
+                        } else {
+                            (Some(name.clone()), std::collections::HashMap::new())
+                        }
+                    }
                     Type::Error => return, // Don't cascade errors
-                    _ => None,
+                    _ => (None, std::collections::HashMap::new()),
                 };
 
                 // Determine the enum name to use for lookup
@@ -5630,8 +5700,10 @@ impl<'a> ModuleChecker<'a> {
                         {
                             match (payload, expected_payload_ty) {
                                 (Some(inner_pattern), Some(payload_ty)) => {
+                                    // Substitute type parameters with concrete types
+                                    let substituted_ty = payload_ty.substitute(&type_bindings);
                                     // Recursively check the inner pattern
-                                    self.check_pattern(inner_pattern, payload_ty);
+                                    self.check_pattern(inner_pattern, &substituted_ty);
                                 }
                                 (None, Some(_)) => {
                                     // Variant has payload but pattern doesn't bind it
