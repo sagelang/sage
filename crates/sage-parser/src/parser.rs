@@ -774,6 +774,7 @@ fn supervisor_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = P
 
     // Child spec: AgentName { restart: Permanent, handler Infer: DefaultLLM, belief1: value1, ... }
     // Or just: AgentName { belief1: value1, ... } (defaults to Permanent)
+    // Commas between fields are optional for consistent multiline style.
     let child_spec = ident_token_parser(src3.clone())
         .then_ignore(just(Token::LBrace))
         .then(restart_policy.then_ignore(just(Token::Comma).or_not()).or_not())
@@ -784,8 +785,8 @@ fn supervisor_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = P
         )
         .then(
             field_init
-                .separated_by(just(Token::Comma))
-                .allow_trailing(),
+                .then_ignore(just(Token::Comma).or_not())
+                .repeated(),
         )
         .then_ignore(just(Token::RBrace))
         .map_with_span({
@@ -1208,9 +1209,10 @@ fn stmt_parser(
         });
 
     // RFC-0012: mock divine -> value; or mock divine -> fail("msg");
+    // Also accepts: mock infer -> value; (alias for mock divine)
     let src12 = source.clone();
     let mock_divine_stmt = just(Token::KwMock)
-        .ignore_then(just(Token::KwDivine))
+        .ignore_then(just(Token::KwDivine).or(just(Token::KwInfer)))
         .ignore_then(just(Token::Arrow))
         .ignore_then(expr_parser(src12.clone()).map(|expr| {
             // Check if this is a fail() call expression and convert to MockValue::Fail
@@ -1275,6 +1277,16 @@ fn stmt_parser(
             span: make_span(&src16, span),
         });
 
+    // checkpoint(); - explicit persistence checkpoint
+    let src17 = source.clone();
+    let checkpoint_stmt = just(Token::KwCheckpoint)
+        .then_ignore(just(Token::LParen))
+        .then_ignore(just(Token::RParen))
+        .then_ignore(just(Token::Semicolon))
+        .map_with_span(move |_, span: Range<usize>| Stmt::Checkpoint {
+            span: make_span(&src17, span),
+        });
+
     let expr_stmt = expr_parser(src6.clone())
         .then_ignore(just(Token::Semicolon))
         .map_with_span(move |expr, span: Range<usize>| Stmt::Expr {
@@ -1291,6 +1303,7 @@ fn stmt_parser(
         .or(loop_stmt)
         .or(break_stmt)
         .or(span_block_stmt)
+        .or(checkpoint_stmt)
         .or(mock_divine_stmt)
         .or(mock_tool_stmt)
         .or(assign_stmt)
@@ -1379,7 +1392,9 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
             });
 
         // divine("template") or divine("template" -> Type)
+        // Also accepts: infer("template") or infer("template" -> Type)
         let divine_expr = just(Token::KwDivine)
+            .or(just(Token::KwInfer))
             .ignore_then(just(Token::LParen))
             .ignore_then(string_template_parser(src.clone()))
             .then(
@@ -1860,12 +1875,17 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
                                 span,
                             }
                         } else {
-                            // Not a tool call - for now, produce a FieldAccess error
-                            // (Sage doesn't support general method calls on values)
+                            // Not a tool call - this is a method call on a value.
+                            // Produce Apply { callee: FieldAccess, args }
                             let span = make_span(&src, object.span().start..call_span.end);
-                            Expr::FieldAccess {
+                            let callee = Expr::FieldAccess {
                                 object: Box::new(object),
                                 field: method,
+                                span: span.clone(),
+                            };
+                            Expr::Apply {
+                                callee: Box::new(callee),
+                                args,
                                 span,
                             }
                         }

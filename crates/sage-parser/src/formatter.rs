@@ -561,6 +561,10 @@ impl Formatter {
                 self.write_indent();
                 self.writeln("}");
             }
+            Stmt::Checkpoint { .. } => {
+                self.write_indent();
+                self.writeln("checkpoint();");
+            }
             Stmt::If {
                 condition,
                 then_block,
@@ -737,6 +741,17 @@ impl Formatter {
             }
             Expr::Call { name, args, .. } => {
                 self.write(&name.name);
+                self.write("(");
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.format_expr(arg);
+                }
+                self.write(")");
+            }
+            Expr::Apply { callee, args, .. } => {
+                self.format_expr(callee);
                 self.write("(");
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {

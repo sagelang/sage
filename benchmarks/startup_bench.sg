@@ -1,0 +1,12 @@
+// Startup Time Benchmark
+// Measures time from `sage run` to first agent `on start`
+// Run: time sage run benchmarks/startup_bench.sg
+
+agent StartupBench {
+    on start {
+        // Immediately yield - measuring pure startup overhead
+        yield(0);
+    }
+}
+
+run StartupBench;

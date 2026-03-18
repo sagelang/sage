@@ -47,6 +47,9 @@ pub enum Token {
     #[token("divine")]
     KwDivine,
 
+    #[token("infer")]
+    KwInfer,
+
     #[token("summon")]
     KwSummon,
 
@@ -176,6 +179,10 @@ pub enum Token {
     /// Span keyword for timed observability blocks.
     #[token("span")]
     KwSpan,
+
+    /// Checkpoint keyword for explicit persistence checkpoint.
+    #[token("checkpoint")]
+    KwCheckpoint,
 
     // =========================================================================
     // Supervision tree keywords (v2)
@@ -418,6 +425,7 @@ impl Token {
                 | Token::KwResting
                 | Token::KwMessage
                 | Token::KwDivine
+                | Token::KwInfer
                 | Token::KwSummon
                 | Token::KwAwait
                 | Token::KwSend
@@ -458,6 +466,7 @@ impl Token {
                 | Token::KwTool
                 | Token::KwTrace
                 | Token::KwSpan
+                | Token::KwCheckpoint
                 | Token::KwSupervisor
                 | Token::KwChildren
                 | Token::KwStrategy
@@ -541,6 +550,7 @@ impl std::fmt::Display for Token {
             Token::KwResting => write!(f, "resting"),
             Token::KwMessage => write!(f, "message"),
             Token::KwDivine => write!(f, "divine"),
+            Token::KwInfer => write!(f, "infer"),
             Token::KwSummon => write!(f, "summon"),
             Token::KwAwait => write!(f, "await"),
             Token::KwSend => write!(f, "send"),
@@ -583,6 +593,7 @@ impl std::fmt::Display for Token {
             Token::KwMock => write!(f, "mock"),
             Token::KwTrace => write!(f, "trace"),
             Token::KwSpan => write!(f, "span"),
+            Token::KwCheckpoint => write!(f, "checkpoint"),
             Token::KwSupervisor => write!(f, "supervisor"),
             Token::KwChildren => write!(f, "children"),
             Token::KwStrategy => write!(f, "strategy"),

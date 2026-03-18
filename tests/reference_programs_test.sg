@@ -1,0 +1,149 @@
+// RP-01/RP-02: Reference Programs Validation
+// Tests that the steward patterns compile correctly
+// Note: Runtime tests would require full integration testing
+
+// ============================================================================
+// Simplified webapp_steward pattern (agents declared to verify compilation)
+// ============================================================================
+
+record RouteSpec {
+    method: String,
+    path: String,
+}
+
+agent APISteward {
+    @persistent routes_generated: Bool
+    @persistent route_count: Int
+
+    on waking {
+        trace("APISteward waking with " ++ int_to_str(self.route_count.get()) ++ " routes");
+    }
+
+    on start {
+        if !self.routes_generated.get() {
+            trace("Generating routes...");
+            self.routes_generated.set(true);
+            self.route_count.set(5);
+        }
+        yield(self.route_count.get());
+    }
+
+    on resting {
+        trace("APISteward resting");
+    }
+
+    on error(e) {
+        yield(-1);
+    }
+}
+
+agent DbWatcher {
+    @persistent check_count: Int
+
+    on waking {
+        trace("DbWatcher waking");
+    }
+
+    on start {
+        let count = self.check_count.get() + 1;
+        self.check_count.set(count);
+        yield(count);
+    }
+
+    on error(e) {
+        yield(-1);
+    }
+}
+
+// ============================================================================
+// Simplified db_guardian pattern
+// ============================================================================
+
+agent QueryMonitor {
+    @persistent check_count: Int
+    @persistent alert_count: Int
+
+    on waking {
+        trace("QueryMonitor resuming");
+    }
+
+    on start {
+        let count = self.check_count.get() + 1;
+        self.check_count.set(count);
+        trace("Check #" ++ int_to_str(count));
+        yield(count);
+    }
+
+    on error(e) {
+        let alerts = self.alert_count.get() + 1;
+        self.alert_count.set(alerts);
+        yield(-1);
+    }
+}
+
+agent PoolMonitor {
+    @persistent max_seen: Int
+
+    on waking {
+        trace("PoolMonitor restored");
+    }
+
+    on start {
+        let current = 3;
+        if current > self.max_seen.get() {
+            self.max_seen.set(current);
+        }
+        yield(current);
+    }
+
+    on error(e) {
+        yield(-1);
+    }
+}
+
+// ============================================================================
+// Tests - verify syntax compiles (like other v2 tests)
+// ============================================================================
+
+test "RP-01a: APISteward with @persistent fields compiles" {
+    // Agent declared above with routes_generated and route_count
+    assert_true(true);
+}
+
+test "RP-01b: APISteward lifecycle hooks compile" {
+    // on waking, on start, on resting, on error all declared
+    assert_true(true);
+}
+
+test "RP-01c: DbWatcher with @persistent field compiles" {
+    assert_true(true);
+}
+
+test "RP-02a: QueryMonitor with multiple @persistent fields compiles" {
+    // check_count and alert_count declared
+    assert_true(true);
+}
+
+test "RP-02b: PoolMonitor with @persistent field compiles" {
+    assert_true(true);
+}
+
+test "RP-02c: Persisted.get() and .set() syntax compiles" {
+    // All agents use self.field.get() and self.field.set()
+    assert_true(true);
+}
+
+test "RP-03: trace() calls within agents compile" {
+    // Multiple agents use trace() for observability
+    assert_true(true);
+}
+
+test "RP-04: yield() in on start and on error compiles" {
+    // All agents yield values in their handlers
+    assert_true(true);
+}
+
+test "RP-05: int_to_str() for trace interpolation compiles" {
+    // Used in APISteward and QueryMonitor
+    assert_true(true);
+}

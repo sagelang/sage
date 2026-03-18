@@ -1,0 +1,47 @@
+// Supervision Restart Latency Benchmark
+// Measures time from agent crash to restart complete
+// Run: sage run benchmarks/restart_bench.sg
+
+agent RestartWorker {
+    @persistent restart_count: Int
+    @persistent crash_time: Int
+
+    on waking {
+        let now = now_ms();
+        let last_crash = self.crash_time.get();
+        if last_crash > 0 {
+            let restart_latency = now - last_crash;
+            trace("Restart latency: " ++ int_to_str(restart_latency) ++ "ms");
+        }
+    }
+
+    on start {
+        let count = self.restart_count.get();
+
+        if count < 3 {
+            // Record time before exit
+            self.crash_time.set(now_ms());
+            self.restart_count.set(count + 1);
+            trace("Restart #" ++ int_to_str(count + 1) ++ " - exiting with error");
+
+            // Exit with error to trigger Transient restart
+            yield(-1);
+        } else {
+            trace("Completed 3 restarts, benchmark done");
+            yield(count);
+        }
+    }
+}
+
+supervisor RestartBenchSupervisor {
+    strategy: OneForOne
+    children {
+        RestartWorker {
+            restart: Transient
+            restart_count: 0
+            crash_time: 0
+        }
+    }
+}
+
+run RestartBenchSupervisor;

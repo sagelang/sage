@@ -34,6 +34,17 @@ impl<T> AgentHandle<T> {
             .await
             .map_err(|e| SageError::Agent(format!("Failed to send message: {e}")))
     }
+
+    /// Send a pre-built message to the agent.
+    ///
+    /// This is used by generated code when the message needs additional metadata
+    /// (like type_name for protocol tracking).
+    pub async fn send_message(&self, message: Message) -> SageResult<()> {
+        self.message_tx
+            .send(message)
+            .await
+            .map_err(|e| SageError::Agent(format!("Failed to send message: {e}")))
+    }
 }
 
 /// A message that can be sent to an agent.
@@ -263,6 +274,133 @@ impl<T> AgentContext<T> {
         sender.send(msg).await
     }
 
+    /// Phase 3: Reply to the current message with protocol state validation.
+    ///
+    /// This validates that the reply is allowed by the protocol state machine,
+    /// transitions the state, and then sends the reply.
+    ///
+    /// # Arguments
+    /// * `msg` - The message to send back
+    /// * `msg_type` - The type name of the message for protocol validation
+    /// * `role` - The role this agent plays in the protocol
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Called outside a message handler
+    /// - The current message has no sender handle
+    /// - The protocol state doesn't allow this reply
+    pub async fn reply_with_protocol<M: serde::Serialize>(
+        &mut self,
+        msg: M,
+        msg_type: &str,
+        role: &str,
+    ) -> SageResult<()> {
+        let current = self
+            .current_message
+            .as_ref()
+            .ok_or_else(|| SageError::from(ProtocolViolation::ReplyOutsideHandler))?;
+
+        // If message has a session, validate protocol state
+        if let Some(session_id) = current.session_id {
+            let mut registry = self.session_registry.write().await;
+            if let Some(session) = registry.get_mut(&session_id) {
+                // Validate that we can send this message type from our role
+                if !session.state.can_send(msg_type, role) {
+                    return Err(SageError::from(ProtocolViolation::UnexpectedMessage {
+                        protocol: session.protocol.clone(),
+                        expected: "valid reply".to_string(),
+                        received: msg_type.to_string(),
+                        state: session.state.state_name().to_string(),
+                    }));
+                }
+                // Transition the state machine
+                session.state.transition(msg_type)?;
+            }
+        }
+
+        let sender = current
+            .sender
+            .as_ref()
+            .ok_or_else(|| SageError::Agent("Message has no sender handle".to_string()))?;
+
+        sender.send(msg).await
+    }
+
+    /// Phase 3: Validate incoming message against protocol state.
+    ///
+    /// Call this after receiving a message to validate it against the
+    /// protocol state machine and transition to the next state.
+    ///
+    /// # Arguments
+    /// * `msg_type` - The type name of the received message
+    /// * `role` - The role this agent plays in the protocol
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the message violates the protocol.
+    pub async fn validate_protocol_receive(
+        &mut self,
+        msg_type: &str,
+        role: &str,
+    ) -> SageResult<()> {
+        let current = match &self.current_message {
+            Some(msg) => msg,
+            None => return Ok(()), // No current message, nothing to validate
+        };
+
+        // If message has a session, validate protocol state
+        if let Some(session_id) = current.session_id {
+            let mut registry = self.session_registry.write().await;
+            if let Some(session) = registry.get_mut(&session_id) {
+                // Validate that we can receive this message type in our role
+                if !session.state.can_receive(msg_type, role) {
+                    return Err(SageError::from(ProtocolViolation::UnexpectedMessage {
+                        protocol: session.protocol.clone(),
+                        expected: "valid message for current state".to_string(),
+                        received: msg_type.to_string(),
+                        state: session.state.state_name().to_string(),
+                    }));
+                }
+                // Transition the state machine
+                session.state.transition(msg_type)?;
+
+                // If protocol is complete, remove the session
+                if session.state.is_terminal() {
+                    drop(registry);
+                    self.session_registry.write().await.remove(&session_id);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Phase 3: Start a new protocol session.
+    ///
+    /// Call this when initiating a protocol exchange with another agent.
+    ///
+    /// # Arguments
+    /// * `protocol` - The protocol name
+    /// * `role` - The role this agent plays
+    /// * `state` - The initial state machine for this protocol
+    /// * `partner` - Handle to send messages to the partner
+    ///
+    /// # Returns
+    /// The session ID for tracking this protocol session.
+    pub async fn start_session(
+        &self,
+        protocol: String,
+        role: String,
+        state: Box<dyn crate::session::ProtocolStateMachine>,
+        partner: SenderHandle,
+    ) -> SessionId {
+        let mut registry = self.session_registry.write().await;
+        let session_id = registry.next_id();
+        registry.start_session(session_id, protocol, role, state, partner);
+        session_id
+    }
+
     /// Get the current message being handled (if any).
     #[must_use]
     pub fn current_message(&self) -> Option<&Message> {
@@ -279,10 +417,22 @@ where
     F: Future<Output = SageResult<T>> + Send,
     T: Send + 'static,
 {
+    spawn_with_llm_config(agent, crate::llm::LlmConfig::from_env())
+}
+
+/// Spawn an agent with a custom LLM configuration.
+///
+/// This is used by effect handlers to configure per-agent LLM settings.
+pub fn spawn_with_llm_config<A, T, F>(agent: A, llm_config: crate::llm::LlmConfig) -> AgentHandle<T>
+where
+    A: FnOnce(AgentContext<T>) -> F + Send + 'static,
+    F: Future<Output = SageResult<T>> + Send,
+    T: Send + 'static,
+{
     let (result_tx, result_rx) = oneshot::channel();
     let (message_tx, message_rx) = mpsc::channel(32);
 
-    let llm = LlmClient::from_env();
+    let llm = LlmClient::new(llm_config);
     let session_registry = crate::session::shared_registry();
     let ctx = AgentContext::new(llm, result_tx, message_rx, session_registry);
 

@@ -7,11 +7,12 @@ use miette::{Diagnostic, IntoDiagnostic, Result, Severity, WrapErr};
 use sage_checker::{check_module_tree, Checker};
 use sage_codegen::{
     generate_module_tree_with_full_config, generate_test_program_with_config, CodegenConfig,
-    PersistenceBackend, RuntimeDep,
+    ObservabilityConfig, PersistenceBackend, RuntimeDep,
 };
 use sage_loader::{
     discover_test_files, load_project, load_project_with_packages, load_test_files, ModuleTree,
-    PersistenceConfig, ProjectManifest, SupervisionConfig,
+    ObservabilityConfig as LoaderObservabilityConfig, PersistenceConfig, ProjectManifest,
+    SupervisionConfig,
 };
 use sage_package::{LockFile, PackageCache};
 use std::fs;
@@ -656,10 +657,23 @@ fn convert_persistence_config(config: &PersistenceConfig) -> PersistenceBackend 
     }
 }
 
+/// Convert manifest observability config to codegen's ObservabilityConfig.
+fn convert_observability_config(config: &LoaderObservabilityConfig) -> ObservabilityConfig {
+    ObservabilityConfig {
+        backend: config.backend.clone(),
+        otlp_endpoint: config.otlp_endpoint.clone(),
+        service_name: config.service_name.clone().unwrap_or_default(),
+    }
+}
+
 /// Load configuration from the project manifest.
 /// Returns defaults if no manifest is found or on error.
-fn load_manifest_configs(path: &Path) -> (PersistenceBackend, SupervisionConfig) {
-    let defaults = (PersistenceBackend::Memory, SupervisionConfig::default());
+fn load_manifest_configs(path: &Path) -> (PersistenceBackend, SupervisionConfig, ObservabilityConfig) {
+    let defaults = (
+        PersistenceBackend::Memory,
+        SupervisionConfig::default(),
+        ObservabilityConfig::default(),
+    );
 
     // Find the grove.toml manifest
     let manifest_path = if path.is_file() && path.ends_with("grove.toml") {
@@ -698,6 +712,7 @@ fn load_manifest_configs(path: &Path) -> (PersistenceBackend, SupervisionConfig)
         Ok(manifest) => (
             convert_persistence_config(&manifest.persistence),
             manifest.supervision.clone(),
+            convert_observability_config(&manifest.observability),
         ),
         Err(_) => defaults,
     }
@@ -817,13 +832,30 @@ fn build_file(
     }
 
     // Load configuration from manifest
-    let (persistence, supervision) = load_manifest_configs(path);
+    let (persistence, supervision, observability) = load_manifest_configs(path);
+
+    // Use path dependency if we're in the sage repo (crates/sage-runtime exists)
+    let runtime_dep = if std::env::current_dir()
+        .map(|d| d.join("crates/sage-runtime").exists())
+        .unwrap_or(false)
+    {
+        RuntimeDep::Path {
+            path: std::env::current_dir()
+                .unwrap()
+                .join("crates/sage-runtime")
+                .to_string_lossy()
+                .to_string(),
+        }
+    } else {
+        RuntimeDep::default()
+    };
 
     // Build the codegen configuration
     let config = CodegenConfig {
-        runtime_dep: RuntimeDep::default(),
+        runtime_dep,
         persistence,
         supervision,
+        observability,
     };
 
     // Generate Rust code from module tree with full config

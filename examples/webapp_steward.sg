@@ -20,25 +20,26 @@ agent APISteward {
     @persistent last_health_check: String
 
     on waking {
-        trace("APISteward restored with " ++ int_to_str(self.route_count) ++ " routes");
-        trace("Last health check: " ++ self.last_health_check);
+        trace("APISteward restored with " ++ int_to_str(self.route_count.get()) ++ " routes");
+        trace("Last health check: " ++ self.last_health_check.get());
     }
 
     on start {
-        if !self.routes_generated {
+        if !self.routes_generated.get() {
             // In real use, would discover and generate routes
             trace("Discovering API routes...");
-            // Note: In production, self.routes_generated would be updated
-            // via the Persisted<T>.set() method at runtime
+            self.routes_generated.set(true);
+            self.route_count.set(5);
             trace("Generated 5 routes");
         } else {
             trace("Routes already generated, skipping discovery");
         }
 
         // Perform health check
+        self.last_health_check.set("2024-01-01T00:00:00Z");
         trace("Health check completed at 2024-01-01T00:00:00Z");
 
-        yield(self.route_count);
+        yield(self.route_count.get());
     }
 
     on resting {
@@ -56,11 +57,12 @@ agent DbWatcher {
     @persistent check_count: Int
 
     on waking {
-        trace("DbWatcher restored, " ++ int_to_str(self.check_count) ++ " checks performed");
+        trace("DbWatcher restored, " ++ int_to_str(self.check_count.get()) ++ " checks performed");
     }
 
     on start {
-        let current_count = self.check_count + 1;
+        let current_count = self.check_count.get() + 1;
+        self.check_count.set(current_count);
         // In real use, would check database connectivity
         trace("Database check #" ++ int_to_str(current_count) ++ " - connection OK");
         yield(current_count);

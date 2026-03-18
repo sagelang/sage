@@ -4,7 +4,7 @@ use crate::emit::Emitter;
 use sage_loader::{ModuleTree, SupervisionConfig};
 use sage_parser::{
     AgentDecl, BinOp, Block, ConstDecl, EffectHandlerDecl, EnumDecl, EventKind, Expr, FnDecl,
-    Literal, MockValue, Program, ProtocolDecl, RecordDecl, RestartPolicy, Stmt, StringPart,
+    Ident, Literal, MockValue, Program, ProtocolDecl, RecordDecl, RestartPolicy, Stmt, StringPart,
     SupervisionStrategy, SupervisorDecl, TestDecl, TypeExpr, UnaryOp,
 };
 
@@ -74,6 +74,17 @@ impl PersistenceBackend {
     }
 }
 
+/// Observability configuration for tracing and metrics.
+#[derive(Debug, Clone, Default)]
+pub struct ObservabilityConfig {
+    /// Backend type: "ndjson", "otlp", or "none".
+    pub backend: String,
+    /// OTLP endpoint URL (for otlp backend).
+    pub otlp_endpoint: Option<String>,
+    /// Service name for trace attribution.
+    pub service_name: String,
+}
+
 /// Full configuration for code generation.
 #[derive(Debug, Clone, Default)]
 pub struct CodegenConfig {
@@ -83,6 +94,8 @@ pub struct CodegenConfig {
     pub persistence: PersistenceBackend,
     /// Supervision configuration (restart intensity limits).
     pub supervision: SupervisionConfig,
+    /// Observability configuration for tracing.
+    pub observability: ObservabilityConfig,
 }
 
 /// Generated Rust project files.
@@ -111,6 +124,7 @@ pub fn generate_with_config(
             runtime_dep,
             persistence: PersistenceBackend::Memory,
             supervision: SupervisionConfig::default(),
+            observability: ObservabilityConfig::default(),
         },
     )
 }
@@ -152,6 +166,7 @@ pub fn generate_module_tree_with_config(
             runtime_dep,
             persistence: PersistenceBackend::Memory,
             supervision: SupervisionConfig::default(),
+            observability: ObservabilityConfig::default(),
         },
     )
 }
@@ -200,6 +215,13 @@ pub fn generate_test_program_with_config(
     }
 }
 
+/// Information about an agent's message handlers.
+#[derive(Clone)]
+struct AgentMessageHandlers {
+    /// List of (param_name, param_type) for each message handler.
+    handlers: Vec<(Ident, TypeExpr)>,
+}
+
 struct Generator {
     emit: Emitter,
     config: CodegenConfig,
@@ -207,6 +229,12 @@ struct Generator {
     reassigned_vars: std::collections::HashSet<String>,
     /// Agents that have on_error handlers
     agents_with_error_handlers: std::collections::HashSet<String>,
+    /// Agents that have message handlers (agent_name -> handler info)
+    agents_with_message_handlers: std::collections::HashMap<String, AgentMessageHandlers>,
+    /// Phase 3: Current agent's protocol roles (protocol_name -> role_name)
+    current_protocol_roles: std::collections::HashMap<String, String>,
+    /// v2.0: Current agent's @persistent belief field names (for checkpoint())
+    current_agent_persistent_beliefs: Vec<String>,
 }
 
 impl Generator {
@@ -216,6 +244,9 @@ impl Generator {
             config,
             reassigned_vars: std::collections::HashSet::new(),
             agents_with_error_handlers: std::collections::HashSet::new(),
+            agents_with_message_handlers: std::collections::HashMap::new(),
+            current_protocol_roles: std::collections::HashMap::new(),
+            current_agent_persistent_beliefs: Vec::new(),
         }
     }
 
@@ -225,6 +256,7 @@ impl Generator {
             runtime_dep,
             persistence: PersistenceBackend::Memory,
             supervision: SupervisionConfig::default(),
+            observability: ObservabilityConfig::default(),
         })
     }
 
@@ -250,6 +282,34 @@ impl Generator {
                 self.emit.write(path);
                 self.emit.writeln("\").expect(\"Failed to open checkpoint directory\")");
             }
+        }
+    }
+
+    /// Emit tracing initialization based on configured backend.
+    fn emit_tracing_init(&mut self) {
+        let obs = &self.config.observability;
+        if obs.backend.is_empty() || obs.backend == "ndjson" {
+            // Default: use environment-based init for NDJSON
+            self.emit.writeln("sage_runtime::trace::init();");
+        } else {
+            // Use config-based init
+            self.emit.writeln("sage_runtime::trace::init_with_config(sage_runtime::trace::TracingConfig {");
+            self.emit.indent();
+            self.emit.write("backend: \"");
+            self.emit.write(&obs.backend);
+            self.emit.writeln("\".to_string(),");
+            if let Some(endpoint) = &obs.otlp_endpoint {
+                self.emit.write("otlp_endpoint: Some(\"");
+                self.emit.write(endpoint);
+                self.emit.writeln("\".to_string()),");
+            } else {
+                self.emit.writeln("otlp_endpoint: None,");
+            }
+            self.emit.write("service_name: \"");
+            self.emit.write(if obs.service_name.is_empty() { "sage-agent" } else { &obs.service_name });
+            self.emit.writeln("\".to_string(),");
+            self.emit.dedent();
+            self.emit.writeln("});");
         }
     }
 
@@ -336,6 +396,11 @@ impl Generator {
             self.emit.blank_line();
         }
 
+        // Pre-pass: Collect agent metadata for summon generation
+        for agent in &program.agents {
+            self.collect_agent_metadata(agent);
+        }
+
         // Agents
         for agent in &program.agents {
             self.generate_agent(agent);
@@ -371,6 +436,13 @@ impl Generator {
     }
 
     fn generate_module_tree(&mut self, tree: &ModuleTree) -> String {
+        // Pre-pass: Collect agent metadata from all modules for summon generation
+        for (_path, module) in &tree.modules {
+            for agent in &module.program.agents {
+                self.collect_agent_metadata(agent);
+            }
+        }
+
         // Prelude
         self.emit
             .writeln("//! Generated by Sage compiler. Do not edit.");
@@ -1066,7 +1138,9 @@ serde_json = "1"
         if record.is_pub {
             self.emit.write("pub ");
         }
-        self.emit.writeln("#[derive(Debug, Clone)]");
+        // Derive serde traits for message serialization
+        self.emit
+            .writeln("#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]");
         self.emit.write("struct ");
         self.emit.write(&record.name.name);
         // RFC-0015: Emit type parameters
@@ -1136,10 +1210,12 @@ serde_json = "1"
         self.generate_block(&func.body);
     }
 
-    fn generate_agent(&mut self, agent: &AgentDecl) {
+    /// Collect metadata about an agent (error handlers, message handlers) for use in summon generation.
+    /// This is called in a pre-pass before any code generation.
+    fn collect_agent_metadata(&mut self, agent: &AgentDecl) {
         let name = &agent.name.name;
 
-        // Track if this agent has an error handler for summon generation
+        // Track if this agent has an error handler
         let has_error_handler = agent
             .handlers
             .iter()
@@ -1147,6 +1223,44 @@ serde_json = "1"
         if has_error_handler {
             self.agents_with_error_handlers.insert(name.clone());
         }
+
+        // Track message handlers
+        let message_handlers: Vec<_> = agent
+            .handlers
+            .iter()
+            .filter_map(|h| {
+                if let EventKind::Message { param_name, param_ty } = &h.event {
+                    Some((param_name.clone(), param_ty.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if !message_handlers.is_empty() {
+            self.agents_with_message_handlers.insert(
+                name.clone(),
+                AgentMessageHandlers { handlers: message_handlers },
+            );
+        }
+    }
+
+    fn generate_agent(&mut self, agent: &AgentDecl) {
+        let name = &agent.name.name;
+
+        // Phase 3: Set current protocol roles for this agent (used by reply() generation)
+        self.current_protocol_roles.clear();
+        for pr in &agent.follows {
+            self.current_protocol_roles
+                .insert(pr.protocol.name.clone(), pr.role.name.clone());
+        }
+
+        // v2.0: Set current agent's @persistent beliefs (used by checkpoint() generation)
+        self.current_agent_persistent_beliefs = agent
+            .beliefs
+            .iter()
+            .filter(|b| b.is_persistent)
+            .map(|b| b.name.name.clone())
+            .collect();
 
         // RFC-0011: Check for tool usage
         let has_tools = !agent.tool_uses.is_empty();
@@ -1245,6 +1359,10 @@ serde_json = "1"
                     self.emit.writeln("> {");
                     self.emit.indent();
                     self.generate_block_contents(&handler.body);
+                    // Fallback: re-raise the error if handler doesn't explicitly return
+                    self.emit.write("Err(_");
+                    self.emit.write(&param_name.name);
+                    self.emit.writeln(")");
                     self.emit.dedent();
                     self.emit.writeln("}");
                 }
@@ -1285,8 +1403,31 @@ serde_json = "1"
                     self.emit.writeln("}");
                 }
 
-                // Other handlers (message) - future work
-                _ => {}
+                // Message handler: on message(param: Type)
+                EventKind::Message {
+                    param_name,
+                    param_ty,
+                } => {
+                    // Generate method name from type, e.g., on_message_ping for Ping
+                    let type_name = self.type_expr_to_string(param_ty);
+                    let method_name = format!("on_message_{}", Self::to_snake_case(&type_name));
+
+                    self.emit.write("async fn ");
+                    self.emit.write(&method_name);
+                    self.emit.write("(&self, ");
+                    self.emit.write(&param_name.name);
+                    self.emit.write(": ");
+                    self.emit_type(param_ty);
+                    self.emit.write(", ctx: &mut AgentContext<");
+                    self.emit.write(&output_type);
+                    self.emit.write(">) -> SageResult<()> ");
+                    self.emit.writeln("{");
+                    self.emit.indent();
+                    self.generate_block_contents(&handler.body);
+                    self.emit.writeln("Ok(())");
+                    self.emit.dedent();
+                    self.emit.writeln("}");
+                }
             }
         }
 
@@ -1296,6 +1437,22 @@ serde_json = "1"
 
     fn generate_main(&mut self, agent: &AgentDecl) {
         let entry_agent = &agent.name.name;
+
+        // Phase 3: Set current protocol roles for this agent (used by reply() generation)
+        self.current_protocol_roles.clear();
+        for pr in &agent.follows {
+            self.current_protocol_roles
+                .insert(pr.protocol.name.clone(), pr.role.name.clone());
+        }
+
+        // v2.0: Set current agent's @persistent beliefs (used by checkpoint() generation)
+        self.current_agent_persistent_beliefs = agent
+            .beliefs
+            .iter()
+            .filter(|b| b.is_persistent)
+            .map(|b| b.name.name.clone())
+            .collect();
+
         let has_error_handler = agent
             .handlers
             .iter()
@@ -1318,13 +1475,27 @@ serde_json = "1"
             .iter()
             .any(|h| matches!(h.event, EventKind::Waking));
 
+        // Collect message handlers for dispatch loop
+        let message_handlers: Vec<_> = agent
+            .handlers
+            .iter()
+            .filter_map(|h| {
+                if let EventKind::Message { param_name, param_ty } = &h.event {
+                    Some((param_name.clone(), param_ty.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let has_message_handlers = !message_handlers.is_empty();
+
         self.emit.writeln("#[tokio::main]");
         self.emit
             .writeln("async fn main() -> Result<(), Box<dyn std::error::Error>> {");
         self.emit.indent();
 
-        // Initialize tracing from environment variables
-        self.emit.writeln("sage_runtime::trace::init();");
+        // Initialize tracing with config
+        self.emit_tracing_init();
         self.emit.writeln("");
 
         // v2.0: Initialize checkpoint store if agent has persistent fields
@@ -1453,6 +1624,92 @@ serde_json = "1"
                 .writeln("let result = agent.on_start(&mut ctx).await;");
         }
 
+        // Phase 3: Collect protocol roles for validation
+        let protocol_roles: Vec<_> = agent
+            .follows
+            .iter()
+            .map(|pr| (pr.protocol.name.clone(), pr.role.name.clone()))
+            .collect();
+        let has_protocols = !protocol_roles.is_empty();
+
+        // Message receive loop (if agent has message handlers)
+        if has_message_handlers {
+            self.emit.writeln("");
+            self.emit.writeln("// Message receive loop");
+            self.emit.writeln("if result.is_ok() {");
+            self.emit.indent();
+            self.emit.writeln("loop {");
+            self.emit.indent();
+            self.emit.writeln("match ctx.receive_raw().await {");
+            self.emit.indent();
+            self.emit.writeln("Ok(msg) => {");
+            self.emit.indent();
+            self.emit.writeln("// Dispatch based on message type");
+            self.emit.writeln("match msg.type_name.as_deref() {");
+            self.emit.indent();
+
+            // Generate match arms for each message type
+            for (param_name, param_ty) in &message_handlers {
+                let type_name = self.type_expr_to_string(param_ty);
+                let method_name = format!("on_message_{}", Self::to_snake_case(&type_name));
+
+                self.emit.write("Some(\"");
+                self.emit.write(&type_name);
+                self.emit.writeln("\") => {");
+                self.emit.indent();
+
+                // Phase 3: Validate protocol state for this message type
+                if has_protocols {
+                    // Find which protocol role handles this message type
+                    // For simplicity, use the first role that might handle it
+                    // (in practice, the checker ensures only one protocol/role combo is valid)
+                    if let Some((_, role)) = protocol_roles.first() {
+                        self.emit.writeln("// Phase 3: Validate protocol state");
+                        self.emit.write("ctx.validate_protocol_receive(\"");
+                        self.emit.write(&type_name);
+                        self.emit.write("\", \"");
+                        self.emit.write(role);
+                        self.emit.writeln("\").await?;");
+                    }
+                }
+
+                self.emit.write("let ");
+                self.emit.write(&param_name.name);
+                self.emit.write(": ");
+                self.emit_type(param_ty);
+                self.emit.writeln(" = serde_json::from_value(msg.payload)");
+                self.emit.indent();
+                self.emit.writeln(".map_err(|e| SageError::Agent(format!(\"Failed to deserialize message: {e}\")))?;");
+                self.emit.dedent();
+                self.emit.write("agent.");
+                self.emit.write(&method_name);
+                self.emit.write("(");
+                self.emit.write(&param_name.name);
+                self.emit.writeln(", &mut ctx).await?;");
+                self.emit.dedent();
+                self.emit.writeln("}");
+            }
+
+            // Default case for unknown message types
+            self.emit.writeln("_ => {");
+            self.emit.indent();
+            self.emit.writeln("// Unknown message type, skip");
+            self.emit.dedent();
+            self.emit.writeln("}");
+
+            self.emit.dedent();
+            self.emit.writeln("}"); // close match type_name
+            self.emit.dedent();
+            self.emit.writeln("}"); // close Ok(msg)
+            self.emit.writeln("Err(_) => break, // Channel closed");
+            self.emit.dedent();
+            self.emit.writeln("}"); // close match receive_raw
+            self.emit.dedent();
+            self.emit.writeln("}"); // close loop
+            self.emit.dedent();
+            self.emit.writeln("}"); // close if result.is_ok()
+        }
+
         if has_stop_handler {
             // Call on_stop for cleanup (errors are ignored)
             self.emit.writeln("agent.on_stop().await;");
@@ -1521,8 +1778,8 @@ serde_json = "1"
             .writeln("async fn main() -> Result<(), Box<dyn std::error::Error>> {");
         self.emit.indent();
 
-        // Initialize tracing
-        self.emit.writeln("sage_runtime::trace::init();");
+        // Initialize tracing with config
+        self.emit_tracing_init();
         self.emit.writeln("");
 
         // Create the supervisor with the configured strategy
@@ -1548,6 +1805,27 @@ serde_json = "1"
                 .agents
                 .iter()
                 .find(|a| a.name.name == *child_agent_name);
+
+            // Phase 3: Set current protocol roles for this child agent
+            self.current_protocol_roles.clear();
+            if let Some(agent) = agent {
+                for pr in &agent.follows {
+                    self.current_protocol_roles
+                        .insert(pr.protocol.name.clone(), pr.role.name.clone());
+                }
+            }
+
+            // v2.0: Set current agent's @persistent beliefs (used by checkpoint() generation)
+            self.current_agent_persistent_beliefs = if let Some(agent) = agent {
+                agent
+                    .beliefs
+                    .iter()
+                    .filter(|b| b.is_persistent)
+                    .map(|b| b.name.name.clone())
+                    .collect()
+            } else {
+                Vec::new()
+            };
 
             // Determine restart policy
             let restart_policy = match child.restart {
@@ -1637,14 +1915,24 @@ serde_json = "1"
                         self.emit.write(": ");
 
                         if belief.is_persistent {
-                            self.emit.write("Persisted::new(std::sync::Arc::clone(&_checkpoint), &_checkpoint_key, \"");
-                            self.emit.write(&belief.name.name);
-                            self.emit.write("\")");
+                            if let Some(init) = init_value {
+                                // Persisted with initial value from child spec
+                                self.emit.write("Persisted::with_initial(std::sync::Arc::clone(&_checkpoint), &_checkpoint_key, \"");
+                                self.emit.write(&belief.name.name);
+                                self.emit.write("\", ");
+                                self.generate_expr(&init.value);
+                                self.emit.write(")");
+                            } else {
+                                // Persisted with default
+                                self.emit.write("Persisted::new(std::sync::Arc::clone(&_checkpoint), &_checkpoint_key, \"");
+                                self.emit.write(&belief.name.name);
+                                self.emit.write("\")");
+                            }
                         } else if let Some(init) = init_value {
-                            // Use the initial value from child spec
+                            // Non-persistent belief with initial value from child spec
                             self.generate_expr(&init.value);
                         } else {
-                            // Use default
+                            // Non-persistent belief with default
                             self.emit.write("Default::default()");
                         }
                         self.emit.writeln(",");
@@ -1674,8 +1962,34 @@ serde_json = "1"
                 .map(|a| a.handlers.iter().any(|h| matches!(h.event, EventKind::Stop | EventKind::Resting)))
                 .unwrap_or(false);
 
+            // Phase 3: Check for Infer effect handler assignment
+            let infer_handler = child
+                .handler_assignments
+                .iter()
+                .find(|ha| ha.effect.name == "Infer")
+                .map(|ha| ha.handler.name.clone());
+
             // Create the agent handle and run it
-            self.emit.writeln("let handle = sage_runtime::spawn(|mut ctx| async move {");
+            if let Some(handler_name) = &infer_handler {
+                // Generate LlmConfig from handler
+                self.emit.writeln("// Phase 3: Use effect handler configuration");
+                self.emit.write("let llm_config = sage_runtime::LlmConfig::with_model(handler_");
+                self.emit.write(&Self::to_snake_case(handler_name));
+                self.emit.writeln("::CONFIG.model)");
+                self.emit.indent();
+                // Add temperature if configured
+                self.emit.write(".with_temperature(handler_");
+                self.emit.write(&Self::to_snake_case(handler_name));
+                self.emit.writeln("::CONFIG.temperature)");
+                // Add max_tokens if configured
+                self.emit.write(".with_max_tokens(handler_");
+                self.emit.write(&Self::to_snake_case(handler_name));
+                self.emit.writeln("::CONFIG.max_tokens);");
+                self.emit.dedent();
+                self.emit.writeln("let handle = sage_runtime::spawn_with_llm_config(|mut ctx| async move {");
+            } else {
+                self.emit.writeln("let handle = sage_runtime::spawn(|mut ctx| async move {");
+            }
             self.emit.indent();
 
             // Call on_waking if present
@@ -1704,8 +2018,9 @@ serde_json = "1"
             self.emit.dedent();
             self.emit.writeln("});");
 
-            // Wait for the handle result
-            self.emit.writeln("handle.result().await.map_err(|e| SageError::Agent(e.to_string()))?");
+            // Wait for the handle result, discarding the value and returning Ok(())
+            self.emit.writeln("handle.result().await.map_err(|e| SageError::Agent(e.to_string()))?;");
+            self.emit.writeln("Ok(())");
 
             self.emit.dedent();
             self.emit.writeln("}");
@@ -1736,9 +2051,12 @@ serde_json = "1"
         self.emit.writeln("");
 
         // Run the supervisor with signal handling
+        let child_count = supervisor.children.len();
         self.emit.write("eprintln!(\"Starting supervisor '");
         self.emit.write(name);
-        self.emit.writeln("' with {} children...\", supervisor.children.len());");
+        self.emit.write("' with ");
+        self.emit.write(&child_count.to_string());
+        self.emit.writeln(" children...\");");
         self.emit.writeln("");
         self.emit.writeln("let result = tokio::select! {");
         self.emit.indent();
@@ -2321,6 +2639,22 @@ serde_json = "1"
                 );
                 self.emit.dedent();
                 self.emit.writeln("}");
+            }
+
+            Stmt::Checkpoint { .. } => {
+                // Generate explicit checkpoint calls for each @persistent belief
+                // This forces an immediate save of all @persistent beliefs
+                if self.current_agent_persistent_beliefs.is_empty() {
+                    // No persistent fields - checkpoint is a no-op
+                    self.emit.writeln("// checkpoint() - no @persistent fields");
+                } else {
+                    self.emit.writeln("// checkpoint() - save all @persistent beliefs");
+                    for field_name in &self.current_agent_persistent_beliefs.clone() {
+                        self.emit.write("self_");
+                        self.emit.write(field_name);
+                        self.emit.writeln(".checkpoint();");
+                    }
+                }
             }
 
             Stmt::Expr { expr, .. } => {
@@ -2965,6 +3299,52 @@ serde_json = "1"
                     }
 
                     // =========================================================================
+                    // RFC-0010: Result Utilities
+                    // =========================================================================
+                    "is_ok" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".is_ok()");
+                    }
+                    "is_err" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".is_err()");
+                    }
+                    "unwrap_result" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".expect(\"unwrap_result called on Err\")");
+                    }
+                    "unwrap_err" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".expect_err(\"unwrap_err called on Ok\")");
+                    }
+                    "unwrap_or_result" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".unwrap_or(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "map_result" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".map(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "map_err" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".map_err(");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+                    "ok" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".ok()");
+                    }
+                    "err_value" => {
+                        self.generate_expr(&args[0]);
+                        self.emit.write(".err()");
+                    }
+
+                    // =========================================================================
                     // RFC-0010: I/O Functions
                     // =========================================================================
                     "read_file" => {
@@ -3141,6 +3521,19 @@ serde_json = "1"
                 self.emit.write(&field.name);
             }
 
+            Expr::Apply { callee, args, .. } => {
+                // Generate callee expression (usually a FieldAccess for method calls)
+                self.generate_expr(callee);
+                self.emit.write("(");
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        self.emit.write(", ");
+                    }
+                    self.generate_expr(arg);
+                }
+                self.emit.write(")");
+            }
+
             Expr::SelfMethodCall { method, args, .. } => {
                 self.emit.write("self.");
                 self.emit.write(&method.name);
@@ -3180,6 +3573,8 @@ serde_json = "1"
 
             Expr::Summon { agent, fields, .. } => {
                 let has_error_handler = self.agents_with_error_handlers.contains(&agent.name);
+                let message_handlers = self.agents_with_message_handlers.get(&agent.name).cloned();
+
                 self.emit
                     .write("sage_runtime::spawn(|mut ctx| async move { ");
                 self.emit.write("let agent = ");
@@ -3198,15 +3593,46 @@ serde_json = "1"
                     }
                     self.emit.write(" }; ");
                 }
+
+                // on_start with optional error handling
                 if has_error_handler {
-                    // Wire up error handler like in main
-                    self.emit.write("match agent.on_start(&mut ctx).await { ");
+                    self.emit.write("let result = match agent.on_start(&mut ctx).await { ");
                     self.emit.write("Ok(result) => Ok(result), ");
-                    self.emit
-                        .write("Err(e) => agent.on_error(e, &mut ctx).await } })");
+                    self.emit.write("Err(e) => agent.on_error(e, &mut ctx).await }; ");
                 } else {
-                    self.emit.write("agent.on_start(&mut ctx).await })");
+                    self.emit.write("let result = agent.on_start(&mut ctx).await; ");
                 }
+
+                // Message receive loop (if agent has message handlers)
+                if let Some(handlers) = message_handlers {
+                    self.emit.write("if result.is_ok() { loop { ");
+                    self.emit.write("match ctx.receive_raw().await { ");
+                    self.emit.write("Ok(msg) => { ");
+                    self.emit.write("match msg.type_name.as_deref() { ");
+
+                    // Generate match arms for each message type
+                    for (param_name, param_ty) in &handlers.handlers {
+                        let type_name = self.type_expr_to_string(param_ty);
+                        let method_name = format!("on_message_{}", Self::to_snake_case(&type_name));
+
+                        self.emit.write("Some(\"");
+                        self.emit.write(&type_name);
+                        self.emit.write("\") => { ");
+                        self.emit.write("if let Ok(");
+                        self.emit.write(&param_name.name);
+                        self.emit.write(") = serde_json::from_value(msg.payload) { ");
+                        self.emit.write("let _ = agent.");
+                        self.emit.write(&method_name);
+                        self.emit.write("(");
+                        self.emit.write(&param_name.name);
+                        self.emit.write(", &mut ctx).await; } } ");
+                    }
+
+                    self.emit.write("_ => {} } } "); // close match type_name, Ok(msg)
+                    self.emit.write("Err(_) => break } } } "); // close match receive, loop, if
+                }
+
+                self.emit.write("result })");
             }
 
             Expr::Await {
@@ -3234,9 +3660,22 @@ serde_json = "1"
                 handle, message, ..
             } => {
                 self.generate_expr(handle);
-                self.emit.write(".send(sage_runtime::Message::new(");
-                self.generate_expr(message);
-                self.emit.write(")?).await?");
+
+                // Phase 3: Include type name if we can determine it (for protocol tracking)
+                // Note: Don't add ? here - the Try wrapper handles error propagation
+                if let Some(type_name) = Self::extract_message_type_name(message) {
+                    // Use send_message() for pre-built Message with metadata
+                    self.emit.write(".send_message(Message::new(");
+                    self.generate_expr(message);
+                    self.emit.write(")?.with_type_name(\"");
+                    self.emit.write(&type_name);
+                    self.emit.write("\")).await");
+                } else {
+                    // Use simple send() for raw message
+                    self.emit.write(".send(");
+                    self.generate_expr(message);
+                    self.emit.write(").await");
+                }
             }
 
             Expr::Yield { value, .. } => {
@@ -3541,11 +3980,26 @@ serde_json = "1"
 
             // Phase 3: Reply expression for session types
             Expr::Reply { message, .. } => {
-                // For now, generate a simple send-like call
-                // Full session-aware reply will be implemented in codegen Phase 3
-                self.emit.write("ctx.reply(");
-                self.generate_expr(message);
-                self.emit.write(").await?");
+                // Clone protocol info to avoid borrow issues
+                let protocol_role = self.current_protocol_roles.iter().next().map(|(_, r)| r.clone());
+
+                if let Some(role) = protocol_role {
+                    // Agent follows protocols - use reply_with_protocol for validation
+                    // We need to infer the message type from the expression
+                    let msg_type = self.infer_expr_type_name(message);
+                    self.emit.write("ctx.reply_with_protocol(");
+                    self.generate_expr(message);
+                    self.emit.write(", \"");
+                    self.emit.write(&msg_type);
+                    self.emit.write("\", \"");
+                    self.emit.write(&role);
+                    self.emit.write("\").await?");
+                } else {
+                    // No protocols - use simple reply
+                    self.emit.write("ctx.reply(");
+                    self.generate_expr(message);
+                    self.emit.write(").await?");
+                }
             }
         }
     }
@@ -3876,6 +4330,73 @@ serde_json = "1"
             _ => "i64".to_string(),
         }
     }
+
+    /// Phase 3: Extract the type name from a message expression (for protocol tracking).
+    ///
+    /// Returns Some(type_name) if the type can be determined, None otherwise.
+    fn extract_message_type_name(expr: &Expr) -> Option<String> {
+        match expr {
+            // Record construction: `Ping {}` → "Ping"
+            Expr::RecordConstruct { name, .. } => Some(name.name.clone()),
+
+            // Enum variant: `Status::Active` → "Status"
+            Expr::VariantConstruct { enum_name, .. } => Some(enum_name.name.clone()),
+
+            // Parenthesized expression: unwrap
+            Expr::Paren { inner, .. } => Self::extract_message_type_name(inner),
+
+            // For other expressions, we can't determine the type at codegen time
+            _ => None,
+        }
+    }
+
+    /// Phase 3: Infer the type name from an expression.
+    ///
+    /// Used for protocol validation in reply() - we need to know the message type
+    /// being sent. For struct constructions this is straightforward; for other
+    /// expressions we use a fallback.
+    fn infer_expr_type_name(&self, expr: &Expr) -> String {
+        match expr {
+            // Record construction: RecordName { ... }
+            Expr::RecordConstruct { name, .. } => name.name.clone(),
+            // Enum variant: EnumName.Variant or EnumName.Variant(payload)
+            Expr::VariantConstruct { enum_name, .. } => enum_name.name.clone(),
+            // Variable reference - we'd need type info to resolve this
+            Expr::Var { name, .. } => name.name.clone(),
+            // For other expressions, use a generic name
+            _ => "Message".to_string(),
+        }
+    }
+
+    /// Convert a TypeExpr to its base type name string.
+    ///
+    /// Used for generating method names from message types.
+    fn type_expr_to_string(&self, ty: &TypeExpr) -> String {
+        match ty {
+            TypeExpr::Int => "Int".to_string(),
+            TypeExpr::Float => "Float".to_string(),
+            TypeExpr::Bool => "Bool".to_string(),
+            TypeExpr::String => "String".to_string(),
+            TypeExpr::Unit => "Unit".to_string(),
+            TypeExpr::Named(name, _) => name.name.clone(),
+            TypeExpr::List(inner) => format!("List{}", self.type_expr_to_string(inner)),
+            TypeExpr::Option(inner) => format!("Option{}", self.type_expr_to_string(inner)),
+            TypeExpr::Oracle(inner) => self.type_expr_to_string(inner),
+            TypeExpr::Agent(name) => name.name.clone(),
+            TypeExpr::Error => "Error".to_string(),
+            TypeExpr::Map(k, v) => {
+                format!("Map{}To{}", self.type_expr_to_string(k), self.type_expr_to_string(v))
+            }
+            TypeExpr::Fn(_, _) => "Fn".to_string(),
+            TypeExpr::Tuple(elems) => {
+                let parts: Vec<_> = elems.iter().map(|e| self.type_expr_to_string(e)).collect();
+                format!("Tuple{}", parts.join(""))
+            }
+            TypeExpr::Result(ok, err) => {
+                format!("Result{}Or{}", self.type_expr_to_string(ok), self.type_expr_to_string(err))
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -4115,6 +4636,115 @@ run Main;
     }
 
     #[test]
+    fn generate_module_tree_with_supervisor() {
+        use sage_loader::load_single_file;
+        use std::fs;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("test.sg");
+        fs::write(
+            &file,
+            r#"
+agent Worker {
+    on start {
+        yield(42);
+    }
+}
+supervisor AppSupervisor {
+    strategy: OneForOne
+    children {
+        Worker { restart: Transient }
+    }
+}
+run AppSupervisor;
+"#,
+        )
+        .unwrap();
+
+        let tree = load_single_file(&file).unwrap();
+        let project = generate_module_tree(&tree, "test");
+
+        // Verify supervisor struct is generated
+        assert!(
+            project.main_rs.contains("struct AppSupervisor;"),
+            "Missing supervisor struct. Output:\n{}",
+            project.main_rs
+        );
+        // Verify supervisor main is generated
+        assert!(
+            project.main_rs.contains("Supervisor::new(Strategy::OneForOne"),
+            "Missing supervisor main. Output:\n{}",
+            project.main_rs
+        );
+    }
+
+    #[test]
+    fn generate_supervisor_with_belief_inits() {
+        // Tests that supervisor children with belief initializers parse and generate correctly.
+        // Belief inits can be written without commas (multiline style).
+        let source = r#"
+agent QueryMonitor {
+    @persistent check_count: Int
+    @persistent last_check: String
+
+    on start {
+        yield(1);
+    }
+}
+
+supervisor DbGuardian {
+    strategy: OneForOne
+    children {
+        QueryMonitor {
+            restart: Permanent
+            check_count: 0
+            last_check: "never"
+        }
+    }
+}
+
+run DbGuardian;
+"#;
+
+        let output = generate_source(source);
+
+        // Verify supervisor main is generated
+        assert!(
+            output.contains("#[tokio::main]"),
+            "Missing tokio::main. Output:\n{}",
+            output
+        );
+        assert!(
+            output.contains("Supervisor::new(Strategy::OneForOne"),
+            "Missing supervisor creation. Output:\n{}",
+            output
+        );
+        // Verify belief initializers are set with Persisted::with_initial
+        assert!(
+            output.contains("check_count: Persisted::with_initial("),
+            "Missing check_count with_initial. Output:\n{}",
+            output
+        );
+        assert!(
+            output.contains("last_check: Persisted::with_initial("),
+            "Missing last_check with_initial. Output:\n{}",
+            output
+        );
+        // Check that values are passed
+        assert!(
+            output.contains("0_i64"),
+            "Missing check_count initial value. Output:\n{}",
+            output
+        );
+        assert!(
+            output.contains("\"never\""),
+            "Missing last_check initial value. Output:\n{}",
+            output
+        );
+    }
+
+    #[test]
     fn generate_record_declaration() {
         let source = r#"
             record Point {
@@ -4131,7 +4761,7 @@ run Main;
         "#;
 
         let output = generate_source(source);
-        assert!(output.contains("#[derive(Debug, Clone)]"));
+        assert!(output.contains("#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]"));
         assert!(output.contains("struct Point {"));
         assert!(output.contains("x: i64,"));
         assert!(output.contains("y: i64,"));
@@ -4466,6 +5096,7 @@ run Main;
                 max_restarts: 10,
                 within_seconds: 120,
             },
+            observability: ObservabilityConfig::default(),
         };
         let output = generate_with_full_config(&program, "test", config).main_rs;
 
@@ -4490,6 +5121,7 @@ run Main;
             runtime_dep: RuntimeDep::default(),
             persistence: backend,
             supervision: SupervisionConfig::default(),
+            observability: ObservabilityConfig::default(),
         };
         generate_with_full_config(&program, "test", config).main_rs
     }
@@ -4609,6 +5241,7 @@ run Main;
                 path: ".sage/data.db".to_string(),
             },
             supervision: SupervisionConfig::default(),
+            observability: ObservabilityConfig::default(),
         };
         let project = generate_with_full_config(&program, "test", config);
 
@@ -4640,6 +5273,7 @@ run Main;
             },
             persistence: PersistenceBackend::Memory,
             supervision: SupervisionConfig::default(),
+            observability: ObservabilityConfig::default(),
         };
         let project = generate_with_full_config(&program, "test", config);
 
@@ -4746,5 +5380,56 @@ run Main;
         assert!(output.contains("struct Worker"));
         assert!(output.contains("struct Request"));
         assert!(output.contains("struct Response"));
+    }
+
+    // =========================================================================
+    // v2.0: Explicit checkpoint() statement codegen tests
+    // =========================================================================
+
+    #[test]
+    fn generate_checkpoint_with_persistent_fields() {
+        let source = r#"
+            agent Counter {
+                @persistent count: Int
+                @persistent name: String
+
+                on start {
+                    checkpoint();
+                    yield(0);
+                }
+            }
+            run Counter;
+        "#;
+
+        let output = generate_source(source);
+        // checkpoint() should generate .checkpoint() calls for each @persistent field
+        assert!(
+            output.contains("self_count.checkpoint()"),
+            "Should generate checkpoint call for count field"
+        );
+        assert!(
+            output.contains("self_name.checkpoint()"),
+            "Should generate checkpoint call for name field"
+        );
+    }
+
+    #[test]
+    fn generate_checkpoint_without_persistent_fields() {
+        let source = r#"
+            agent Worker {
+                on start {
+                    checkpoint();
+                    yield(0);
+                }
+            }
+            run Worker;
+        "#;
+
+        let output = generate_source(source);
+        // checkpoint() with no @persistent fields is a no-op comment
+        assert!(
+            output.contains("// checkpoint() - no @persistent fields"),
+            "Should generate no-op comment when no persistent fields"
+        );
     }
 }

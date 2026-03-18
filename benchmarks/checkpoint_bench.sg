@@ -1,0 +1,39 @@
+// Checkpoint Latency Benchmark
+// Measures time for @persistent field writes
+// Run: sage run benchmarks/checkpoint_bench.sg
+
+agent CheckpointBench {
+    @persistent counter: Int
+
+    on start {
+        // Perform 100 checkpoint operations
+        let start_ms = now_ms();
+
+        for i in range(0, 100) {
+            self.counter.set(i);
+        }
+
+        let checkpoint_time = now_ms() - start_ms;
+        trace("100 checkpoints completed in " ++ int_to_str(checkpoint_time) ++ "ms");
+
+        if checkpoint_time > 0 {
+            trace("Average: " ++ int_to_str(checkpoint_time / 100) ++ "ms per checkpoint");
+        } else {
+            trace("Average: <1ms per checkpoint");
+        }
+
+        yield(checkpoint_time);
+    }
+}
+
+supervisor CheckpointBenchSupervisor {
+    strategy: OneForOne
+    children {
+        CheckpointBench {
+            restart: Temporary
+            counter: 0
+        }
+    }
+}
+
+run CheckpointBenchSupervisor;

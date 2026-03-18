@@ -1,0 +1,135 @@
+// SL-07: Extended stdlib function tests
+// Verifies the "missing" functions actually work
+
+// ============================================================================
+// List: flatten, zip, sort_by
+// ============================================================================
+
+test "flatten nested lists" {
+    let nested = [[1, 2], [3, 4], [5]];
+    let flat = flatten(nested);
+    assert_eq(len(flat), 5);
+    assert_eq(first(flat), Some(1));
+    assert_eq(last(flat), Some(5));
+}
+
+test "flatten empty outer list" {
+    let nested: List<List<Int>> = [];
+    let flat = flatten(nested);
+    assert_eq(len(flat), 0);
+}
+
+test "flatten with empty inner lists" {
+    let nested = [[1], [], [2, 3], []];
+    let flat = flatten(nested);
+    assert_eq(len(flat), 3);
+}
+
+test "zip two lists of same length" {
+    let a = [1, 2, 3];
+    let b = ["a", "b", "c"];
+    let zipped = zip(a, b);
+    assert_eq(len(zipped), 3);
+    let first_pair = first(zipped);
+    assert_true(is_some(first_pair));
+    let (n, s) = unwrap(first_pair);
+    assert_eq(n, 1);
+    assert_eq(s, "a");
+}
+
+test "zip truncates to shorter list" {
+    let a = [1, 2, 3, 4, 5];
+    let b = ["x", "y"];
+    let zipped = zip(a, b);
+    assert_eq(len(zipped), 2);
+}
+
+test "zip empty lists" {
+    let a: List<Int> = [];
+    let b: List<String> = [];
+    let zipped = zip(a, b);
+    assert_eq(len(zipped), 0);
+}
+
+test "sort_by with comparator" {
+    let nums = [3, 1, 4, 1, 5, 9, 2, 6];
+    let sorted = sort_by(nums, |a: Int, b: Int| a - b);
+    assert_eq(first(sorted), Some(1));
+    assert_eq(last(sorted), Some(9));
+}
+
+test "sort_by descending" {
+    let nums = [3, 1, 4, 1, 5];
+    let sorted = sort_by(nums, |a: Int, b: Int| b - a);
+    assert_eq(first(sorted), Some(5));
+    assert_eq(last(sorted), Some(1));
+}
+
+test "sort_by empty list" {
+    let nums: List<Int> = [];
+    let sorted = sort_by(nums, |a: Int, b: Int| a - b);
+    assert_eq(len(sorted), 0);
+}
+
+// ============================================================================
+// Parsing: parse_int, parse_float
+// ============================================================================
+
+test "parse_int valid number" {
+    let result = parse_int("42");
+    assert_true(is_ok(result));
+    assert_eq(unwrap_result(result), 42);
+}
+
+test "parse_int negative number" {
+    let result = parse_int("-123");
+    assert_true(is_ok(result));
+    assert_eq(unwrap_result(result), -123);
+}
+
+test "parse_int with whitespace" {
+    let result = parse_int("  99  ");
+    assert_true(is_ok(result));
+    assert_eq(unwrap_result(result), 99);
+}
+
+test "parse_int invalid string" {
+    let result = parse_int("not a number");
+    assert_true(is_err(result));
+}
+
+test "parse_int empty string" {
+    let result = parse_int("");
+    assert_true(is_err(result));
+}
+
+test "parse_float valid number" {
+    let result = parse_float("3.14");
+    assert_true(is_ok(result));
+    // Float comparison is tricky, just check it parsed
+}
+
+test "parse_float negative" {
+    let result = parse_float("-2.5");
+    assert_true(is_ok(result));
+}
+
+test "parse_float integer string" {
+    let result = parse_float("42");
+    assert_true(is_ok(result));
+}
+
+test "parse_float invalid string" {
+    let result = parse_float("hello");
+    assert_true(is_err(result));
+}
+
+// ============================================================================
+// Time: sleep_ms (just verify it compiles, can't really test timing)
+// ============================================================================
+
+test "sleep_ms compiles and runs" {
+    // Sleep for 1ms just to verify it works
+    sleep_ms(1);
+    assert_true(true);
+}

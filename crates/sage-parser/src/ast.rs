@@ -647,6 +647,14 @@ pub enum Stmt {
         span: Span,
     },
 
+    /// Explicit checkpoint statement: `checkpoint();`
+    /// Forces an immediate checkpoint of all @persistent beliefs.
+    /// Only valid inside agent handler bodies.
+    Checkpoint {
+        /// Span covering the statement.
+        span: Span,
+    },
+
     /// Expression statement: `expr`
     Expr {
         /// The expression.
@@ -711,6 +719,7 @@ impl Stmt {
             | Stmt::Loop { span, .. }
             | Stmt::Break { span, .. }
             | Stmt::SpanBlock { span, .. }
+            | Stmt::Checkpoint { span, .. }
             | Stmt::Expr { span, .. }
             | Stmt::LetTuple { span, .. }
             | Stmt::MockDivine { span, .. }
@@ -789,6 +798,18 @@ pub enum Expr {
         name: Ident,
         /// Explicit type arguments (turbofish syntax): `foo::<Int, String>(...)`
         type_args: Vec<TypeExpr>,
+        /// The arguments.
+        args: Vec<Expr>,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Apply expression: call an arbitrary expression as a function.
+    /// Used for method calls on values: `expr.method(args)` becomes
+    /// `Apply { callee: FieldAccess { object: expr, field: method }, args }`
+    Apply {
+        /// The expression being called (typically a FieldAccess for method calls).
+        callee: Box<Expr>,
         /// The arguments.
         args: Vec<Expr>,
         /// Span covering the expression.
@@ -1059,6 +1080,7 @@ impl Expr {
             | Expr::Send { span, .. }
             | Expr::Yield { span, .. }
             | Expr::Call { span, .. }
+            | Expr::Apply { span, .. }
             | Expr::SelfMethodCall { span, .. }
             | Expr::SelfField { span, .. }
             | Expr::Binary { span, .. }

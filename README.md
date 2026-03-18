@@ -63,11 +63,11 @@ run Coordinator;
 
 ## Status
 
-**v1.0.5 in development** — Supervision trees, persistence, lifecycle hooks, observability.
+**v2.0.0** — The Steward Architecture release. Supervision trees, persistent beliefs, session types, effect handlers, and observability.
 
 | | |
 |---|---|
-| **Latest** | [v1.0.5](https://github.com/sagelang/sage/releases/tag/v1.0.5) |
+| **Latest** | [v2.0.0](https://github.com/sagelang/sage/releases/tag/v2.0.0) |
 | **Extension** | `.sg` |
 | **Platforms** | macOS (ARM), Linux (x86_64, ARM) |
 | **Build time** | ~0.5s |

@@ -63,6 +63,10 @@ pub struct Checker {
     in_test_block: bool,
     /// Phase 3: Whether we're inside a message handler (for reply validation).
     in_message_handler: bool,
+    /// Phase 3: Protocol name that requires a reply in the current message handler (if any).
+    protocol_reply_required: Option<String>,
+    /// Phase 3: Whether reply() has been called in the current message handler.
+    protocol_reply_called: bool,
 }
 
 impl Checker {
@@ -89,6 +93,8 @@ impl Checker {
             is_test_file: false,
             in_test_block: false,
             in_message_handler: false,
+            protocol_reply_required: None,
+            protocol_reply_called: false,
         }
     }
 
@@ -115,6 +121,8 @@ impl Checker {
             is_test_file: true,
             in_test_block: false,
             in_message_handler: false,
+            protocol_reply_required: None,
+            protocol_reply_called: false,
         }
     }
 
@@ -141,6 +149,8 @@ impl Checker {
             is_test_file: false,
             in_test_block: false,
             in_message_handler: false,
+            protocol_reply_required: None,
+            protocol_reply_called: false,
         }
     }
 
@@ -233,9 +243,13 @@ impl Checker {
             }
 
             let mut beliefs = HashMap::new();
+            let mut persistent_beliefs = HashSet::new();
             for belief in &agent.beliefs {
                 let ty = resolve_type(&belief.ty);
                 beliefs.insert(belief.name.name.clone(), ty);
+                if belief.is_persistent {
+                    persistent_beliefs.insert(belief.name.name.clone());
+                }
             }
 
             // Find message handler type
@@ -252,14 +266,23 @@ impl Checker {
                 .iter()
                 .any(|h| matches!(h.event, EventKind::Start));
 
+            // Phase 3: Build protocol_roles map from follows clause
+            let protocol_roles: HashMap<String, String> = agent
+                .follows
+                .iter()
+                .map(|pr| (pr.protocol.name.clone(), pr.role.name.clone()))
+                .collect();
+
             self.symbols.define_agent(AgentInfo {
                 name: agent.name.name.clone(),
                 beliefs,
+                persistent_beliefs,
                 message_type,
                 emit_type: None, // Will be inferred during checking
                 has_start_handler,
                 is_pub: agent.is_pub,
                 module_path: self.current_module.clone(),
+                protocol_roles,
             });
         }
 
@@ -511,6 +534,13 @@ impl Checker {
             .iter()
             .any(|h| matches!(h.event, EventKind::Error { .. }));
 
+        // Get protocol roles for this agent (already collected in AgentInfo)
+        let current_protocol_roles: HashMap<String, String> = self
+            .symbols
+            .get_agent(&agent.name.name)
+            .map(|a| a.protocol_roles.clone())
+            .unwrap_or_default();
+
         for handler in &agent.handlers {
             self.push_scope();
 
@@ -521,7 +551,29 @@ impl Checker {
             } = &handler.event
             {
                 let ty = resolve_type(param_ty);
-                self.define_var(&param_name.name, ty);
+                self.define_var(&param_name.name, ty.clone());
+
+                // Phase 3: Check if any followed protocol requires a reply for this message type
+                self.protocol_reply_required = None;
+                self.protocol_reply_called = false;
+
+                for (proto_name, role) in &current_protocol_roles {
+                    if let Some(protocol) = self.symbols.get_protocol(proto_name).cloned() {
+                        for (i, step) in protocol.steps.iter().enumerate() {
+                            // If this agent receives this message type in its role
+                            if step.receiver == *role && step.message_type.is_compatible_with(&ty) {
+                                // Check if the next step has this agent as sender (reply expected)
+                                if i + 1 < protocol.steps.len() && protocol.steps[i + 1].sender == *role {
+                                    self.protocol_reply_required = Some(proto_name.clone());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if self.protocol_reply_required.is_some() {
+                        break;
+                    }
+                }
             }
 
             // RFC-0007: Add error parameter to scope if this is an error handler
@@ -542,6 +594,15 @@ impl Checker {
             }
 
             self.check_block(&handler.body);
+
+            // Phase 3: Check if reply was required but not called
+            if let Some(proto) = self.protocol_reply_required.take() {
+                if !self.protocol_reply_called {
+                    self.errors
+                        .push(CheckError::protocol_missing_reply(&proto, &handler.body.span));
+                }
+            }
+            self.protocol_reply_called = false;
 
             self.in_message_handler = old_in_message_handler;
             self.in_stop_handler = old_in_stop_handler;
@@ -909,6 +970,13 @@ impl Checker {
                 }
             }
 
+            Stmt::Checkpoint { span } => {
+                // checkpoint() is only valid inside an agent handler
+                if self.current_agent.is_none() {
+                    self.errors.push(CheckError::checkpoint_outside_agent(span));
+                }
+            }
+
             Stmt::Expr { expr, .. } => {
                 self.check_expr(expr);
             }
@@ -1079,17 +1147,60 @@ impl Checker {
                     return Type::Error;
                 };
 
-                let Some(agent) = self.symbols.get_agent(agent_name) else {
+                let Some(agent) = self.symbols.get_agent(agent_name).cloned() else {
                     return Type::Error; // Agent should exist
                 };
 
                 if let Some(ty) = agent.beliefs.get(&field.name) {
                     // Mark this belief as used
                     self.used_beliefs.insert(field.name.clone());
-                    ty.clone()
+                    // For @persistent beliefs, return Persisted<T> instead of T
+                    if agent.persistent_beliefs.contains(&field.name) {
+                        Type::Persisted(Box::new(ty.clone()))
+                    } else {
+                        ty.clone()
+                    }
                 } else {
                     self.errors
                         .push(CheckError::undefined_belief(&field.name, span));
+                    Type::Error
+                }
+            }
+
+            Expr::Apply { callee, args, span } => {
+                // Type-check the callee expression
+                let callee_ty = self.check_expr(callee);
+
+                // Verify it's a function type and check arguments
+                if let Type::Fn(param_tys, ret_ty) = callee_ty {
+                    // Check argument count
+                    if args.len() != param_tys.len() {
+                        self.errors.push(CheckError::wrong_arg_count(
+                            "method",
+                            param_tys.len(),
+                            args.len(),
+                            span,
+                        ));
+                        return Type::Error;
+                    }
+
+                    // Check each argument type
+                    for (arg, expected_ty) in args.iter().zip(param_tys.iter()) {
+                        let arg_ty = self.check_expr(arg);
+                        if !arg_ty.is_compatible_with(expected_ty) {
+                            self.errors.push(CheckError::type_mismatch(
+                                expected_ty.to_string(),
+                                arg_ty.to_string(),
+                                arg.span(),
+                            ));
+                        }
+                    }
+
+                    *ret_ty
+                } else if callee_ty.is_error() {
+                    Type::Error
+                } else {
+                    self.errors.push(CheckError::not_callable(&callee_ty, span));
                     Type::Error
                 }
             }
@@ -1224,8 +1335,8 @@ impl Checker {
                 let handle_ty = self.check_expr(handle);
                 let msg_ty = self.check_expr(message);
 
-                if let Some(agent_name) = handle_ty.agent_name() {
-                    if let Some(agent_info) = self.symbols.get_agent(agent_name) {
+                if let Some(receiver_name) = handle_ty.agent_name() {
+                    if let Some(agent_info) = self.symbols.get_agent(receiver_name) {
                         if let Some(expected) = &agent_info.message_type {
                             if !msg_ty.is_compatible_with(expected) {
                                 self.errors.push(CheckError::type_mismatch(
@@ -1236,8 +1347,13 @@ impl Checker {
                             }
                         } else {
                             self.errors
-                                .push(CheckError::no_message_handler(agent_name, span));
+                                .push(CheckError::no_message_handler(receiver_name, span));
                         }
+                    }
+
+                    // Phase 3: Protocol verification for session types
+                    if let Some(sender_name) = self.current_agent.clone() {
+                        self.check_protocol_send(&sender_name, receiver_name, &msg_ty, span);
                     }
                 } else if !handle_ty.is_error() {
                     self.errors
@@ -1458,6 +1574,32 @@ impl Checker {
                 span,
             } => {
                 let obj_ty = self.check_expr(object);
+
+                // Special case: Persisted<T> has .get and .set methods
+                if let Type::Persisted(inner) = &obj_ty {
+                    match field.name.as_str() {
+                        "get" => {
+                            // .get returns the inner type (called without args, returns T)
+                            // Note: This is a method, not a field. The actual call will be
+                            // checked as a Call expression with this FieldAccess as callee.
+                            // Return a function type Fn() -> T
+                            return Type::Fn(vec![], Box::new(inner.as_ref().clone()));
+                        }
+                        "set" => {
+                            // .set takes the inner type and returns Unit
+                            // Return a function type Fn(T) -> Unit
+                            return Type::Fn(vec![inner.as_ref().clone()], Box::new(Type::Unit));
+                        }
+                        "checkpoint" => {
+                            // .checkpoint() forces immediate persistence
+                            return Type::Fn(vec![], Box::new(Type::Unit));
+                        }
+                        _ => {
+                            self.errors.push(CheckError::unknown_field(&field.name, span));
+                            return Type::Error;
+                        }
+                    }
+                }
 
                 // Get the record name and type arguments from the type
                 let (record_name, type_args) = match &obj_ty {
@@ -1979,6 +2121,10 @@ impl Checker {
                 if !self.in_message_handler {
                     self.errors.push(CheckError::reply_outside_message_handler(span));
                 }
+
+                // Phase 3: Mark that reply has been called (for protocol verification)
+                self.protocol_reply_called = true;
+
                 // Check the message expression type
                 self.check_expr(message);
                 Type::Unit
@@ -2105,6 +2251,83 @@ impl Checker {
                         .push(CheckError::invalid_unary_op("!", operand.to_string(), span));
                     Type::Error
                 }
+            }
+        }
+    }
+
+    /// Phase 3: Verify that a send from sender to receiver is valid under their shared protocols.
+    fn check_protocol_send(
+        &mut self,
+        sender_name: &str,
+        receiver_name: &str,
+        msg_type: &Type,
+        span: &sage_parser::Span,
+    ) {
+        // Get protocol roles for both agents
+        let sender_info = self.symbols.get_agent(sender_name).cloned();
+        let receiver_info = self.symbols.get_agent(receiver_name).cloned();
+
+        let (sender_roles, receiver_roles) = match (sender_info, receiver_info) {
+            (Some(s), Some(r)) => (s.protocol_roles, r.protocol_roles),
+            _ => return, // Can't verify if agents aren't found - other errors will catch this
+        };
+
+        // If neither agent follows any protocols, no protocol verification needed
+        if sender_roles.is_empty() && receiver_roles.is_empty() {
+            return;
+        }
+
+        // If only one agent follows protocols, we still need to verify
+        // Check for shared protocols where this message type is valid
+        for (proto_name, sender_role) in &sender_roles {
+            if let Some(receiver_role) = receiver_roles.get(proto_name) {
+                if let Some(protocol) = self.symbols.get_protocol(proto_name).cloned() {
+                    // Check if any step in this protocol allows this message
+                    let valid = protocol.steps.iter().any(|step| {
+                        step.sender == *sender_role
+                            && step.receiver == *receiver_role
+                            && step.message_type.is_compatible_with(msg_type)
+                    });
+
+                    if valid {
+                        return; // Found a valid protocol step
+                    }
+                }
+            }
+        }
+
+        // No valid protocol found - check if this is because they share protocols
+        // but the message type doesn't match, or they don't share any protocols at all
+        let shared_protocols: Vec<&String> = sender_roles
+            .keys()
+            .filter(|k| receiver_roles.contains_key(*k))
+            .collect();
+
+        if shared_protocols.is_empty() {
+            // They don't share any protocols
+            if !sender_roles.is_empty() && !receiver_roles.is_empty() {
+                // Both follow protocols but none in common
+                self.errors.push(CheckError::no_shared_protocol(
+                    sender_name,
+                    receiver_name,
+                    msg_type.to_string(),
+                    span,
+                ));
+            }
+            // If only one follows protocols, we allow the send (protocol isn't fully specified)
+        } else {
+            // They share protocols but no step matches this message
+            // Report E074 for the first shared protocol
+            if let Some(proto_name) = shared_protocols.first() {
+                let sender_role = sender_roles.get(*proto_name).map(String::as_str).unwrap_or("?");
+                let receiver_role = receiver_roles.get(*proto_name).map(String::as_str).unwrap_or("?");
+                self.errors.push(CheckError::protocol_message_mismatch(
+                    *proto_name,
+                    sender_role,
+                    receiver_role,
+                    msg_type.to_string(),
+                    span,
+                ));
             }
         }
     }
@@ -3718,6 +3941,280 @@ impl Checker {
                 Type::Error
             }
 
+            // =========================================================================
+            // RFC-0010: Result Utilities
+            // =========================================================================
+            "is_ok" | "is_err" => {
+                // is_ok/is_err(Result<T, E>) -> Bool
+                if args.len() != 1 {
+                    self.errors.push(CheckError::wrong_arg_count(
+                        builtin.name,
+                        1,
+                        args.len(),
+                        span,
+                    ));
+                    return Type::Error;
+                }
+                let result_ty = self.check_expr(&args[0]);
+
+                if matches!(result_ty, Type::Result(_, _)) || result_ty.is_error() {
+                    return Type::Bool;
+                }
+                self.errors.push(CheckError::type_mismatch(
+                    "Result<T, E>",
+                    result_ty.to_string(),
+                    args[0].span(),
+                ));
+                Type::Error
+            }
+
+            "unwrap_result" => {
+                // unwrap_result(Result<T, E>) -> T
+                if args.len() != 1 {
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "unwrap_result",
+                        1,
+                        args.len(),
+                        span,
+                    ));
+                    return Type::Error;
+                }
+                let result_ty = self.check_expr(&args[0]);
+
+                if let Type::Result(ok_ty, _) = result_ty {
+                    return *ok_ty;
+                }
+                if result_ty.is_error() {
+                    return Type::Error;
+                }
+                self.errors.push(CheckError::type_mismatch(
+                    "Result<T, E>",
+                    result_ty.to_string(),
+                    args[0].span(),
+                ));
+                Type::Error
+            }
+
+            "unwrap_err" => {
+                // unwrap_err(Result<T, E>) -> E
+                if args.len() != 1 {
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "unwrap_err",
+                        1,
+                        args.len(),
+                        span,
+                    ));
+                    return Type::Error;
+                }
+                let result_ty = self.check_expr(&args[0]);
+
+                if let Type::Result(_, err_ty) = result_ty {
+                    return *err_ty;
+                }
+                if result_ty.is_error() {
+                    return Type::Error;
+                }
+                self.errors.push(CheckError::type_mismatch(
+                    "Result<T, E>",
+                    result_ty.to_string(),
+                    args[0].span(),
+                ));
+                Type::Error
+            }
+
+            "unwrap_or_result" => {
+                // unwrap_or_result(Result<T, E>, T) -> T
+                if args.len() != 2 {
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "unwrap_or_result",
+                        2,
+                        args.len(),
+                        span,
+                    ));
+                    return Type::Error;
+                }
+                let result_ty = self.check_expr(&args[0]);
+                let default_ty = self.check_expr(&args[1]);
+
+                if let Type::Result(ok_ty, _) = &result_ty {
+                    if !default_ty.is_compatible_with(ok_ty) {
+                        self.errors.push(CheckError::type_mismatch(
+                            ok_ty.to_string(),
+                            default_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                    return *ok_ty.clone();
+                }
+                if result_ty.is_error() {
+                    return default_ty;
+                }
+                self.errors.push(CheckError::type_mismatch(
+                    "Result<T, E>",
+                    result_ty.to_string(),
+                    args[0].span(),
+                ));
+                Type::Error
+            }
+
+            "map_result" => {
+                // map_result(Result<T, E>, Fn(T)->U) -> Result<U, E>
+                if args.len() != 2 {
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "map_result",
+                        2,
+                        args.len(),
+                        span,
+                    ));
+                    return Type::Error;
+                }
+                let result_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Type::Result(ok_ty, err_ty) = &result_ty {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() != 1 {
+                            self.errors.push(CheckError::wrong_arg_count(
+                                "mapper function",
+                                1,
+                                params.len(),
+                                args[1].span(),
+                            ));
+                            return Type::Error;
+                        }
+                        if !params[0].is_compatible_with(ok_ty) {
+                            self.errors.push(CheckError::type_mismatch(
+                                ok_ty.to_string(),
+                                params[0].to_string(),
+                                args[1].span(),
+                            ));
+                        }
+                        return Type::Result(ret.clone(), err_ty.clone());
+                    }
+                    self.errors.push(CheckError::type_mismatch(
+                        format!("Fn({}) -> U", ok_ty),
+                        fn_ty.to_string(),
+                        args[1].span(),
+                    ));
+                    return Type::Error;
+                }
+                if result_ty.is_error() {
+                    return Type::Error;
+                }
+                self.errors.push(CheckError::type_mismatch(
+                    "Result<T, E>",
+                    result_ty.to_string(),
+                    args[0].span(),
+                ));
+                Type::Error
+            }
+
+            "map_err" => {
+                // map_err(Result<T, E>, Fn(E)->F) -> Result<T, F>
+                if args.len() != 2 {
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "map_err",
+                        2,
+                        args.len(),
+                        span,
+                    ));
+                    return Type::Error;
+                }
+                let result_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Type::Result(ok_ty, err_ty) = &result_ty {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() != 1 {
+                            self.errors.push(CheckError::wrong_arg_count(
+                                "error mapper function",
+                                1,
+                                params.len(),
+                                args[1].span(),
+                            ));
+                            return Type::Error;
+                        }
+                        if !params[0].is_compatible_with(err_ty) {
+                            self.errors.push(CheckError::type_mismatch(
+                                err_ty.to_string(),
+                                params[0].to_string(),
+                                args[1].span(),
+                            ));
+                        }
+                        return Type::Result(ok_ty.clone(), ret.clone());
+                    }
+                    self.errors.push(CheckError::type_mismatch(
+                        format!("Fn({}) -> F", err_ty),
+                        fn_ty.to_string(),
+                        args[1].span(),
+                    ));
+                    return Type::Error;
+                }
+                if result_ty.is_error() {
+                    return Type::Error;
+                }
+                self.errors.push(CheckError::type_mismatch(
+                    "Result<T, E>",
+                    result_ty.to_string(),
+                    args[0].span(),
+                ));
+                Type::Error
+            }
+
+            "ok" => {
+                // ok(Result<T, E>) -> Option<T>
+                if args.len() != 1 {
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "ok",
+                        1,
+                        args.len(),
+                        span,
+                    ));
+                    return Type::Error;
+                }
+                let result_ty = self.check_expr(&args[0]);
+
+                if let Type::Result(ok_ty, _) = result_ty {
+                    return Type::Option(ok_ty);
+                }
+                if result_ty.is_error() {
+                    return Type::Error;
+                }
+                self.errors.push(CheckError::type_mismatch(
+                    "Result<T, E>",
+                    result_ty.to_string(),
+                    args[0].span(),
+                ));
+                Type::Error
+            }
+
+            "err_value" => {
+                // err_value(Result<T, E>) -> Option<E>
+                if args.len() != 1 {
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "err_value",
+                        1,
+                        args.len(),
+                        span,
+                    ));
+                    return Type::Error;
+                }
+                let result_ty = self.check_expr(&args[0]);
+
+                if let Type::Result(_, err_ty) = result_ty {
+                    return Type::Option(err_ty);
+                }
+                if result_ty.is_error() {
+                    return Type::Error;
+                }
+                self.errors.push(CheckError::type_mismatch(
+                    "Result<T, E>",
+                    result_ty.to_string(),
+                    args[0].span(),
+                ));
+                Type::Error
+            }
+
             _ => {
                 // Standard built-in with fixed signature
                 if let Some(ref params) = builtin.params {
@@ -3955,9 +4452,13 @@ impl MultiModuleChecker {
             }
 
             let mut beliefs = HashMap::new();
+            let mut persistent_beliefs = HashSet::new();
             for belief in &agent.beliefs {
                 let ty = resolve_type(&belief.ty);
                 beliefs.insert(belief.name.name.clone(), ty);
+                if belief.is_persistent {
+                    persistent_beliefs.insert(belief.name.name.clone());
+                }
             }
 
             let message_type = agent.handlers.iter().find_map(|h| {
@@ -3973,14 +4474,23 @@ impl MultiModuleChecker {
                 .iter()
                 .any(|h| matches!(h.event, EventKind::Start));
 
+            // Phase 3: Build protocol_roles map from follows clause
+            let protocol_roles: HashMap<String, String> = agent
+                .follows
+                .iter()
+                .map(|pr| (pr.protocol.name.clone(), pr.role.name.clone()))
+                .collect();
+
             self.symbols.define_agent(AgentInfo {
                 name: agent.name.name.clone(),
                 beliefs,
+                persistent_beliefs,
                 message_type,
                 emit_type: None,
                 has_start_handler,
                 is_pub: agent.is_pub,
                 module_path: module_path.clone(),
+                protocol_roles,
             });
         }
 
@@ -4781,6 +5291,13 @@ impl<'a> ModuleChecker<'a> {
                 }
             }
 
+            Stmt::Checkpoint { span } => {
+                // checkpoint() is only valid inside an agent handler
+                if self.current_agent.is_none() {
+                    self.errors.push(CheckError::checkpoint_outside_agent(span));
+                }
+            }
+
             Stmt::Expr { expr, .. } => {
                 self.check_expr(expr);
             }
@@ -4949,20 +5466,62 @@ impl<'a> ModuleChecker<'a> {
                     return Type::Error;
                 };
 
-                // Clone the belief type to avoid holding borrow across mutation
-                let belief_type = self
-                    .lookup_agent(agent_name)
-                    .and_then(|agent| agent.beliefs.get(&field.name).cloned());
+                // Clone the agent info to avoid holding borrow across mutation
+                let agent_info = self.lookup_agent(agent_name).cloned();
 
-                if let Some(ty) = belief_type {
-                    self.used_beliefs.insert(field.name.clone());
-                    ty
-                } else {
-                    // Check if agent exists at all
-                    if self.lookup_agent(agent_name).is_some() {
+                if let Some(agent) = agent_info {
+                    if let Some(ty) = agent.beliefs.get(&field.name) {
+                        self.used_beliefs.insert(field.name.clone());
+                        // For @persistent beliefs, return Persisted<T> instead of T
+                        if agent.persistent_beliefs.contains(&field.name) {
+                            Type::Persisted(Box::new(ty.clone()))
+                        } else {
+                            ty.clone()
+                        }
+                    } else {
                         self.errors
                             .push(CheckError::undefined_belief(&field.name, span));
+                        Type::Error
                     }
+                } else {
+                    Type::Error
+                }
+            }
+
+            Expr::Apply { callee, args, span } => {
+                // Type-check the callee expression
+                let callee_ty = self.check_expr(callee);
+
+                // Verify it's a function type and check arguments
+                if let Type::Fn(param_tys, ret_ty) = callee_ty {
+                    // Check argument count
+                    if args.len() != param_tys.len() {
+                        self.errors.push(CheckError::wrong_arg_count(
+                            "method",
+                            param_tys.len(),
+                            args.len(),
+                            span,
+                        ));
+                        return Type::Error;
+                    }
+
+                    // Check each argument type
+                    for (arg, expected_ty) in args.iter().zip(param_tys.iter()) {
+                        let arg_ty = self.check_expr(arg);
+                        if !arg_ty.is_compatible_with(expected_ty) {
+                            self.errors.push(CheckError::type_mismatch(
+                                expected_ty.to_string(),
+                                arg_ty.to_string(),
+                                arg.span(),
+                            ));
+                        }
+                    }
+
+                    *ret_ty
+                } else if callee_ty.is_error() {
+                    Type::Error
+                } else {
+                    self.errors.push(CheckError::not_callable(&callee_ty, span));
                     Type::Error
                 }
             }
@@ -5321,6 +5880,28 @@ impl<'a> ModuleChecker<'a> {
                 span,
             } => {
                 let obj_ty = self.check_expr(object);
+
+                // Special case: Persisted<T> has .get and .set methods
+                if let Type::Persisted(inner) = &obj_ty {
+                    match field.name.as_str() {
+                        "get" => {
+                            // .get returns the inner type (called without args, returns T)
+                            return Type::Fn(vec![], Box::new(inner.as_ref().clone()));
+                        }
+                        "set" => {
+                            // .set takes the inner type and returns Unit
+                            return Type::Fn(vec![inner.as_ref().clone()], Box::new(Type::Unit));
+                        }
+                        "checkpoint" => {
+                            // .checkpoint() forces immediate persistence
+                            return Type::Fn(vec![], Box::new(Type::Unit));
+                        }
+                        _ => {
+                            self.errors.push(CheckError::unknown_field(&field.name, span));
+                            return Type::Error;
+                        }
+                    }
+                }
 
                 // Get the record name and type arguments from the type
                 let (record_name, type_args) = match &obj_ty {
@@ -7519,6 +8100,280 @@ impl<'a> ModuleChecker<'a> {
                         args[1].span(),
                     ));
                 }
+                Type::Error
+            }
+
+            // =========================================================================
+            // RFC-0010: Result Utilities
+            // =========================================================================
+            "is_ok" | "is_err" => {
+                // is_ok/is_err(Result<T, E>) -> Bool
+                if args.len() != 1 {
+                    self.errors.push(CheckError::wrong_arg_count(
+                        builtin.name,
+                        1,
+                        args.len(),
+                        span,
+                    ));
+                    return Type::Error;
+                }
+                let result_ty = self.check_expr(&args[0]);
+
+                if matches!(result_ty, Type::Result(_, _)) || result_ty.is_error() {
+                    return Type::Bool;
+                }
+                self.errors.push(CheckError::type_mismatch(
+                    "Result<T, E>",
+                    result_ty.to_string(),
+                    args[0].span(),
+                ));
+                Type::Error
+            }
+
+            "unwrap_result" => {
+                // unwrap_result(Result<T, E>) -> T
+                if args.len() != 1 {
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "unwrap_result",
+                        1,
+                        args.len(),
+                        span,
+                    ));
+                    return Type::Error;
+                }
+                let result_ty = self.check_expr(&args[0]);
+
+                if let Type::Result(ok_ty, _) = result_ty {
+                    return *ok_ty;
+                }
+                if result_ty.is_error() {
+                    return Type::Error;
+                }
+                self.errors.push(CheckError::type_mismatch(
+                    "Result<T, E>",
+                    result_ty.to_string(),
+                    args[0].span(),
+                ));
+                Type::Error
+            }
+
+            "unwrap_err" => {
+                // unwrap_err(Result<T, E>) -> E
+                if args.len() != 1 {
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "unwrap_err",
+                        1,
+                        args.len(),
+                        span,
+                    ));
+                    return Type::Error;
+                }
+                let result_ty = self.check_expr(&args[0]);
+
+                if let Type::Result(_, err_ty) = result_ty {
+                    return *err_ty;
+                }
+                if result_ty.is_error() {
+                    return Type::Error;
+                }
+                self.errors.push(CheckError::type_mismatch(
+                    "Result<T, E>",
+                    result_ty.to_string(),
+                    args[0].span(),
+                ));
+                Type::Error
+            }
+
+            "unwrap_or_result" => {
+                // unwrap_or_result(Result<T, E>, T) -> T
+                if args.len() != 2 {
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "unwrap_or_result",
+                        2,
+                        args.len(),
+                        span,
+                    ));
+                    return Type::Error;
+                }
+                let result_ty = self.check_expr(&args[0]);
+                let default_ty = self.check_expr(&args[1]);
+
+                if let Type::Result(ok_ty, _) = &result_ty {
+                    if !default_ty.is_compatible_with(ok_ty) {
+                        self.errors.push(CheckError::type_mismatch(
+                            ok_ty.to_string(),
+                            default_ty.to_string(),
+                            args[1].span(),
+                        ));
+                    }
+                    return *ok_ty.clone();
+                }
+                if result_ty.is_error() {
+                    return default_ty;
+                }
+                self.errors.push(CheckError::type_mismatch(
+                    "Result<T, E>",
+                    result_ty.to_string(),
+                    args[0].span(),
+                ));
+                Type::Error
+            }
+
+            "map_result" => {
+                // map_result(Result<T, E>, Fn(T)->U) -> Result<U, E>
+                if args.len() != 2 {
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "map_result",
+                        2,
+                        args.len(),
+                        span,
+                    ));
+                    return Type::Error;
+                }
+                let result_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Type::Result(ok_ty, err_ty) = &result_ty {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() != 1 {
+                            self.errors.push(CheckError::wrong_arg_count(
+                                "mapper function",
+                                1,
+                                params.len(),
+                                args[1].span(),
+                            ));
+                            return Type::Error;
+                        }
+                        if !params[0].is_compatible_with(ok_ty) {
+                            self.errors.push(CheckError::type_mismatch(
+                                ok_ty.to_string(),
+                                params[0].to_string(),
+                                args[1].span(),
+                            ));
+                        }
+                        return Type::Result(ret.clone(), err_ty.clone());
+                    }
+                    self.errors.push(CheckError::type_mismatch(
+                        format!("Fn({}) -> U", ok_ty),
+                        fn_ty.to_string(),
+                        args[1].span(),
+                    ));
+                    return Type::Error;
+                }
+                if result_ty.is_error() {
+                    return Type::Error;
+                }
+                self.errors.push(CheckError::type_mismatch(
+                    "Result<T, E>",
+                    result_ty.to_string(),
+                    args[0].span(),
+                ));
+                Type::Error
+            }
+
+            "map_err" => {
+                // map_err(Result<T, E>, Fn(E)->F) -> Result<T, F>
+                if args.len() != 2 {
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "map_err",
+                        2,
+                        args.len(),
+                        span,
+                    ));
+                    return Type::Error;
+                }
+                let result_ty = self.check_expr(&args[0]);
+                let fn_ty = self.check_expr(&args[1]);
+
+                if let Type::Result(ok_ty, err_ty) = &result_ty {
+                    if let Type::Fn(params, ret) = &fn_ty {
+                        if params.len() != 1 {
+                            self.errors.push(CheckError::wrong_arg_count(
+                                "error mapper function",
+                                1,
+                                params.len(),
+                                args[1].span(),
+                            ));
+                            return Type::Error;
+                        }
+                        if !params[0].is_compatible_with(err_ty) {
+                            self.errors.push(CheckError::type_mismatch(
+                                err_ty.to_string(),
+                                params[0].to_string(),
+                                args[1].span(),
+                            ));
+                        }
+                        return Type::Result(ok_ty.clone(), ret.clone());
+                    }
+                    self.errors.push(CheckError::type_mismatch(
+                        format!("Fn({}) -> F", err_ty),
+                        fn_ty.to_string(),
+                        args[1].span(),
+                    ));
+                    return Type::Error;
+                }
+                if result_ty.is_error() {
+                    return Type::Error;
+                }
+                self.errors.push(CheckError::type_mismatch(
+                    "Result<T, E>",
+                    result_ty.to_string(),
+                    args[0].span(),
+                ));
+                Type::Error
+            }
+
+            "ok" => {
+                // ok(Result<T, E>) -> Option<T>
+                if args.len() != 1 {
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "ok",
+                        1,
+                        args.len(),
+                        span,
+                    ));
+                    return Type::Error;
+                }
+                let result_ty = self.check_expr(&args[0]);
+
+                if let Type::Result(ok_ty, _) = result_ty {
+                    return Type::Option(ok_ty);
+                }
+                if result_ty.is_error() {
+                    return Type::Error;
+                }
+                self.errors.push(CheckError::type_mismatch(
+                    "Result<T, E>",
+                    result_ty.to_string(),
+                    args[0].span(),
+                ));
+                Type::Error
+            }
+
+            "err_value" => {
+                // err_value(Result<T, E>) -> Option<E>
+                if args.len() != 1 {
+                    self.errors.push(CheckError::wrong_arg_count(
+                        "err_value",
+                        1,
+                        args.len(),
+                        span,
+                    ));
+                    return Type::Error;
+                }
+                let result_ty = self.check_expr(&args[0]);
+
+                if let Type::Result(_, err_ty) = result_ty {
+                    return Type::Option(err_ty);
+                }
+                if result_ty.is_error() {
+                    return Type::Error;
+                }
+                self.errors.push(CheckError::type_mismatch(
+                    "Result<T, E>",
+                    result_ty.to_string(),
+                    args[0].span(),
+                ));
                 Type::Error
             }
 

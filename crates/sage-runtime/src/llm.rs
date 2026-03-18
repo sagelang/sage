@@ -24,6 +24,10 @@ pub struct LlmConfig {
     pub model: String,
     /// Max retries for structured inference.
     pub infer_retries: usize,
+    /// Temperature for sampling (0.0 - 2.0). None uses API default.
+    pub temperature: Option<f64>,
+    /// Maximum tokens to generate. None uses API default.
+    pub max_tokens: Option<i64>,
 }
 
 impl LlmConfig {
@@ -38,6 +42,12 @@ impl LlmConfig {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(DEFAULT_INFER_RETRIES),
+            temperature: std::env::var("SAGE_TEMPERATURE")
+                .ok()
+                .and_then(|s| s.parse().ok()),
+            max_tokens: std::env::var("SAGE_MAX_TOKENS")
+                .ok()
+                .and_then(|s| s.parse().ok()),
         }
     }
 
@@ -48,7 +58,33 @@ impl LlmConfig {
             base_url: "mock".to_string(),
             model: "mock".to_string(),
             infer_retries: DEFAULT_INFER_RETRIES,
+            temperature: None,
+            max_tokens: None,
         }
+    }
+
+    /// Create a config with specific model and defaults for other settings.
+    ///
+    /// This is useful when you want to override only specific fields like model
+    /// from an effect handler, while keeping API key and base URL from environment.
+    pub fn with_model(model: impl Into<String>) -> Self {
+        let mut config = Self::from_env();
+        config.model = model.into();
+        config
+    }
+
+    /// Set the temperature for this config.
+    #[must_use]
+    pub fn with_temperature(mut self, temp: f64) -> Self {
+        self.temperature = Some(temp);
+        self
+    }
+
+    /// Set the max tokens for this config.
+    #[must_use]
+    pub fn with_max_tokens(mut self, tokens: i64) -> Self {
+        self.max_tokens = Some(tokens);
+        self
     }
 
     /// Check if this is a mock configuration.
@@ -93,7 +129,8 @@ impl LlmClient {
                 role: "user",
                 content: prompt,
             }],
-        );
+        )
+        .with_config(&self.config);
 
         self.send_request(&request).await
     }
@@ -186,7 +223,7 @@ impl LlmClient {
             });
         }
 
-        let mut request = ChatRequest::new(&self.config.model, messages);
+        let mut request = ChatRequest::new(&self.config.model, messages).with_config(&self.config);
 
         // Add format: json hint for Ollama
         if self.config.is_ollama() {
@@ -255,6 +292,10 @@ struct ChatRequest<'a> {
     messages: Vec<ChatMessage<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     format: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -269,11 +310,19 @@ impl<'a> ChatRequest<'a> {
             model,
             messages,
             format: None,
+            temperature: None,
+            max_tokens: None,
         }
     }
 
     fn with_json_format(mut self) -> Self {
         self.format = Some("json");
+        self
+    }
+
+    fn with_config(mut self, config: &LlmConfig) -> Self {
+        self.temperature = config.temperature;
+        self.max_tokens = config.max_tokens;
         self
     }
 }
@@ -333,6 +382,8 @@ mod tests {
             base_url: "http://localhost:11434/v1".to_string(),
             model: "llama2".to_string(),
             infer_retries: 3,
+            temperature: None,
+            max_tokens: None,
         };
         assert!(config.is_ollama());
     }
@@ -344,6 +395,8 @@ mod tests {
             base_url: "http://127.0.0.1:11434/v1".to_string(),
             model: "llama2".to_string(),
             infer_retries: 3,
+            temperature: None,
+            max_tokens: None,
         };
         assert!(config.is_ollama());
     }
@@ -355,6 +408,8 @@ mod tests {
             base_url: "https://api.openai.com/v1".to_string(),
             model: "gpt-4".to_string(),
             infer_retries: 3,
+            temperature: None,
+            max_tokens: None,
         };
         assert!(!config.is_ollama());
     }

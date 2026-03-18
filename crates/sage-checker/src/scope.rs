@@ -14,6 +14,8 @@ pub struct AgentInfo {
     pub name: String,
     /// Beliefs declared by this agent (name -> type).
     pub beliefs: HashMap<String, Type>,
+    /// Names of beliefs that are @persistent.
+    pub persistent_beliefs: std::collections::HashSet<String>,
     /// The type of messages this agent can receive (from `on message` handler).
     pub message_type: Option<Type>,
     /// The type this agent emits (inferred from `emit` calls).
@@ -24,6 +26,9 @@ pub struct AgentInfo {
     pub is_pub: bool,
     /// The module path where this agent is defined.
     pub module_path: ModulePath,
+    /// Protocols this agent follows (protocol_name -> role_name).
+    /// Phase 3: Session Types - tracks which protocols an agent participates in and their role.
+    pub protocol_roles: HashMap<String, String>,
 }
 
 /// Information about a declared function.
@@ -1802,6 +1807,109 @@ impl SymbolTable {
                 name: "or_option",
                 params: None,
                 return_type: Type::Error,
+                is_fallible: false,
+            },
+        );
+
+        // =========================================================================
+        // RFC-0010: Result Utilities
+        // =========================================================================
+
+        // is_ok(Result<T, E>) -> Bool (generic)
+        self.builtins.insert(
+            "is_ok",
+            BuiltinInfo {
+                name: "is_ok",
+                params: None,
+                return_type: Type::Bool,
+                is_fallible: false,
+            },
+        );
+
+        // is_err(Result<T, E>) -> Bool (generic)
+        self.builtins.insert(
+            "is_err",
+            BuiltinInfo {
+                name: "is_err",
+                params: None,
+                return_type: Type::Bool,
+                is_fallible: false,
+            },
+        );
+
+        // unwrap_result(Result<T, E>) -> T (generic, panics on Err)
+        self.builtins.insert(
+            "unwrap_result",
+            BuiltinInfo {
+                name: "unwrap_result",
+                params: None,
+                return_type: Type::Error, // Determined by first arg
+                is_fallible: false,
+            },
+        );
+
+        // unwrap_err(Result<T, E>) -> E (generic, panics on Ok)
+        self.builtins.insert(
+            "unwrap_err",
+            BuiltinInfo {
+                name: "unwrap_err",
+                params: None,
+                return_type: Type::Error, // Determined by first arg
+                is_fallible: false,
+            },
+        );
+
+        // unwrap_or_result(Result<T, E>, T) -> T (generic)
+        self.builtins.insert(
+            "unwrap_or_result",
+            BuiltinInfo {
+                name: "unwrap_or_result",
+                params: None,
+                return_type: Type::Error,
+                is_fallible: false,
+            },
+        );
+
+        // map_result(Result<T, E>, Fn(T)->U) -> Result<U, E> (generic)
+        self.builtins.insert(
+            "map_result",
+            BuiltinInfo {
+                name: "map_result",
+                params: None,
+                return_type: Type::Error,
+                is_fallible: false,
+            },
+        );
+
+        // map_err(Result<T, E>, Fn(E)->F) -> Result<T, F> (generic)
+        self.builtins.insert(
+            "map_err",
+            BuiltinInfo {
+                name: "map_err",
+                params: None,
+                return_type: Type::Error,
+                is_fallible: false,
+            },
+        );
+
+        // ok(Result<T, E>) -> Option<T> (generic)
+        self.builtins.insert(
+            "ok",
+            BuiltinInfo {
+                name: "ok",
+                params: None,
+                return_type: Type::Error, // Option<T>
+                is_fallible: false,
+            },
+        );
+
+        // err_value(Result<T, E>) -> Option<E> (generic)
+        self.builtins.insert(
+            "err_value",
+            BuiltinInfo {
+                name: "err_value",
+                params: None,
+                return_type: Type::Error, // Option<E>
                 is_fallible: false,
             },
         );

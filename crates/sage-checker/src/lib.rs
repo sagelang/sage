@@ -61,6 +61,16 @@ mod tests {
         (Some(program), result)
     }
 
+    fn check_test_source(source: &str) -> (Option<sage_parser::Program>, CheckResult) {
+        let lex_result = lex(source).expect("lexing should succeed");
+        let source_arc: Arc<str> = Arc::from(source);
+        let (program, parse_errors) = parse(lex_result.tokens(), source_arc);
+        assert!(parse_errors.is_empty(), "parse errors: {parse_errors:?}");
+        let program = program.expect("should parse");
+        let result = check_test_file(&program);
+        (Some(program), result)
+    }
+
     #[test]
     fn check_minimal_valid_program() {
         let source = r#"
@@ -1805,5 +1815,531 @@ run Main;
         let (_, result) = check_source(source);
         assert_eq!(result.errors.len(), 1, "expected 1 error, got {:?}", result.errors);
         assert!(matches!(result.errors[0], CheckError::UnknownEffectHandler { .. }));
+    }
+
+    // =========================================================================
+    // Phase 3: Session Types - Protocol Verification Tests
+    // =========================================================================
+
+    #[test]
+    fn check_protocol_valid_send() {
+        let source = r#"
+            record Ping {}
+            record Pong {}
+
+            protocol PingPong {
+                Pinger -> Ponger: Ping
+                Ponger -> Pinger: Pong
+            }
+
+            agent Pinger follows PingPong as Pinger {
+                on start {
+                    let p = summon Ponger {};
+                    try send(p, Ping {});
+                }
+                on error(e) {
+                    print("error");
+                }
+            }
+
+            agent Ponger follows PingPong as Ponger {
+                on message(m: Ping) {
+                    reply(Pong {});
+                }
+            }
+
+            run Pinger;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_protocol_wrong_message_type() {
+        // Sending WrongMsg when protocol only allows Ping
+        let source = r#"
+            record Ping {}
+            record Pong {}
+            record WrongMsg {}
+
+            protocol PingPong {
+                Pinger -> Ponger: Ping
+                Ponger -> Pinger: Pong
+            }
+
+            agent Pinger follows PingPong as Pinger {
+                on start {
+                    let p = summon Ponger {};
+                    try send(p, WrongMsg {});
+                }
+                on error(e) {
+                    print("error");
+                }
+            }
+
+            agent Ponger follows PingPong as Ponger {
+                on message(m: Ping) {
+                    reply(Pong {});
+                }
+            }
+
+            run Pinger;
+        "#;
+
+        let (_, result) = check_source(source);
+        // Expect E074: ProtocolMessageMismatch (and possibly a type mismatch for the handler)
+        let has_protocol_error = result.errors.iter().any(|e| {
+            matches!(e, CheckError::ProtocolMessageMismatch { .. })
+        });
+        assert!(has_protocol_error, "expected E074 ProtocolMessageMismatch, got: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_protocol_missing_reply() {
+        // Ponger doesn't call reply() but protocol expects it
+        let source = r#"
+            record Ping {}
+            record Pong {}
+
+            protocol PingPong {
+                Pinger -> Ponger: Ping
+                Ponger -> Pinger: Pong
+            }
+
+            agent Pinger follows PingPong as Pinger {
+                on start {
+                    let p = summon Ponger {};
+                    try send(p, Ping {});
+                }
+                on error(e) {
+                    print("error");
+                }
+            }
+
+            agent Ponger follows PingPong as Ponger {
+                on message(m: Ping) {
+                    // Missing reply(Pong {})!
+                    print("got ping");
+                }
+            }
+
+            run Pinger;
+        "#;
+
+        let (_, result) = check_source(source);
+        let has_missing_reply = result.errors.iter().any(|e| {
+            matches!(e, CheckError::ProtocolMissingReply { .. })
+        });
+        assert!(has_missing_reply, "expected E076 ProtocolMissingReply, got: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_protocol_no_shared_protocol() {
+        // Two agents follow different protocols - no common ground
+        let source = r#"
+            record Ping {}
+            record Pong {}
+            record Request {}
+            record Response {}
+
+            protocol PingPong {
+                Pinger -> Ponger: Ping
+                Ponger -> Pinger: Pong
+            }
+
+            protocol ReqRes {
+                Client -> Server: Request
+                Server -> Client: Response
+            }
+
+            agent Pinger follows PingPong as Pinger {
+                on start {
+                    let s = summon Server {};
+                    try send(s, Ping {});
+                }
+                on error(e) {
+                    print("error");
+                }
+            }
+
+            agent Server follows ReqRes as Server {
+                on message(m: Request) {
+                    reply(Response {});
+                }
+            }
+
+            run Pinger;
+        "#;
+
+        let (_, result) = check_source(source);
+        let has_no_shared = result.errors.iter().any(|e| {
+            matches!(e, CheckError::NoSharedProtocol { .. })
+        });
+        assert!(has_no_shared, "expected E078 NoSharedProtocol, got: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_protocol_agent_without_protocol_can_send() {
+        // Agent not following any protocol should be allowed to send
+        let source = r#"
+            record Msg {}
+
+            agent Sender {
+                on start {
+                    let r = summon Receiver {};
+                    try send(r, Msg {});
+                }
+                on error(e) {
+                    print("error");
+                }
+            }
+
+            agent Receiver {
+                on message(m: Msg) {
+                    print("got it");
+                }
+            }
+
+            run Sender;
+        "#;
+
+        let (_, result) = check_source(source);
+        // No protocol errors expected - both agents don't follow protocols
+        let has_protocol_error = result.errors.iter().any(|e| {
+            matches!(e, CheckError::ProtocolMessageMismatch { .. }
+                | CheckError::NoSharedProtocol { .. }
+                | CheckError::ProtocolMissingReply { .. })
+        });
+        assert!(!has_protocol_error, "unexpected protocol error: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_protocol_reply_outside_handler() {
+        // Reply called outside message handler should error
+        let source = r#"
+            record Msg {}
+
+            agent Broken {
+                on start {
+                    reply(Msg {});
+                }
+            }
+
+            run Broken;
+        "#;
+
+        let (_, result) = check_source(source);
+        let has_reply_error = result.errors.iter().any(|e| {
+            matches!(e, CheckError::ReplyOutsideMessageHandler { .. })
+        });
+        assert!(has_reply_error, "expected E073 ReplyOutsideMessageHandler, got: {:?}", result.errors);
+    }
+
+    // =========================================================================
+    // v2.0: Explicit Checkpoint Tests (E053)
+    // =========================================================================
+
+    #[test]
+    fn check_checkpoint_outside_agent() {
+        // checkpoint() called outside agent should produce E053
+        let source = r#"
+            fn helper() -> Int {
+                checkpoint();
+                return 42;
+            }
+
+            agent Worker {
+                on start {
+                    yield(0);
+                }
+            }
+
+            run Worker;
+        "#;
+
+        let (_, result) = check_source(source);
+        let has_checkpoint_error = result.errors.iter().any(|e| {
+            matches!(e, CheckError::CheckpointOutsideAgent { .. })
+        });
+        assert!(has_checkpoint_error, "expected E053 CheckpointOutsideAgent, got: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_checkpoint_inside_agent_ok() {
+        // checkpoint() inside agent handler should be fine
+        let source = r#"
+            agent Worker {
+                @persistent count: Int
+
+                on start {
+                    checkpoint();
+                    yield(0);
+                }
+            }
+
+            run Worker;
+        "#;
+
+        let (_, result) = check_source(source);
+        let has_checkpoint_error = result.errors.iter().any(|e| {
+            matches!(e, CheckError::CheckpointOutsideAgent { .. })
+        });
+        assert!(!has_checkpoint_error, "unexpected E053 error: {:?}", result.errors);
+    }
+
+    // =========================================================================
+    // v2.0: Supervisor Validation Tests (E061, E062)
+    // =========================================================================
+    //
+    // Note: E060 (SupervisorNoChildren) is enforced at the parser level - the
+    // children block requires at least one child. W004 (PermanentWithoutPersistence)
+    // is not yet implemented - it would require extending AgentInfo to track
+    // @persistent fields.
+
+    #[test]
+    fn check_supervisor_child_not_found() {
+        // Supervisor referencing nonexistent agent should produce E061
+        let source = r#"
+            supervisor BadSupervisor {
+                strategy: OneForOne
+                children {
+                    NonexistentAgent {}
+                }
+            }
+
+            run BadSupervisor;
+        "#;
+
+        let (_, result) = check_source(source);
+        let has_not_found_error = result.errors.iter().any(|e| {
+            matches!(e, CheckError::SupervisorChildNotFound { .. })
+        });
+        assert!(has_not_found_error, "expected E061 SupervisorChildNotFound, got: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_supervisor_child_missing_belief() {
+        // Supervisor child missing required belief should produce E062
+        let source = r#"
+            agent Worker {
+                count: Int
+                name: String
+
+                on start {
+                    yield(self.count);
+                }
+            }
+
+            supervisor BadSupervisor {
+                strategy: OneForOne
+                children {
+                    Worker { count: 0 }
+                }
+            }
+
+            run BadSupervisor;
+        "#;
+
+        let (_, result) = check_source(source);
+        let has_missing_belief_error = result.errors.iter().any(|e| {
+            matches!(e, CheckError::SupervisorChildMissingBelief { .. })
+        });
+        assert!(has_missing_belief_error, "expected E062 SupervisorChildMissingBelief, got: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_supervisor_valid() {
+        // Valid supervisor should pass
+        let source = r#"
+            agent Worker {
+                count: Int
+
+                on start {
+                    yield(self.count);
+                }
+            }
+
+            supervisor AppSupervisor {
+                strategy: OneForOne
+                children {
+                    Worker { count: 0 }
+                }
+            }
+
+            run AppSupervisor;
+        "#;
+
+        let (_, result) = check_source(source);
+        let has_supervisor_error = result.errors.iter().any(|e| {
+            matches!(e, CheckError::SupervisorNoChildren { .. }
+                | CheckError::SupervisorChildNotFound { .. }
+                | CheckError::SupervisorChildMissingBelief { .. })
+        });
+        assert!(!has_supervisor_error, "unexpected supervisor error: {:?}", result.errors);
+    }
+
+    // =========================================================================
+    // v2.0: Additional Error Code Tests
+    // =========================================================================
+
+    #[test]
+    fn check_duplicate_test_name() {
+        // Duplicate test names should produce E055
+        let source = r#"
+            test "my test" {
+                assert_true(true);
+            }
+
+            test "my test" {
+                assert_true(true);
+            }
+        "#;
+
+        let (_, result) = check_test_source(source);
+        let has_duplicate_test = result.errors.iter().any(|e| {
+            matches!(e, CheckError::DuplicateTestName { .. })
+        });
+        assert!(has_duplicate_test, "expected E055 DuplicateTestName, got: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_mock_divine_outside_test() {
+        // mock divine outside test block should produce E056
+        let source = r#"
+            agent Worker {
+                on start {
+                    mock divine -> "test";
+                    yield(0);
+                }
+            }
+            run Worker;
+        "#;
+
+        let (_, result) = check_source(source);
+        let has_mock_error = result.errors.iter().any(|e| {
+            matches!(e, CheckError::MockInferOutsideTest { .. })
+        });
+        assert!(has_mock_error, "expected E056 MockInferOutsideTest, got: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_mock_tool_outside_test() {
+        // mock tool outside test block should produce E057
+        let source = r#"
+            tool Http {
+                fn get(url: String) -> Result<String, String>
+            }
+
+            agent Worker {
+                use Http
+                on start {
+                    mock tool Http.get -> "response";
+                    yield(0);
+                }
+            }
+            run Worker;
+        "#;
+
+        let (_, result) = check_source(source);
+        let has_mock_error = result.errors.iter().any(|e| {
+            matches!(e, CheckError::MockToolOutsideTest { .. })
+        });
+        assert!(has_mock_error, "expected E057 MockToolOutsideTest, got: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_mock_fail_not_string() {
+        // mock divine -> fail(non-string) should produce E058
+        let source = r#"
+            test "bad mock fail" {
+                mock divine -> fail(42);
+                assert_true(true);
+            }
+        "#;
+
+        let (_, result) = check_test_source(source);
+        let has_fail_error = result.errors.iter().any(|e| {
+            matches!(e, CheckError::MockFailNotString { .. })
+        });
+        assert!(has_fail_error, "expected E058 MockFailNotString, got: {:?}", result.errors);
+    }
+
+    // Note: W004 PermanentWithoutPersistence is not yet implemented per checker.rs:721
+    // The warning requires extending AgentInfo to track @persistent fields.
+
+    #[test]
+    fn check_unknown_protocol() {
+        // Following an unknown protocol should produce E070
+        let source = r#"
+            record Msg {}
+
+            agent Worker follows NonExistent as Role {
+                on start {
+                    yield(0);
+                }
+            }
+
+            run Worker;
+        "#;
+
+        let (_, result) = check_source(source);
+        let has_unknown_protocol = result.errors.iter().any(|e| {
+            matches!(e, CheckError::UnknownProtocol { .. })
+        });
+        assert!(has_unknown_protocol, "expected E070 UnknownProtocol, got: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_unknown_protocol_role() {
+        // Following a protocol with unknown role should produce E071
+        let source = r#"
+            record Msg {}
+
+            protocol MyProtocol {
+                Sender -> Receiver: Msg
+            }
+
+            agent Worker follows MyProtocol as UnknownRole {
+                on start {
+                    yield(0);
+                }
+            }
+
+            run Worker;
+        "#;
+
+        let (_, result) = check_source(source);
+        let has_unknown_role = result.errors.iter().any(|e| {
+            matches!(e, CheckError::UnknownProtocolRole { .. })
+        });
+        assert!(has_unknown_role, "expected E071 UnknownProtocolRole, got: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_unknown_effect_handler() {
+        // Using an unknown effect handler in supervisor should produce E072
+        let source = r#"
+            agent Worker {
+                on start {
+                    yield(0);
+                }
+            }
+
+            supervisor Supervisor {
+                strategy: OneForOne
+                children {
+                    Worker { handler Infer: NonExistentHandler }
+                }
+            }
+
+            run Supervisor;
+        "#;
+
+        let (_, result) = check_source(source);
+        let has_unknown_handler = result.errors.iter().any(|e| {
+            matches!(e, CheckError::UnknownEffectHandler { .. })
+        });
+        assert!(has_unknown_handler, "expected E072 UnknownEffectHandler, got: {:?}", result.errors);
     }
 }

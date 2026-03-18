@@ -267,6 +267,17 @@ pub enum CheckError {
         span: SourceSpan,
     },
 
+    #[error("cannot call value of type `{ty}`")]
+    #[diagnostic(
+        code(sage::not_callable),
+        help("Oswyn explains: only function types can be called")
+    )]
+    NotCallable {
+        ty: String,
+        #[label("not a function type")]
+        span: SourceSpan,
+    },
+
     // =========================================================================
     // Warnings
     // =========================================================================
@@ -536,6 +547,16 @@ pub enum CheckError {
         span: SourceSpan,
     },
 
+    #[error("`checkpoint()` called outside of agent handler")]
+    #[diagnostic(
+        code(sage::E053),
+        help("Oswyn explains: checkpoint() can only be used inside agent handlers to force a persistence checkpoint")
+    )]
+    CheckpointOutsideAgent {
+        #[label("not inside an agent handler")]
+        span: SourceSpan,
+    },
+
     #[error("`on waking` handler in agent with no `@persistent` fields")]
     #[diagnostic(
         code(sage::W006),
@@ -661,6 +682,44 @@ pub enum CheckError {
     )]
     ReplyOutsideMessageHandler {
         #[label("not inside a message handler")]
+        span: SourceSpan,
+    },
+
+    #[error("message type `{msg_type}` not allowed in protocol `{protocol}` from `{sender}` to `{receiver}`")]
+    #[diagnostic(
+        code(sage::E074),
+        help("Oswyn explains: check your protocol definition - this message type isn't a valid step")
+    )]
+    ProtocolMessageMismatch {
+        protocol: String,
+        sender: String,
+        receiver: String,
+        msg_type: String,
+        #[label("message type not permitted by protocol")]
+        span: SourceSpan,
+    },
+
+    #[error("protocol `{protocol}` requires reply in message handler")]
+    #[diagnostic(
+        code(sage::E076),
+        help("Oswyn suggests: add `reply(...)` before the handler completes")
+    )]
+    ProtocolMissingReply {
+        protocol: String,
+        #[label("reply required by protocol")]
+        span: SourceSpan,
+    },
+
+    #[error("agents do not share a protocol permitting this message")]
+    #[diagnostic(
+        code(sage::E078),
+        help("Oswyn explains: sender `{sender}` and receiver `{receiver}` need a shared protocol that allows `{msg_type}`")
+    )]
+    NoSharedProtocol {
+        sender: String,
+        receiver: String,
+        msg_type: String,
+        #[label("no shared protocol permits this message")]
         span: SourceSpan,
     },
 }
@@ -905,6 +964,14 @@ impl CheckError {
     pub fn field_access_on_non_record(ty: impl Into<String>, span: &Span) -> Self {
         Self::FieldAccessOnNonRecord {
             ty: ty.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a not callable error.
+    pub fn not_callable(ty: &crate::types::Type, span: &Span) -> Self {
+        Self::NotCallable {
+            ty: ty.to_string(),
             span: to_source_span(span),
         }
     }
@@ -1180,6 +1247,14 @@ impl CheckError {
         }
     }
 
+    /// Create a checkpoint outside agent error (E053).
+    #[must_use]
+    pub fn checkpoint_outside_agent(span: &Span) -> Self {
+        Self::CheckpointOutsideAgent {
+            span: to_source_span(span),
+        }
+    }
+
     /// Create a waking without persistent fields warning (W006).
     #[must_use]
     pub fn waking_without_persistent_fields(
@@ -1287,6 +1362,46 @@ impl CheckError {
     /// Create a reply-outside-message-handler error (E073).
     pub fn reply_outside_message_handler(span: &Span) -> Self {
         Self::ReplyOutsideMessageHandler {
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a protocol-message-mismatch error (E074).
+    pub fn protocol_message_mismatch(
+        protocol: impl Into<String>,
+        sender: impl Into<String>,
+        receiver: impl Into<String>,
+        msg_type: impl Into<String>,
+        span: &Span,
+    ) -> Self {
+        Self::ProtocolMessageMismatch {
+            protocol: protocol.into(),
+            sender: sender.into(),
+            receiver: receiver.into(),
+            msg_type: msg_type.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a protocol-missing-reply error (E076).
+    pub fn protocol_missing_reply(protocol: impl Into<String>, span: &Span) -> Self {
+        Self::ProtocolMissingReply {
+            protocol: protocol.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a no-shared-protocol error (E078).
+    pub fn no_shared_protocol(
+        sender: impl Into<String>,
+        receiver: impl Into<String>,
+        msg_type: impl Into<String>,
+        span: &Span,
+    ) -> Self {
+        Self::NoSharedProtocol {
+            sender: sender.into(),
+            receiver: receiver.into(),
+            msg_type: msg_type.into(),
             span: to_source_span(span),
         }
     }

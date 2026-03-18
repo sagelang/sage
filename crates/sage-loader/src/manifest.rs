@@ -20,6 +20,8 @@ pub struct ProjectManifest {
     pub persistence: PersistenceConfig,
     #[serde(default)]
     pub supervision: SupervisionConfig,
+    #[serde(default)]
+    pub observability: ObservabilityConfig,
 }
 
 /// Tool configuration section of grove.toml.
@@ -123,6 +125,38 @@ fn default_max_restarts() -> u32 {
 
 fn default_within_seconds() -> u64 {
     60
+}
+
+/// Observability configuration for tracing and metrics export.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ObservabilityConfig {
+    /// Tracing backend: "ndjson" (default), "otlp", or "none".
+    #[serde(default = "default_observability_backend")]
+    pub backend: String,
+    /// OTLP endpoint for trace export (when backend = "otlp").
+    #[serde(default)]
+    pub otlp_endpoint: Option<String>,
+    /// Service name for trace attribution.
+    #[serde(default = "default_service_name_option")]
+    pub service_name: Option<String>,
+}
+
+impl Default for ObservabilityConfig {
+    fn default() -> Self {
+        Self {
+            backend: default_observability_backend(),
+            otlp_endpoint: None,
+            service_name: default_service_name_option(),
+        }
+    }
+}
+
+fn default_observability_backend() -> String {
+    "ndjson".to_string()
+}
+
+fn default_service_name_option() -> Option<String> {
+    Some("sage-agent".to_string())
 }
 
 /// The [test] section of grove.toml.
@@ -445,5 +479,56 @@ within_seconds = 120
         let manifest: ProjectManifest = toml::from_str(toml).unwrap();
         assert_eq!(manifest.supervision.max_restarts, 10);
         assert_eq!(manifest.supervision.within_seconds, 120);
+    }
+
+    #[test]
+    fn parse_observability_default() {
+        let toml = r#"
+[project]
+name = "test"
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        assert_eq!(manifest.observability.backend, "ndjson");
+        assert!(manifest.observability.otlp_endpoint.is_none());
+        assert_eq!(
+            manifest.observability.service_name,
+            Some("sage-agent".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_observability_otlp() {
+        let toml = r#"
+[project]
+name = "test"
+
+[observability]
+backend = "otlp"
+otlp_endpoint = "http://localhost:4317"
+service_name = "my-service"
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        assert_eq!(manifest.observability.backend, "otlp");
+        assert_eq!(
+            manifest.observability.otlp_endpoint,
+            Some("http://localhost:4317".to_string())
+        );
+        assert_eq!(
+            manifest.observability.service_name,
+            Some("my-service".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_observability_none() {
+        let toml = r#"
+[project]
+name = "test"
+
+[observability]
+backend = "none"
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        assert_eq!(manifest.observability.backend, "none");
     }
 }

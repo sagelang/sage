@@ -42,6 +42,9 @@ pub enum Type {
     Tuple(Vec<Type>),
     /// Result type: `Result<T, E>`.
     Result(Box<Type>, Box<Type>),
+    /// Persisted type for @persistent beliefs: wraps the inner type.
+    /// Has `.get()` returning T and `.set(T)` returning Unit.
+    Persisted(Box<Type>),
     /// Never type: expression that never returns (e.g., `fail`).
     /// Compatible with any type since it diverges.
     Never,
@@ -190,6 +193,10 @@ impl Type {
             (Type::Result(ok1, err1), Type::Result(ok2, err2)) => {
                 ok1.is_compatible_with(ok2) && err1.is_compatible_with(err2)
             }
+            // Persisted types are compatible if inner types are compatible
+            (Type::Persisted(inner1), Type::Persisted(inner2)) => {
+                inner1.is_compatible_with(inner2)
+            }
             // List types are compatible if element types are compatible
             (Type::List(elem1), Type::List(elem2)) => elem1.is_compatible_with(elem2),
             // Option types are compatible if inner types are compatible
@@ -245,6 +252,7 @@ impl Type {
                 Box::new(ok.substitute(bindings)),
                 Box::new(err.substitute(bindings)),
             ),
+            Type::Persisted(inner) => Type::Persisted(Box::new(inner.substitute(bindings))),
             Type::Fn(params, ret) => Type::Fn(
                 params.iter().map(|p| p.substitute(bindings)).collect(),
                 Box::new(ret.substitute(bindings)),
@@ -278,7 +286,7 @@ impl Type {
             Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit => true,
 
             // Compound types are serializable if their inner types are
-            Type::List(elem) | Type::Option(elem) => elem.is_serializable(),
+            Type::List(elem) | Type::Option(elem) | Type::Persisted(elem) => elem.is_serializable(),
             Type::Map(key, value) | Type::Result(key, value) => {
                 key.is_serializable() && value.is_serializable()
             }
@@ -305,7 +313,9 @@ impl Type {
     pub fn has_type_params(&self) -> bool {
         match self {
             Type::TypeParam(_) => true,
-            Type::List(elem) | Type::Option(elem) | Type::Oracle(elem) => elem.has_type_params(),
+            Type::List(elem) | Type::Option(elem) | Type::Oracle(elem) | Type::Persisted(elem) => {
+                elem.has_type_params()
+            }
             Type::Map(key, value) | Type::Result(key, value) => {
                 key.has_type_params() || value.has_type_params()
             }
@@ -324,7 +334,7 @@ impl Type {
             Type::TypeParam(name) => {
                 params.insert(name.clone());
             }
-            Type::List(elem) | Type::Option(elem) | Type::Oracle(elem) => {
+            Type::List(elem) | Type::Option(elem) | Type::Oracle(elem) | Type::Persisted(elem) => {
                 elem.collect_type_params(params);
             }
             Type::Map(key, value) | Type::Result(key, value) => {
@@ -398,6 +408,7 @@ impl fmt::Display for Type {
                 write!(f, ")")
             }
             Type::Result(ok, err) => write!(f, "Result<{ok}, {err}>"),
+            Type::Persisted(inner) => write!(f, "Persisted<{inner}>"),
             Type::Never => write!(f, "Never"),
             Type::Error => write!(f, "<error>"),
         }

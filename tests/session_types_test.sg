@@ -1,0 +1,71 @@
+// ST-01: Session types - verify parsing and compilation
+
+record Ping {}
+record Pong {}
+
+record Request { data: String }
+record Response { result: String }
+
+// Protocol declarations
+protocol PingPong {
+    Client -> Server: Ping
+    Server -> Client: Pong
+}
+
+protocol RequestResponse {
+    Requester -> Responder: Request
+    Responder -> Requester: Response
+}
+
+// Agent with follows clause
+agent PongServer receives Ping follows PingPong as Server {
+    on start {
+        yield(0);
+    }
+
+    on message(ping: Ping) {
+        reply(Pong {});
+    }
+}
+
+// Agent with follows and reply that accesses message data
+agent RequestWorker receives Request follows RequestResponse as Responder {
+    on start {
+        yield(0);
+    }
+
+    on message(req: Request) {
+        reply(Response { result: "processed: " ++ req.data });
+    }
+}
+
+// ============================================================================
+// Tests - these pass if the file compiles without errors
+// ============================================================================
+
+test "ST-01a: protocol declaration parses" {
+    assert_true(true);
+}
+
+test "ST-01b: multiple protocols can coexist" {
+    assert_true(true);
+}
+
+test "ST-01c: agent follows clause parses" {
+    assert_true(true);
+}
+
+test "ST-01d: reply() in message handler parses" {
+    assert_true(true);
+}
+
+test "ST-01e: reply with data from message parses" {
+    // RequestWorker uses req.data in reply
+    assert_true(true);
+}
+
+test "ST-01f: spawn protocol agent" {
+    let server = summon PongServer {};
+    let worker = summon RequestWorker {};
+    assert_true(true);
+}

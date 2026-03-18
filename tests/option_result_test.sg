@@ -1,0 +1,118 @@
+// Option<T> and Result<T, E> built-in type tests
+// Verifies RFC roadmap prerequisite P-08
+
+// Helper record for testing
+record Container<T> {
+    value: T,
+}
+
+// ============================================================================
+// OPTION TESTS
+// ============================================================================
+
+test "Option Some constructor" {
+    let x: Option<Int> = Option::<Int>::Some(42);
+    assert_true(is_some(x));
+}
+
+test "Option None constructor" {
+    let x: Option<Int> = Option::<Int>::None;
+    assert_true(is_none(x));
+}
+
+test "match on Option Some" {
+    let x: Option<Int> = Option::<Int>::Some(42);
+    let result = match x {
+        Option::Some(n) => n,
+        Option::None => 0,
+    };
+    assert_eq(result, 42);
+}
+
+test "match on Option None" {
+    let x: Option<String> = Option::<String>::None;
+    let result = match x {
+        Option::Some(s) => s,
+        Option::None => "default",
+    };
+    assert_eq(result, "default");
+}
+
+test "Option with generic record" {
+    let x: Option<Container<Int>> = Option::<Container<Int>>::Some(Container { value: 42 });
+    let result = match x {
+        Option::Some(c) => c.value,
+        Option::None => 0,
+    };
+    assert_eq(result, 42);
+}
+
+// ============================================================================
+// RESULT TESTS
+// ============================================================================
+
+test "Result Ok constructor" {
+    let x: Result<Int, String> = Result::<Int, String>::Ok(42);
+    assert_true(true);
+}
+
+test "Result Err constructor" {
+    let x: Result<Int, String> = Result::<Int, String>::Err("something went wrong");
+    assert_true(true);
+}
+
+test "match on Result Ok" {
+    let x: Result<Int, String> = Result::<Int, String>::Ok(42);
+    let result = match x {
+        Result::Ok(n) => n,
+        Result::Err(e) => 0,
+    };
+    assert_eq(result, 42);
+}
+
+test "match on Result Err" {
+    let x: Result<Int, String> = Result::<Int, String>::Err("error");
+    let result = match x {
+        Result::Ok(n) => "success",
+        Result::Err(e) => e,
+    };
+    assert_eq(result, "error");
+}
+
+test "Result with nested types" {
+    let x: Result<List<Int>, String> = Result::<List<Int>, String>::Ok([1, 2, 3]);
+    let result = match x {
+        Result::Ok(list) => len(list),
+        Result::Err(e) => 0,
+    };
+    assert_eq(result, 3);
+}
+
+// ============================================================================
+// OPTION STDLIB FUNCTIONS (already exist)
+// ============================================================================
+
+test "is_some returns true for Some" {
+    let x = first([42]);  // Returns Option<Int>
+    assert_true(is_some(x));
+}
+
+test "is_none returns true for None" {
+    let x = get([1], 100);  // Out of bounds returns None
+    assert_true(is_none(x));
+}
+
+test "unwrap extracts Some value" {
+    let x = first([42]);
+    assert_eq(unwrap(x), 42);
+}
+
+test "unwrap_or returns value for Some" {
+    let x = first([42]);
+    assert_eq(unwrap_or(x, 0), 42);
+}
+
+test "unwrap_or returns default for None" {
+    let x = get([1], 100);
+    assert_eq(unwrap_or(x, 99), 99);
+}

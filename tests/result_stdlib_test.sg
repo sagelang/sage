@@ -1,0 +1,123 @@
+// Result<T, E> stdlib helper function tests
+// Verifies RFC-0010 Result utilities
+
+// ============================================================================
+// IS_OK / IS_ERR
+// ============================================================================
+
+test "is_ok returns true for Ok" {
+    let r: Result<Int, String> = Result::<Int, String>::Ok(42);
+    assert_true(is_ok(r));
+    assert_false(is_err(r));
+}
+
+test "is_err returns true for Err" {
+    let r: Result<Int, String> = Result::<Int, String>::Err("error");
+    assert_true(is_err(r));
+    assert_false(is_ok(r));
+}
+
+// ============================================================================
+// UNWRAP_RESULT / UNWRAP_ERR
+// ============================================================================
+
+test "unwrap_result extracts Ok value" {
+    let r: Result<Int, String> = Result::<Int, String>::Ok(42);
+    assert_eq(unwrap_result(r), 42);
+}
+
+test "unwrap_err extracts Err value" {
+    let r: Result<Int, String> = Result::<Int, String>::Err("oops");
+    assert_eq(unwrap_err(r), "oops");
+}
+
+// ============================================================================
+// UNWRAP_OR_RESULT
+// ============================================================================
+
+test "unwrap_or_result returns Ok value when Ok" {
+    let r: Result<Int, String> = Result::<Int, String>::Ok(42);
+    assert_eq(unwrap_or_result(r, 0), 42);
+}
+
+test "unwrap_or_result returns default when Err" {
+    let r: Result<Int, String> = Result::<Int, String>::Err("error");
+    assert_eq(unwrap_or_result(r, 99), 99);
+}
+
+// ============================================================================
+// MAP_RESULT
+// ============================================================================
+
+test "map_result transforms Ok value" {
+    let r: Result<Int, String> = Result::<Int, String>::Ok(21);
+    let doubled = map_result(r, |x: Int| x * 2);
+    assert_true(is_ok(doubled));
+    assert_eq(unwrap_result(doubled), 42);
+}
+
+test "map_result preserves Err" {
+    let r: Result<Int, String> = Result::<Int, String>::Err("error");
+    let mapped = map_result(r, |x: Int| x * 2);
+    assert_true(is_err(mapped));
+}
+
+// ============================================================================
+// MAP_ERR
+// ============================================================================
+
+test "map_err transforms Err value" {
+    let r: Result<Int, String> = Result::<Int, String>::Err("error");
+    let mapped = map_err(r, |e: String| e ++ "!");
+    assert_true(is_err(mapped));
+    assert_eq(unwrap_err(mapped), "error!");
+}
+
+test "map_err preserves Ok" {
+    let r: Result<Int, String> = Result::<Int, String>::Ok(42);
+    let mapped = map_err(r, |e: String| e ++ "!");
+    assert_true(is_ok(mapped));
+    assert_eq(unwrap_result(mapped), 42);
+}
+
+// ============================================================================
+// OK / ERR_VALUE (convert to Option)
+// ============================================================================
+
+test "ok converts Ok to Some" {
+    let r: Result<Int, String> = Result::<Int, String>::Ok(42);
+    let opt = ok(r);
+    assert_true(is_some(opt));
+    assert_eq(unwrap(opt), 42);
+}
+
+test "ok converts Err to None" {
+    let r: Result<Int, String> = Result::<Int, String>::Err("error");
+    let opt = ok(r);
+    assert_true(is_none(opt));
+}
+
+test "err_value converts Err to Some" {
+    let r: Result<Int, String> = Result::<Int, String>::Err("error");
+    let opt = err_value(r);
+    assert_true(is_some(opt));
+    assert_eq(unwrap(opt), "error");
+}
+
+test "err_value converts Ok to None" {
+    let r: Result<Int, String> = Result::<Int, String>::Ok(42);
+    let opt = err_value(r);
+    assert_true(is_none(opt));
+}
+
+// ============================================================================
+// COMBINED USAGE
+// ============================================================================
+
+test "chained Result operations" {
+    let r: Result<Int, String> = Result::<Int, String>::Ok(10);
+    let doubled = map_result(r, |x: Int| x * 2);
+    let as_option = ok(doubled);
+    let value = unwrap_or(as_option, 0);
+    assert_eq(value, 20);
+}

@@ -466,4 +466,116 @@ mod tests {
         assert!(result.is_err());
         assert!(counter.load(Ordering::SeqCst) <= 4);
     }
+
+    #[tokio::test]
+    async fn test_rest_for_one_restarts_downstream() {
+        // RestForOne: when child fails, it and all children added after it restart.
+        let counter1 = Arc::new(AtomicU32::new(0));
+        let counter2 = Arc::new(AtomicU32::new(0));
+        let counter3 = Arc::new(AtomicU32::new(0));
+        let counter1_clone = counter1.clone();
+        let counter2_clone = counter2.clone();
+        let counter3_clone = counter3.clone();
+
+        let mut supervisor = Supervisor::new(Strategy::RestForOne, RestartConfig::default());
+
+        // Child 1: Always succeeds
+        supervisor.add_child("Child1", RestartPolicy::Temporary, move || {
+            let counter = counter1_clone.clone();
+            async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                // Wait a bit so it doesn't exit before child 2 fails
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                Ok(())
+            }
+        });
+
+        // Child 2: Fails twice then succeeds (this triggers RestForOne)
+        supervisor.add_child("Child2", RestartPolicy::Transient, move || {
+            let counter = counter2_clone.clone();
+            async move {
+                let count = counter.fetch_add(1, Ordering::SeqCst);
+                if count < 2 {
+                    Err(SageError::Agent("Simulated failure".to_string()))
+                } else {
+                    Ok(())
+                }
+            }
+        });
+
+        // Child 3: Succeeds but should be restarted when Child2 fails
+        supervisor.add_child("Child3", RestartPolicy::Temporary, move || {
+            let counter = counter3_clone.clone();
+            async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                // Wait a bit so it doesn't exit before child 2 fails
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                Ok(())
+            }
+        });
+
+        let result = supervisor.run().await;
+        assert!(result.is_ok(), "supervisor failed: {:?}", result);
+
+        // Child1 should only run once (it's before the failing child)
+        assert_eq!(counter1.load(Ordering::SeqCst), 1, "Child1 should run only once");
+
+        // Child2 runs 3 times (2 failures + 1 success)
+        assert_eq!(counter2.load(Ordering::SeqCst), 3, "Child2 should run 3 times");
+
+        // Child3 should be restarted when Child2 fails (2 restarts + initial)
+        assert!(
+            counter3.load(Ordering::SeqCst) >= 2,
+            "Child3 should be restarted at least once with RestForOne, got {}",
+            counter3.load(Ordering::SeqCst)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_one_for_all_restarts_all() {
+        // OneForAll: when any child fails, all children restart.
+        let counter1 = Arc::new(AtomicU32::new(0));
+        let counter2 = Arc::new(AtomicU32::new(0));
+        let counter1_clone = counter1.clone();
+        let counter2_clone = counter2.clone();
+
+        let mut supervisor = Supervisor::new(Strategy::OneForAll, RestartConfig::default());
+
+        // Child 1: Always succeeds but runs longer
+        supervisor.add_child("Child1", RestartPolicy::Temporary, move || {
+            let counter = counter1_clone.clone();
+            async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                Ok(())
+            }
+        });
+
+        // Child 2: Fails twice then succeeds (this triggers OneForAll)
+        supervisor.add_child("Child2", RestartPolicy::Transient, move || {
+            let counter = counter2_clone.clone();
+            async move {
+                let count = counter.fetch_add(1, Ordering::SeqCst);
+                if count < 2 {
+                    Err(SageError::Agent("Simulated failure".to_string()))
+                } else {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    Ok(())
+                }
+            }
+        });
+
+        let result = supervisor.run().await;
+        assert!(result.is_ok(), "supervisor failed: {:?}", result);
+
+        // Child2 runs 3 times (2 failures + 1 success)
+        assert_eq!(counter2.load(Ordering::SeqCst), 3, "Child2 should run 3 times");
+
+        // Child1 should be restarted when Child2 fails (OneForAll restarts all)
+        assert!(
+            counter1.load(Ordering::SeqCst) >= 2,
+            "Child1 should be restarted at least once with OneForAll, got {}",
+            counter1.load(Ordering::SeqCst)
+        );
+    }
 }
