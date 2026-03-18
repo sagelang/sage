@@ -4,12 +4,13 @@
 //! Requires the `database` feature to be enabled.
 
 use crate::error::{SageError, SageResult};
+use crate::mock::{try_get_mock, MockResponse};
 
 #[cfg(feature = "database")]
 use sqlx::{any::AnyRow, AnyPool, Column, Row};
 
 /// A row returned from a database query.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DbRow {
     /// Column names.
     pub columns: Vec<String>,
@@ -80,6 +81,11 @@ impl DatabaseClient {
     /// A list of rows, each containing column names and values.
     #[cfg(feature = "database")]
     pub async fn query(&self, sql: String) -> SageResult<Vec<DbRow>> {
+        // Check for mock response first
+        if let Some(mock_response) = try_get_mock("Database", "query") {
+            return Self::apply_mock_vec(mock_response);
+        }
+
         let rows: Vec<AnyRow> = sqlx::query(&sql)
             .fetch_all(&self.pool)
             .await
@@ -121,6 +127,11 @@ impl DatabaseClient {
     /// Execute a SQL query and return the results.
     #[cfg(not(feature = "database"))]
     pub async fn query(&self, _sql: String) -> SageResult<Vec<DbRow>> {
+        // Check for mock response first (allows testing without database feature)
+        if let Some(mock_response) = try_get_mock("Database", "query") {
+            return Self::apply_mock_vec(mock_response);
+        }
+
         Err(SageError::Tool(
             "Database support not enabled. Compile with the 'database' feature.".to_string(),
         ))
@@ -135,6 +146,11 @@ impl DatabaseClient {
     /// Number of rows affected.
     #[cfg(feature = "database")]
     pub async fn execute(&self, sql: String) -> SageResult<i64> {
+        // Check for mock response first
+        if let Some(mock_response) = try_get_mock("Database", "execute") {
+            return Self::apply_mock_i64(mock_response);
+        }
+
         let result = sqlx::query(&sql)
             .execute(&self.pool)
             .await
@@ -146,9 +162,32 @@ impl DatabaseClient {
     /// Execute a SQL statement and return affected row count.
     #[cfg(not(feature = "database"))]
     pub async fn execute(&self, _sql: String) -> SageResult<i64> {
+        // Check for mock response first (allows testing without database feature)
+        if let Some(mock_response) = try_get_mock("Database", "execute") {
+            return Self::apply_mock_i64(mock_response);
+        }
+
         Err(SageError::Tool(
             "Database support not enabled. Compile with the 'database' feature.".to_string(),
         ))
+    }
+
+    /// Apply a mock response for Vec<DbRow>.
+    fn apply_mock_vec(mock_response: MockResponse) -> SageResult<Vec<DbRow>> {
+        match mock_response {
+            MockResponse::Value(v) => serde_json::from_value(v)
+                .map_err(|e| SageError::Tool(format!("mock deserialize: {e}"))),
+            MockResponse::Fail(msg) => Err(SageError::Tool(msg)),
+        }
+    }
+
+    /// Apply a mock response for i64.
+    fn apply_mock_i64(mock_response: MockResponse) -> SageResult<i64> {
+        match mock_response {
+            MockResponse::Value(v) => serde_json::from_value(v)
+                .map_err(|e| SageError::Tool(format!("mock deserialize: {e}"))),
+            MockResponse::Fail(msg) => Err(SageError::Tool(msg)),
+        }
     }
 }
 

@@ -3,9 +3,9 @@
 use crate::emit::Emitter;
 use sage_loader::{ModuleTree, SupervisionConfig};
 use sage_parser::{
-    AgentDecl, BinOp, Block, ConstDecl, EnumDecl, EventKind, Expr, FnDecl, Literal, MockValue,
-    Program, RecordDecl, RestartPolicy, Stmt, StringPart, SupervisionStrategy, SupervisorDecl,
-    TestDecl, TypeExpr, UnaryOp,
+    AgentDecl, BinOp, Block, ConstDecl, EffectHandlerDecl, EnumDecl, EventKind, Expr, FnDecl,
+    Literal, MockValue, Program, ProtocolDecl, RecordDecl, RestartPolicy, Stmt, StringPart,
+    SupervisionStrategy, SupervisorDecl, TestDecl, TypeExpr, UnaryOp,
 };
 
 /// How to specify the sage-runtime dependency in generated Cargo.toml.
@@ -324,6 +324,18 @@ impl Generator {
             self.emit.blank_line();
         }
 
+        // Phase 3: Protocols (generate state machine modules)
+        for protocol in &program.protocols {
+            self.generate_protocol(protocol);
+            self.emit.blank_line();
+        }
+
+        // Phase 3: Effect handlers (generate InferConfig structs)
+        for handler in &program.effect_handlers {
+            self.generate_effect_handler(handler);
+            self.emit.blank_line();
+        }
+
         // Agents
         for agent in &program.agents {
             self.generate_agent(agent);
@@ -400,6 +412,18 @@ impl Generator {
                     self.emit.blank_line();
                 }
 
+                // Phase 3: Protocols
+                for protocol in &module.program.protocols {
+                    self.generate_protocol(protocol);
+                    self.emit.blank_line();
+                }
+
+                // Phase 3: Effect handlers
+                for handler in &module.program.effect_handlers {
+                    self.generate_effect_handler(handler);
+                    self.emit.blank_line();
+                }
+
                 for agent in &module.program.agents {
                     self.generate_agent(agent);
                     self.emit.blank_line();
@@ -433,6 +457,18 @@ impl Generator {
 
             for func in &root_module.program.functions {
                 self.generate_function(func);
+                self.emit.blank_line();
+            }
+
+            // Phase 3: Protocols
+            for protocol in &root_module.program.protocols {
+                self.generate_protocol(protocol);
+                self.emit.blank_line();
+            }
+
+            // Phase 3: Effect handlers
+            for handler in &root_module.program.effect_handlers {
+                self.generate_effect_handler(handler);
                 self.emit.blank_line();
             }
 
@@ -671,10 +707,17 @@ serde_json = "1"
                 self.emit.writeln(");");
             }
             self.emit.blank_line();
-        }
 
-        // Generate test body (excluding mock statements)
-        self.generate_test_block(&test.body);
+            // Wrap test body in with_mock_tools context
+            self.emit.writeln("with_mock_tools(_mock_tools, async {");
+            self.emit.indent();
+            self.generate_test_block(&test.body);
+            self.emit.dedent();
+            self.emit.writeln("}).await;");
+        } else {
+            // No tool mocks, generate test body directly
+            self.generate_test_block(&test.body);
+        }
 
         self.emit.dedent();
         self.emit.writeln("}");
@@ -1726,6 +1769,421 @@ serde_json = "1"
 
         self.emit.dedent();
         self.emit.writeln("}");
+    }
+
+    // =========================================================================
+    // Phase 3: Protocol generation (Session Types)
+    // =========================================================================
+
+    /// Generate a protocol state machine module.
+    ///
+    /// For a protocol like:
+    /// ```sage
+    /// protocol PingPong {
+    ///     Pinger -> Ponger: Ping
+    ///     Ponger -> Pinger: Pong
+    /// }
+    /// ```
+    ///
+    /// We generate a module with:
+    /// - An enum for the protocol states
+    /// - An implementation of `ProtocolStateMachine` trait
+    fn generate_protocol(&mut self, protocol: &ProtocolDecl) {
+        let name = &protocol.name.name;
+        let mod_name = Self::to_snake_case(name);
+
+        // Comment
+        self.emit.write("// Protocol: ");
+        self.emit.writeln(name);
+
+        // Open module
+        if protocol.is_pub {
+            self.emit.write("pub ");
+        }
+        self.emit.write("mod protocol_");
+        self.emit.write(&mod_name);
+        self.emit.writeln(" {");
+        self.emit.indent();
+
+        self.emit.writeln("use super::*;");
+        self.emit.blank_line();
+
+        // Generate state enum
+        // States are: Initial, then one state after each step, plus Done
+        self.emit.writeln("#[derive(Debug, Clone, Copy, PartialEq, Eq)]");
+        self.emit.writeln("pub enum State {");
+        self.emit.indent();
+        self.emit.writeln("Initial,");
+        for (i, step) in protocol.steps.iter().enumerate() {
+            self.emit.write("After");
+            self.emit.write(&Self::capitalize(&step.sender.name));
+            self.emit.write("Sends");
+            self.generate_type_name_for_state(&step.message_type);
+            self.emit.write("_");
+            self.emit.write(&i.to_string());
+            self.emit.writeln(",");
+        }
+        self.emit.writeln("Done,");
+        self.emit.dedent();
+        self.emit.writeln("}");
+        self.emit.blank_line();
+
+        // Generate Default impl
+        self.emit.writeln("impl Default for State {");
+        self.emit.indent();
+        self.emit.writeln("fn default() -> Self {");
+        self.emit.indent();
+        self.emit.writeln("Self::Initial");
+        self.emit.dedent();
+        self.emit.writeln("}");
+        self.emit.dedent();
+        self.emit.writeln("}");
+        self.emit.blank_line();
+
+        // Generate ProtocolStateMachine impl
+        self.emit.writeln("impl ProtocolStateMachine for State {");
+        self.emit.indent();
+
+        // state_name()
+        self.emit.writeln("fn state_name(&self) -> &str {");
+        self.emit.indent();
+        self.emit.writeln("match self {");
+        self.emit.indent();
+        self.emit.writeln("State::Initial => \"Initial\",");
+        for (i, step) in protocol.steps.iter().enumerate() {
+            self.emit.write("State::After");
+            self.emit.write(&Self::capitalize(&step.sender.name));
+            self.emit.write("Sends");
+            self.generate_type_name_for_state(&step.message_type);
+            self.emit.write("_");
+            self.emit.write(&i.to_string());
+            self.emit.write(" => \"After");
+            self.emit.write(&Self::capitalize(&step.sender.name));
+            self.emit.write("Sends");
+            self.generate_type_name_for_state(&step.message_type);
+            self.emit.writeln("\",");
+        }
+        self.emit.writeln("State::Done => \"Done\",");
+        self.emit.dedent();
+        self.emit.writeln("}");
+        self.emit.dedent();
+        self.emit.writeln("}");
+        self.emit.blank_line();
+
+        // can_send()
+        self.emit.writeln("fn can_send(&self, msg_type: &str, from_role: &str) -> bool {");
+        self.emit.indent();
+        self.emit.writeln("match (self, msg_type, from_role) {");
+        self.emit.indent();
+        for (i, step) in protocol.steps.iter().enumerate() {
+            let state_name = if i == 0 {
+                "State::Initial".to_string()
+            } else {
+                let prev = &protocol.steps[i - 1];
+                format!(
+                    "State::After{}Sends{}_{}",
+                    Self::capitalize(&prev.sender.name),
+                    Self::type_name_for_state(&prev.message_type),
+                    i - 1
+                )
+            };
+            self.emit.write("(");
+            self.emit.write(&state_name);
+            self.emit.write(", \"");
+            self.generate_type_name_for_state(&step.message_type);
+            self.emit.write("\", \"");
+            self.emit.write(&step.sender.name);
+            self.emit.writeln("\") => true,");
+        }
+        self.emit.writeln("_ => false,");
+        self.emit.dedent();
+        self.emit.writeln("}");
+        self.emit.dedent();
+        self.emit.writeln("}");
+        self.emit.blank_line();
+
+        // can_receive()
+        self.emit.writeln("fn can_receive(&self, msg_type: &str, to_role: &str) -> bool {");
+        self.emit.indent();
+        self.emit.writeln("match (self, msg_type, to_role) {");
+        self.emit.indent();
+        for (i, step) in protocol.steps.iter().enumerate() {
+            let state_name = if i == 0 {
+                "State::Initial".to_string()
+            } else {
+                let prev = &protocol.steps[i - 1];
+                format!(
+                    "State::After{}Sends{}_{}",
+                    Self::capitalize(&prev.sender.name),
+                    Self::type_name_for_state(&prev.message_type),
+                    i - 1
+                )
+            };
+            self.emit.write("(");
+            self.emit.write(&state_name);
+            self.emit.write(", \"");
+            self.generate_type_name_for_state(&step.message_type);
+            self.emit.write("\", \"");
+            self.emit.write(&step.receiver.name);
+            self.emit.writeln("\") => true,");
+        }
+        self.emit.writeln("_ => false,");
+        self.emit.dedent();
+        self.emit.writeln("}");
+        self.emit.dedent();
+        self.emit.writeln("}");
+        self.emit.blank_line();
+
+        // transition()
+        self.emit.writeln("fn transition(&mut self, msg_type: &str) -> Result<(), ProtocolViolation> {");
+        self.emit.indent();
+        self.emit.writeln("let next = match (&self, msg_type) {");
+        self.emit.indent();
+        for (i, step) in protocol.steps.iter().enumerate() {
+            let state_name = if i == 0 {
+                "State::Initial".to_string()
+            } else {
+                let prev = &protocol.steps[i - 1];
+                format!(
+                    "State::After{}Sends{}_{}",
+                    Self::capitalize(&prev.sender.name),
+                    Self::type_name_for_state(&prev.message_type),
+                    i - 1
+                )
+            };
+            let next_state = if i + 1 >= protocol.steps.len() {
+                "State::Done".to_string()
+            } else {
+                format!(
+                    "State::After{}Sends{}_{}",
+                    Self::capitalize(&step.sender.name),
+                    Self::type_name_for_state(&step.message_type),
+                    i
+                )
+            };
+            self.emit.write("(");
+            self.emit.write(&state_name);
+            self.emit.write(", \"");
+            self.generate_type_name_for_state(&step.message_type);
+            self.emit.write("\") => ");
+            self.emit.write(&next_state);
+            self.emit.writeln(",");
+        }
+        self.emit.writeln("_ => return Err(ProtocolViolation::UnexpectedMessage {");
+        self.emit.indent();
+        self.emit.write("protocol: \"");
+        self.emit.write(name);
+        self.emit.writeln("\".to_string(),");
+        self.emit.writeln("expected: \"unknown\".to_string(),");
+        self.emit.writeln("received: msg_type.to_string(),");
+        self.emit.writeln("state: self.state_name().to_string(),");
+        self.emit.dedent();
+        self.emit.writeln("}),");
+        self.emit.dedent();
+        self.emit.writeln("};");
+        self.emit.writeln("*self = next;");
+        self.emit.writeln("Ok(())");
+        self.emit.dedent();
+        self.emit.writeln("}");
+        self.emit.blank_line();
+
+        // is_terminal()
+        self.emit.writeln("fn is_terminal(&self) -> bool {");
+        self.emit.indent();
+        self.emit.writeln("matches!(self, State::Done)");
+        self.emit.dedent();
+        self.emit.writeln("}");
+        self.emit.blank_line();
+
+        // protocol_name()
+        self.emit.writeln("fn protocol_name(&self) -> &str {");
+        self.emit.indent();
+        self.emit.write("\"");
+        self.emit.write(name);
+        self.emit.writeln("\"");
+        self.emit.dedent();
+        self.emit.writeln("}");
+        self.emit.blank_line();
+
+        // clone_box()
+        self.emit.writeln("fn clone_box(&self) -> Box<dyn ProtocolStateMachine> {");
+        self.emit.indent();
+        self.emit.writeln("Box::new(*self)");
+        self.emit.dedent();
+        self.emit.writeln("}");
+
+        self.emit.dedent();
+        self.emit.writeln("}"); // impl ProtocolStateMachine
+
+        // Close module
+        self.emit.dedent();
+        self.emit.writeln("}"); // mod
+    }
+
+    /// Convert a name to snake_case.
+    fn to_snake_case(name: &str) -> String {
+        let mut result = String::new();
+        for (i, c) in name.chars().enumerate() {
+            if c.is_uppercase() {
+                if i > 0 {
+                    result.push('_');
+                }
+                result.push(c.to_ascii_lowercase());
+            } else {
+                result.push(c);
+            }
+        }
+        result
+    }
+
+    /// Capitalize the first letter of a name.
+    fn capitalize(name: &str) -> String {
+        let mut chars = name.chars();
+        match chars.next() {
+            None => String::new(),
+            Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        }
+    }
+
+    /// Generate a type name suitable for state enum variant names.
+    fn generate_type_name_for_state(&mut self, ty: &TypeExpr) {
+        match ty {
+            TypeExpr::Int => self.emit.write("Int"),
+            TypeExpr::Float => self.emit.write("Float"),
+            TypeExpr::String => self.emit.write("String"),
+            TypeExpr::Bool => self.emit.write("Bool"),
+            TypeExpr::Unit => self.emit.write("Unit"),
+            TypeExpr::Named(ident, _) => self.emit.write(&ident.name),
+            TypeExpr::List(_) => self.emit.write("List"),
+            TypeExpr::Map(_, _) => self.emit.write("Map"),
+            TypeExpr::Option(_) => self.emit.write("Option"),
+            TypeExpr::Result(_, _) => self.emit.write("Result"),
+            TypeExpr::Oracle(_) => self.emit.write("Oracle"),
+            TypeExpr::Agent(_) => self.emit.write("Agent"),
+            TypeExpr::Tuple(_) => self.emit.write("Tuple"),
+            TypeExpr::Fn(_, _) => self.emit.write("Fn"),
+            TypeExpr::Error => self.emit.write("Error"),
+        }
+    }
+
+    /// Get the type name as a string (for state generation).
+    fn type_name_for_state(ty: &TypeExpr) -> String {
+        match ty {
+            TypeExpr::Int => "Int".to_string(),
+            TypeExpr::Float => "Float".to_string(),
+            TypeExpr::String => "String".to_string(),
+            TypeExpr::Bool => "Bool".to_string(),
+            TypeExpr::Unit => "Unit".to_string(),
+            TypeExpr::Named(ident, _) => ident.name.clone(),
+            TypeExpr::List(_) => "List".to_string(),
+            TypeExpr::Map(_, _) => "Map".to_string(),
+            TypeExpr::Option(_) => "Option".to_string(),
+            TypeExpr::Result(_, _) => "Result".to_string(),
+            TypeExpr::Oracle(_) => "Oracle".to_string(),
+            TypeExpr::Agent(_) => "Agent".to_string(),
+            TypeExpr::Tuple(_) => "Tuple".to_string(),
+            TypeExpr::Fn(_, _) => "Fn".to_string(),
+            TypeExpr::Error => "Error".to_string(),
+        }
+    }
+
+    // =========================================================================
+    // Phase 3: Effect handler generation (Algebraic Effects)
+    // =========================================================================
+
+    /// Generate an effect handler struct with configuration.
+    ///
+    /// For a handler like:
+    /// ```sage
+    /// handler DefaultLLM handles Infer {
+    ///     model: "gpt-4o"
+    ///     temperature: 0.7
+    /// }
+    /// ```
+    ///
+    /// We generate a struct with the configuration values.
+    fn generate_effect_handler(&mut self, handler: &EffectHandlerDecl) {
+        let name = &handler.name.name;
+        let effect = &handler.effect.name;
+
+        // Comment
+        self.emit.write("// Effect handler: ");
+        self.emit.write(name);
+        self.emit.write(" handles ");
+        self.emit.writeln(effect);
+
+        // For Infer effect, generate an InferConfig struct
+        if effect == "Infer" {
+            // Generate a struct with the config
+            if handler.is_pub {
+                self.emit.write("pub ");
+            }
+            self.emit.write("mod handler_");
+            self.emit.write(&Self::to_snake_case(name));
+            self.emit.writeln(" {");
+            self.emit.indent();
+
+            self.emit.writeln("#[derive(Debug, Clone)]");
+            self.emit.writeln("pub struct Config {");
+            self.emit.indent();
+
+            // Generate fields for each config entry
+            for config in &handler.config {
+                self.emit.write("pub ");
+                self.emit.write(&config.key.name);
+                self.emit.write(": ");
+                // Infer type from literal
+                match &config.value {
+                    Literal::Int(_) => self.emit.write("i64"),
+                    Literal::Float(_) => self.emit.write("f64"),
+                    Literal::String(_) => self.emit.write("&'static str"),
+                    Literal::Bool(_) => self.emit.write("bool"),
+                }
+                self.emit.writeln(",");
+            }
+
+            self.emit.dedent();
+            self.emit.writeln("}");
+            self.emit.blank_line();
+
+            // Generate a const instance with the values
+            self.emit.write("pub const CONFIG: Config = Config ");
+            self.emit.writeln("{");
+            self.emit.indent();
+
+            for config in &handler.config {
+                self.emit.write(&config.key.name);
+                self.emit.write(": ");
+                match &config.value {
+                    Literal::Int(n) => self.emit.write(&n.to_string()),
+                    Literal::Float(f) => {
+                        let s = f.to_string();
+                        self.emit.write(&s);
+                        if !s.contains('.') {
+                            self.emit.write(".0");
+                        }
+                    }
+                    Literal::String(s) => {
+                        self.emit.write("\"");
+                        self.emit.write(s);
+                        self.emit.write("\"");
+                    }
+                    Literal::Bool(b) => self.emit.write(&b.to_string()),
+                }
+                self.emit.writeln(",");
+            }
+
+            self.emit.dedent();
+            self.emit.writeln("};");
+
+            self.emit.dedent();
+            self.emit.writeln("}");
+        } else {
+            // For other effects, generate a placeholder
+            self.emit.write("// TODO: Handler for effect '");
+            self.emit.write(effect);
+            self.emit.writeln("' not yet implemented");
+        }
     }
 
     fn generate_block(&mut self, block: &Block) {
@@ -3080,6 +3538,15 @@ serde_json = "1"
                 }
                 self.emit.write(").await");
             }
+
+            // Phase 3: Reply expression for session types
+            Expr::Reply { message, .. } => {
+                // For now, generate a simple send-like call
+                // Full session-aware reply will be implemented in codegen Phase 3
+                self.emit.write("ctx.reply(");
+                self.generate_expr(message);
+                self.emit.write(").await?");
+            }
         }
     }
 
@@ -4180,5 +4647,104 @@ run Main;
             !project.cargo_toml.contains("persistence-"),
             "Cargo.toml should NOT include any persistence feature for memory backend"
         );
+    }
+
+    // =========================================================================
+    // Phase 3: Session Types & Algebraic Effects codegen tests
+    // =========================================================================
+
+    #[test]
+    fn generate_protocol_state_machine() {
+        let source = r#"
+            protocol PingPong {
+                Pinger -> Ponger: Ping
+                Ponger -> Pinger: Pong
+            }
+
+            record Ping {}
+            record Pong {}
+
+            agent Main {
+                on start { yield(0); }
+            }
+            run Main;
+        "#;
+
+        let output = generate_source(source);
+
+        // Check module is generated
+        assert!(output.contains("mod protocol_ping_pong"));
+
+        // Check state enum
+        assert!(output.contains("pub enum State"));
+        assert!(output.contains("Initial"));
+        assert!(output.contains("Done"));
+
+        // Check ProtocolStateMachine impl
+        assert!(output.contains("impl ProtocolStateMachine for State"));
+        assert!(output.contains("fn state_name(&self)"));
+        assert!(output.contains("fn can_send(&self, msg_type: &str, from_role: &str)"));
+        assert!(output.contains("fn can_receive(&self, msg_type: &str, to_role: &str)"));
+        assert!(output.contains("fn transition(&mut self, msg_type: &str)"));
+        assert!(output.contains("fn is_terminal(&self)"));
+        assert!(output.contains("fn protocol_name(&self)"));
+    }
+
+    #[test]
+    fn generate_effect_handler_config() {
+        let source = r#"
+            handler FastLlm handles Infer {
+                model: "gpt-4o"
+                temperature: 0.7
+                max_tokens: 1024
+            }
+
+            agent Main {
+                on start { yield(0); }
+            }
+            run Main;
+        "#;
+
+        let output = generate_source(source);
+
+        // Check module is generated (FastLlm -> fast_llm)
+        assert!(output.contains("mod handler_fast_llm"), "Should contain handler module: {}", output);
+
+        // Check Config struct
+        assert!(output.contains("pub struct Config"));
+        assert!(output.contains("pub model: &'static str"));
+        assert!(output.contains("pub temperature: f64"));
+        assert!(output.contains("pub max_tokens: i64"));
+
+        // Check CONFIG constant
+        assert!(output.contains("pub const CONFIG: Config"));
+        assert!(output.contains("model: \"gpt-4o\""));
+        assert!(output.contains("temperature: 0.7"));
+        assert!(output.contains("max_tokens: 1024"));
+    }
+
+    #[test]
+    fn generate_reply_expression_parsing() {
+        // Note: The current codegen doesn't generate on_message handlers,
+        // only on_start. This test verifies the reply expression parses
+        // correctly. Full message handler codegen is a future enhancement.
+        let source = r#"
+            record Request {}
+            record Response { code: Int }
+
+            agent Worker receives Request {
+                on start { yield(0); }
+                on message(msg: Request) {
+                    reply(Response { code: 200 });
+                }
+            }
+            run Worker;
+        "#;
+
+        // Just verify it compiles and generates something
+        let output = generate_source(source);
+        assert!(output.contains("struct Worker"));
+        assert!(output.contains("struct Request"));
+        assert!(output.contains("struct Response"));
     }
 }

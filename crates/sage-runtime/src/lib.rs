@@ -12,6 +12,7 @@
 //! - Error handling
 //! - v2.0: Persistence for @persistent agent beliefs
 //! - v2.0: Supervision trees for agent lifecycle management
+//! - Phase 3: Session types for protocol verification
 
 #![forbid(unsafe_code)]
 
@@ -20,27 +21,36 @@ mod error;
 mod llm;
 pub mod mock;
 pub mod persistence;
+pub mod session;
 pub mod stdlib;
 pub mod supervisor;
 pub mod tools;
 pub mod tracing;
 
-pub use agent::{spawn, AgentContext, AgentHandle};
+pub use agent::{spawn, AgentContext, AgentHandle, Message};
 pub use error::{ErrorKind, SageError, SageResult};
 pub use llm::LlmClient;
-pub use mock::{MockLlmClient, MockQueue, MockResponse, MockToolRegistry};
+pub use mock::{try_get_mock, with_mock_tools, MockLlmClient, MockQueue, MockResponse, MockToolRegistry};
 pub use persistence::{CheckpointStore, Persisted};
+pub use session::{
+    ProtocolStateMachine, ProtocolViolation, SenderHandle, SessionId, SessionRegistry,
+    SessionState, SharedSessionRegistry,
+};
 pub use supervisor::{RestartConfig, RestartPolicy, Strategy, Supervisor};
 pub use tools::{DatabaseClient, DbRow, FsClient, HttpClient, HttpResponse, ShellClient, ShellResult};
 pub use tracing as trace;
 
 /// Prelude for generated code.
 pub mod prelude {
-    pub use crate::agent::{spawn, AgentContext, AgentHandle};
+    pub use crate::agent::{spawn, AgentContext, AgentHandle, Message};
     pub use crate::error::{ErrorKind, SageError, SageResult};
     pub use crate::llm::LlmClient;
-    pub use crate::mock::{MockLlmClient, MockQueue, MockResponse, MockToolRegistry};
+    pub use crate::mock::{try_get_mock, with_mock_tools, MockLlmClient, MockQueue, MockResponse, MockToolRegistry};
     pub use crate::persistence::{CheckpointStore, Persisted};
+    pub use crate::session::{
+        ProtocolStateMachine, ProtocolViolation, SenderHandle, SessionId, SessionRegistry,
+        SessionState, SharedSessionRegistry,
+    };
     pub use crate::supervisor::{RestartConfig, RestartPolicy, Strategy, Supervisor};
     pub use crate::tools::{DatabaseClient, DbRow, FsClient, HttpClient, HttpResponse, ShellClient, ShellResult};
     pub use crate::tracing as trace;

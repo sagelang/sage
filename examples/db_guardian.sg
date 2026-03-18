@@ -1,0 +1,137 @@
+// Database Guardian Example
+// Demonstrates a database monitoring daemon with persistent state.
+
+record QueryStats {
+    total_queries: Int,
+    slow_queries: Int,
+    failed_queries: Int,
+}
+
+// Query Monitor agent that tracks database performance
+agent QueryMonitor {
+    @persistent check_count: Int
+    @persistent last_check: String
+    @persistent slow_query_threshold_ms: Int
+    @persistent alert_count: Int
+
+    on waking {
+        trace("QueryMonitor resuming, " ++ int_to_str(self.check_count) ++ " previous checks");
+        trace("Alert count: " ++ int_to_str(self.alert_count));
+    }
+
+    on start {
+        // Perform monitoring cycle
+        let new_count = self.check_count + 1;
+
+        trace("Monitoring check #" ++ int_to_str(new_count));
+        trace("Slow query threshold: " ++ int_to_str(self.slow_query_threshold_ms) ++ "ms");
+
+        // In real use, would query database metrics
+        // and potentially raise alerts
+        yield(new_count);
+    }
+
+    on resting {
+        trace("QueryMonitor pausing, state preserved");
+    }
+
+    on error(e) {
+        let new_alert = self.alert_count + 1;
+        trace("Monitoring error (alert #" ++ int_to_str(new_alert) ++ ")");
+        yield(-1);
+    }
+}
+
+// Connection Pool Monitor
+agent PoolMonitor {
+    @persistent pool_size: Int
+    @persistent active_connections: Int
+    @persistent max_seen: Int
+
+    on waking {
+        trace("PoolMonitor restored, max connections seen: " ++ int_to_str(self.max_seen));
+    }
+
+    on start {
+        // In real use, would query connection pool stats
+        let current = 3;
+
+        if current > self.max_seen {
+            trace("New max connections: " ++ int_to_str(current));
+        }
+
+        trace("Pool status: " ++ int_to_str(current) ++ "/" ++ int_to_str(self.pool_size));
+        yield(current);
+    }
+
+    on error(e) {
+        trace("Pool monitoring failed");
+        yield(-1);
+    }
+}
+
+// Schema Validator agent
+agent SchemaValidator {
+    @persistent validations_run: Int
+    @persistent last_schema_hash: String
+
+    on waking {
+        trace("SchemaValidator restored, " ++ int_to_str(self.validations_run) ++ " validations run");
+    }
+
+    on start {
+        let new_count = self.validations_run + 1;
+        trace("Schema validation #" ++ int_to_str(new_count));
+
+        let current_hash = "abc123";
+        if self.last_schema_hash != current_hash {
+            trace("Schema change detected!");
+        } else {
+            trace("Schema unchanged");
+        }
+
+        yield(new_count);
+    }
+
+    on error(e) {
+        trace("Schema validation failed");
+        yield(-1);
+    }
+}
+
+// Database Guardian supervisor
+supervisor DbGuardian {
+    strategy: OneForOne
+    children {
+        QueryMonitor {
+            restart: Permanent
+            check_count: 0
+            last_check: "never"
+            slow_query_threshold_ms: 100
+            alert_count: 0
+        }
+        PoolMonitor {
+            restart: Permanent
+            pool_size: 10
+            active_connections: 0
+            max_seen: 0
+        }
+        SchemaValidator {
+            restart: Transient
+            validations_run: 0
+            last_schema_hash: ""
+        }
+    }
+}
+
+// Configure in grove.toml:
+//
+// [persistence]
+// backend = "sqlite"
+// path = ".sage/db_guardian_state.db"
+//
+// [supervision]
+// max_restarts = 5
+// within_seconds = 60
+
+run DbGuardian;

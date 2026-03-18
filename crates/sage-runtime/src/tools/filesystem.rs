@@ -2,7 +2,8 @@
 //!
 //! Provides the `Fs` tool with file operations.
 
-use crate::error::SageResult;
+use crate::error::{SageError, SageResult};
+use crate::mock::{try_get_mock, MockResponse};
 use std::path::PathBuf;
 
 /// FileSystem client for Sage agents.
@@ -51,6 +52,11 @@ impl FsClient {
     /// # Returns
     /// The file contents as a string.
     pub async fn read(&self, path: String) -> SageResult<String> {
+        // Check for mock response first
+        if let Some(mock_response) = try_get_mock("Fs", "read") {
+            return Self::apply_mock_string(mock_response);
+        }
+
         let full_path = self.resolve_path(&path);
         let content = tokio::fs::read_to_string(&full_path).await?;
         Ok(content)
@@ -65,6 +71,11 @@ impl FsClient {
     /// # Returns
     /// Unit on success.
     pub async fn write(&self, path: String, content: String) -> SageResult<()> {
+        // Check for mock response first
+        if let Some(mock_response) = try_get_mock("Fs", "write") {
+            return Self::apply_mock_unit(mock_response);
+        }
+
         let full_path = self.resolve_path(&path);
         // Create parent directories if they don't exist
         if let Some(parent) = full_path.parent() {
@@ -82,6 +93,11 @@ impl FsClient {
     /// # Returns
     /// `true` if the path exists, `false` otherwise.
     pub async fn exists(&self, path: String) -> SageResult<bool> {
+        // Check for mock response first
+        if let Some(mock_response) = try_get_mock("Fs", "exists") {
+            return Self::apply_mock_bool(mock_response);
+        }
+
         let full_path = self.resolve_path(&path);
         Ok(full_path.exists())
     }
@@ -94,6 +110,11 @@ impl FsClient {
     /// # Returns
     /// List of file/directory names.
     pub async fn list(&self, path: String) -> SageResult<Vec<String>> {
+        // Check for mock response first
+        if let Some(mock_response) = try_get_mock("Fs", "list") {
+            return Self::apply_mock_vec_string(mock_response);
+        }
+
         let full_path = self.resolve_path(&path);
         let mut entries = tokio::fs::read_dir(&full_path).await?;
         let mut names = Vec::new();
@@ -113,9 +134,49 @@ impl FsClient {
     /// # Returns
     /// Unit on success.
     pub async fn delete(&self, path: String) -> SageResult<()> {
+        // Check for mock response first
+        if let Some(mock_response) = try_get_mock("Fs", "delete") {
+            return Self::apply_mock_unit(mock_response);
+        }
+
         let full_path = self.resolve_path(&path);
         tokio::fs::remove_file(&full_path).await?;
         Ok(())
+    }
+
+    /// Apply a mock response for String.
+    fn apply_mock_string(mock_response: MockResponse) -> SageResult<String> {
+        match mock_response {
+            MockResponse::Value(v) => serde_json::from_value(v)
+                .map_err(|e| SageError::Tool(format!("mock deserialize: {e}"))),
+            MockResponse::Fail(msg) => Err(SageError::Tool(msg)),
+        }
+    }
+
+    /// Apply a mock response for ().
+    fn apply_mock_unit(mock_response: MockResponse) -> SageResult<()> {
+        match mock_response {
+            MockResponse::Value(_) => Ok(()),
+            MockResponse::Fail(msg) => Err(SageError::Tool(msg)),
+        }
+    }
+
+    /// Apply a mock response for bool.
+    fn apply_mock_bool(mock_response: MockResponse) -> SageResult<bool> {
+        match mock_response {
+            MockResponse::Value(v) => serde_json::from_value(v)
+                .map_err(|e| SageError::Tool(format!("mock deserialize: {e}"))),
+            MockResponse::Fail(msg) => Err(SageError::Tool(msg)),
+        }
+    }
+
+    /// Apply a mock response for Vec<String>.
+    fn apply_mock_vec_string(mock_response: MockResponse) -> SageResult<Vec<String>> {
+        match mock_response {
+            MockResponse::Value(v) => serde_json::from_value(v)
+                .map_err(|e| SageError::Tool(format!("mock deserialize: {e}"))),
+            MockResponse::Fail(msg) => Err(SageError::Tool(msg)),
+        }
     }
 }
 

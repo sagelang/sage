@@ -1010,6 +1010,11 @@ impl Formatter {
                 }
                 self.write(")");
             }
+            Expr::Reply { message, .. } => {
+                self.write("reply(");
+                self.format_expr(message);
+                self.write(")");
+            }
         }
     }
 

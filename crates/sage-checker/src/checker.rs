@@ -2,8 +2,8 @@
 
 use crate::error::CheckError;
 use crate::scope::{
-    resolve_type, resolve_type_with_params, AgentInfo, ConstInfo, EnumInfo, FunctionInfo,
-    RecordInfo, Scope, SupervisorInfo, SymbolTable,
+    resolve_type, resolve_type_with_params, AgentInfo, ConstInfo, EffectHandlerInfo, EnumInfo,
+    FunctionInfo, ProtocolInfo, ProtocolStepInfo, RecordInfo, Scope, SupervisorInfo, SymbolTable,
 };
 use crate::types::Type;
 use sage_parser::{
@@ -61,6 +61,8 @@ pub struct Checker {
     is_test_file: bool,
     /// RFC-0012: Whether we're inside a test block.
     in_test_block: bool,
+    /// Phase 3: Whether we're inside a message handler (for reply validation).
+    in_message_handler: bool,
 }
 
 impl Checker {
@@ -86,6 +88,7 @@ impl Checker {
             scope: Scope::with_builtins(),
             is_test_file: false,
             in_test_block: false,
+            in_message_handler: false,
         }
     }
 
@@ -111,6 +114,7 @@ impl Checker {
             scope: Scope::with_builtins(),
             is_test_file: true,
             in_test_block: false,
+            in_message_handler: false,
         }
     }
 
@@ -136,6 +140,7 @@ impl Checker {
             scope: Scope::with_builtins(),
             is_test_file: false,
             in_test_block: false,
+            in_message_handler: false,
         }
     }
 
@@ -406,6 +411,65 @@ impl Checker {
                 module_path: self.current_module.clone(),
             });
         }
+
+        // Collect protocols (Phase 3: Session Types)
+        for protocol in &program.protocols {
+            if self.symbols.has_protocol(&protocol.name.name) {
+                self.errors.push(CheckError::duplicate_definition(
+                    &protocol.name.name,
+                    &protocol.span,
+                ));
+                continue;
+            }
+
+            let mut roles = std::collections::HashSet::new();
+            let steps: Vec<ProtocolStepInfo> = protocol
+                .steps
+                .iter()
+                .map(|step| {
+                    roles.insert(step.sender.name.clone());
+                    roles.insert(step.receiver.name.clone());
+                    ProtocolStepInfo {
+                        sender: step.sender.name.clone(),
+                        receiver: step.receiver.name.clone(),
+                        message_type: resolve_type(&step.message_type),
+                    }
+                })
+                .collect();
+
+            self.symbols.define_protocol(ProtocolInfo {
+                name: protocol.name.name.clone(),
+                steps,
+                roles,
+                is_pub: protocol.is_pub,
+                module_path: self.current_module.clone(),
+            });
+        }
+
+        // Collect effect handlers (Phase 3: Algebraic Effects)
+        for handler in &program.effect_handlers {
+            if self.symbols.has_effect_handler(&handler.name.name) {
+                self.errors.push(CheckError::duplicate_definition(
+                    &handler.name.name,
+                    &handler.span,
+                ));
+                continue;
+            }
+
+            let config: std::collections::HashMap<String, String> = handler
+                .config
+                .iter()
+                .map(|c| (c.key.name.clone(), format!("{:?}", c.value)))
+                .collect();
+
+            self.symbols.define_effect_handler(EffectHandlerInfo {
+                name: handler.name.name.clone(),
+                effect: handler.effect.name.clone(),
+                config,
+                is_pub: handler.is_pub,
+                module_path: self.current_module.clone(),
+            });
+        }
     }
 
     // =========================================================================
@@ -415,9 +479,31 @@ impl Checker {
     fn check_agent(&mut self, agent: &AgentDecl) {
         self.current_agent = Some(agent.name.name.clone());
         self.used_beliefs.clear();
+        self.in_message_handler = false;
 
         // Set receives type from the agent's receives clause
         self.receives_type = agent.receives.as_ref().map(resolve_type);
+
+        // Phase 3: Validate follows clause (Session Types)
+        for protocol_role in &agent.follows {
+            let proto_name = &protocol_role.protocol.name;
+            if let Some(proto_info) = self.symbols.get_protocol(proto_name) {
+                // Check that the agent is claiming a valid role in the protocol
+                let role_name = &protocol_role.role.name;
+                if !proto_info.roles.contains(role_name) {
+                    self.errors.push(CheckError::unknown_protocol_role(
+                        role_name,
+                        proto_name,
+                        &protocol_role.span,
+                    ));
+                }
+            } else {
+                self.errors.push(CheckError::unknown_protocol(
+                    proto_name,
+                    &protocol_role.span,
+                ));
+            }
+        }
 
         // RFC-0007: Check if agent has an error handler
         self.agent_has_error_handler = agent
@@ -449,8 +535,15 @@ impl Checker {
                 self.in_stop_handler = true;
             }
 
+            // Phase 3: Track if we're in a message handler (for reply validation)
+            let old_in_message_handler = self.in_message_handler;
+            if matches!(handler.event, EventKind::Message { .. }) {
+                self.in_message_handler = true;
+            }
+
             self.check_block(&handler.body);
 
+            self.in_message_handler = old_in_message_handler;
             self.in_stop_handler = old_in_stop_handler;
             self.pop_scope();
         }
@@ -567,6 +660,16 @@ impl Checker {
             // Note: Currently we don't track which agents have @persistent fields
             // in AgentInfo. This would require extending AgentInfo.
             // For now, we skip this warning.
+
+            // Phase 3: Validate handler assignments (Algebraic Effects)
+            for assignment in &child.handler_assignments {
+                if !self.symbols.has_effect_handler(&assignment.handler.name) {
+                    self.errors.push(CheckError::unknown_effect_handler(
+                        &assignment.handler.name,
+                        &assignment.span,
+                    ));
+                }
+            }
         }
 
         // E063: Supervisor nesting depth
@@ -1868,6 +1971,17 @@ impl Checker {
                     ));
                     Type::Error
                 }
+            }
+
+            // Phase 3: Reply expression for session types
+            Expr::Reply { message, span } => {
+                // Check that reply is only used inside a message handler
+                if !self.in_message_handler {
+                    self.errors.push(CheckError::reply_outside_message_handler(span));
+                }
+                // Check the message expression type
+                self.check_expr(message);
+                Type::Unit
             }
         }
     }
@@ -5663,6 +5777,12 @@ impl<'a> ModuleChecker<'a> {
                 }
                 // Return a placeholder type - actual checking is done in first pass
                 Type::Error
+            }
+
+            // Phase 3: Reply expression for session types
+            Expr::Reply { message, .. } => {
+                self.check_expr(message);
+                Type::Unit
             }
         }
     }

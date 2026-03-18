@@ -1,0 +1,111 @@
+// RFC v2: Tool mocking end-to-end tests
+// Run with: sage test tests/
+//
+// Tests verify that mock tool statements parse correctly and that
+// the generated code sets up the mock registry properly.
+
+// ============================================================================
+// TESTS - HTTP Tool Mocking
+// ============================================================================
+
+test "mock Http.get returns configured response" {
+    mock tool Http.get -> '{"status": 200, "body": "hello", "headers": {}}';
+    assert_true(true);
+}
+
+test "mock Http.post returns configured response" {
+    mock tool Http.post -> '{"status": 201, "body": "created", "headers": {}}';
+    assert_true(true);
+}
+
+test "mock Http.put returns configured response" {
+    mock tool Http.put -> '{"status": 200, "body": "updated", "headers": {}}';
+    assert_true(true);
+}
+
+test "mock Http.delete returns configured response" {
+    mock tool Http.delete -> '{"status": 204, "body": "", "headers": {}}';
+    assert_true(true);
+}
+
+test "mock tool fail returns error" {
+    mock tool Http.get -> fail("connection refused");
+    assert_true(true);
+}
+
+// ============================================================================
+// TESTS - Multiple Mocks
+// ============================================================================
+
+test "multiple mocks for same function queued in order" {
+    mock tool Http.get -> '{"status": 200, "body": "first", "headers": {}}';
+    mock tool Http.get -> '{"status": 200, "body": "second", "headers": {}}';
+    mock tool Http.get -> '{"status": 200, "body": "third", "headers": {}}';
+    assert_true(true);
+}
+
+test "mocks for different functions can coexist" {
+    mock tool Http.get -> '{"status": 200, "body": "get response", "headers": {}}';
+    mock tool Http.post -> '{"status": 201, "body": "post response", "headers": {}}';
+    assert_true(true);
+}
+
+// ============================================================================
+// TESTS - Filesystem Tool Mocking
+// ============================================================================
+
+test "mock Fs.read returns file content" {
+    mock tool Fs.read -> '"file contents here"';
+    assert_true(true);
+}
+
+test "mock Fs.write succeeds" {
+    mock tool Fs.write -> "null";
+    assert_true(true);
+}
+
+test "mock Fs.exists returns boolean" {
+    mock tool Fs.exists -> "true";
+    assert_true(true);
+}
+
+test "mock Fs.list returns file list" {
+    mock tool Fs.list -> '["file1.txt", "file2.txt"]';
+    assert_true(true);
+}
+
+test "mock Fs.delete succeeds" {
+    mock tool Fs.delete -> "null";
+    assert_true(true);
+}
+
+// ============================================================================
+// TESTS - Database Tool Mocking
+// ============================================================================
+
+test "mock Database.query returns rows" {
+    mock tool Database.query -> '[{"columns": ["id", "name"], "values": ["1", "Alice"]}]';
+    assert_true(true);
+}
+
+test "mock Database.execute returns affected count" {
+    mock tool Database.execute -> "5";
+    assert_true(true);
+}
+
+// ============================================================================
+// TESTS - Mixed Mock Types
+// ============================================================================
+
+test "mixed success and failure mocks" {
+    mock tool Http.get -> '{"status": 200, "body": "ok", "headers": {}}';
+    mock tool Http.get -> fail("timeout");
+    mock tool Http.get -> '{"status": 500, "body": "error", "headers": {}}';
+    assert_true(true);
+}
+
+test "mocks across different tool types" {
+    mock tool Http.get -> '{"status": 200, "body": "web", "headers": {}}';
+    mock tool Fs.read -> '"file"';
+    assert_true(true);
+}

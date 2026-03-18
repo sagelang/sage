@@ -5,10 +5,59 @@
 //! - `MockQueue` - thread-safe queue of mock responses
 //! - `MockLlmClient` - mock implementation of LLM inference
 //! - `MockToolRegistry` - mock implementations for tool calls
+//! - Task-local mock context for tool mocking in tests
 
 use crate::error::{SageError, SageResult};
 use serde::de::DeserializeOwned;
+use std::cell::RefCell;
+use std::future::Future;
 use std::sync::{Arc, Mutex};
+
+// Task-local storage for the mock tool registry.
+// This allows tests to intercept tool calls without threading the registry through all code.
+tokio::task_local! {
+    static MOCK_TOOL_REGISTRY: RefCell<Option<MockToolRegistry>>;
+}
+
+/// Run a future with a mock tool registry in scope.
+///
+/// All tool calls made during the execution of the future will check
+/// the registry for mocks before making real calls.
+///
+/// # Example
+/// ```ignore
+/// let registry = MockToolRegistry::new();
+/// registry.register("Http", "get", MockResponse::string("{\"status\": 200}"));
+///
+/// with_mock_tools(registry, async {
+///     // Http.get() calls here will return the mock response
+/// }).await;
+/// ```
+pub async fn with_mock_tools<F, R>(registry: MockToolRegistry, f: F) -> R
+where
+    F: Future<Output = R>,
+{
+    MOCK_TOOL_REGISTRY
+        .scope(RefCell::new(Some(registry)), f)
+        .await
+}
+
+/// Try to get a mock response for a tool function call.
+///
+/// Returns `Some(response)` if a mock is registered and available,
+/// `None` if no mock is registered or if called outside a mock context.
+///
+/// This is called by tool clients to intercept calls during tests.
+pub fn try_get_mock(tool: &str, function: &str) -> Option<MockResponse> {
+    MOCK_TOOL_REGISTRY
+        .try_with(|cell| {
+            cell.borrow_mut()
+                .as_ref()
+                .and_then(|reg| reg.get(tool, function))
+        })
+        .ok()
+        .flatten()
+}
 
 /// A mock response for an `infer` call.
 #[derive(Debug, Clone)]

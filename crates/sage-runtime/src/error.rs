@@ -24,6 +24,8 @@ pub enum ErrorKind {
     Tool,
     /// User-raised error via `fail` expression.
     User,
+    /// Phase 3: Protocol violation in session types.
+    Protocol,
 }
 
 impl std::fmt::Display for ErrorKind {
@@ -34,6 +36,7 @@ impl std::fmt::Display for ErrorKind {
             ErrorKind::Runtime => write!(f, "Runtime"),
             ErrorKind::Tool => write!(f, "Tool"),
             ErrorKind::User => write!(f, "User"),
+            ErrorKind::Protocol => write!(f, "Protocol"),
         }
     }
 }
@@ -83,6 +86,10 @@ pub enum SageError {
     /// Error from supervisor (restart intensity exceeded, etc.).
     #[error("Supervisor error: {0}")]
     Supervisor(String),
+
+    /// Phase 3: Protocol violation in session types.
+    #[error("Protocol error: {0}")]
+    Protocol(String),
 }
 
 impl SageError {
@@ -108,6 +115,8 @@ impl SageError {
             // RFC-0011: Http, Io, and Tool errors are tool errors
             SageError::Http(_) | SageError::Tool(_) | SageError::Io(_) => ErrorKind::Tool,
             SageError::User(_) => ErrorKind::User,
+            // Phase 3: Protocol errors
+            SageError::Protocol(_) => ErrorKind::Protocol,
         }
     }
 
@@ -143,6 +152,12 @@ impl SageError {
     pub fn user(msg: impl Into<String>) -> Self {
         SageError::User(msg.into())
     }
+
+    /// Phase 3: Create a protocol violation error.
+    #[must_use]
+    pub fn protocol(msg: impl Into<String>) -> Self {
+        SageError::Protocol(msg.into())
+    }
 }
 
 impl From<tokio::task::JoinError> for SageError {
@@ -177,11 +192,21 @@ mod tests {
         assert_eq!(format!("{}", ErrorKind::Agent), "Agent");
         assert_eq!(format!("{}", ErrorKind::Runtime), "Runtime");
         assert_eq!(format!("{}", ErrorKind::Tool), "Tool");
+        assert_eq!(format!("{}", ErrorKind::Protocol), "Protocol");
     }
 
     #[test]
     fn tool_error_classification() {
         assert_eq!(SageError::tool("http failed").kind(), ErrorKind::Tool);
         assert_eq!(SageError::tool("timeout").message(), "Tool error: timeout");
+    }
+
+    #[test]
+    fn protocol_error_classification() {
+        assert_eq!(SageError::protocol("unexpected message").kind(), ErrorKind::Protocol);
+        assert_eq!(
+            SageError::protocol("wrong sender").message(),
+            "Protocol error: wrong sender"
+        );
     }
 }

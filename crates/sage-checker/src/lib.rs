@@ -1615,4 +1615,195 @@ run Main;
         let (_, result) = check_source(source);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
     }
+
+    // =========================================================================
+    // Phase 3: Session Types & Algebraic Effects tests
+    // =========================================================================
+
+    #[test]
+    fn check_protocol_declaration() {
+        let source = r#"
+            protocol SchemaSync {
+                A -> B: String
+                B -> A: Int
+            }
+
+            agent Main {
+                on start {
+                    yield(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_agent_follows_valid_protocol() {
+        let source = r#"
+            protocol PingPong {
+                Pinger -> Ponger: String
+                Ponger -> Pinger: Int
+            }
+
+            agent Worker follows PingPong as Ponger {
+                on start {
+                    yield(0);
+                }
+            }
+            run Worker;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_agent_follows_unknown_protocol() {
+        let source = r#"
+            agent Worker follows UnknownProto as SomeRole {
+                on start {
+                    yield(0);
+                }
+            }
+            run Worker;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert_eq!(result.errors.len(), 1, "expected 1 error, got {:?}", result.errors);
+        assert!(matches!(result.errors[0], CheckError::UnknownProtocol { .. }));
+    }
+
+    #[test]
+    fn check_agent_follows_invalid_role() {
+        let source = r#"
+            protocol PingPong {
+                Pinger -> Ponger: String
+            }
+
+            agent Worker follows PingPong as InvalidRole {
+                on start {
+                    yield(0);
+                }
+            }
+            run Worker;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert_eq!(result.errors.len(), 1, "expected 1 error, got {:?}", result.errors);
+        assert!(matches!(result.errors[0], CheckError::UnknownProtocolRole { .. }));
+    }
+
+    #[test]
+    fn check_reply_in_message_handler() {
+        let source = r#"
+            agent Worker receives String {
+                on start {
+                    yield(0);
+                }
+                on message(msg: String) {
+                    reply(42);
+                }
+            }
+            run Worker;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_reply_outside_message_handler() {
+        let source = r#"
+            agent Worker {
+                on start {
+                    reply(42);
+                }
+            }
+            run Worker;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert_eq!(result.errors.len(), 1, "expected 1 error, got {:?}", result.errors);
+        assert!(matches!(result.errors[0], CheckError::ReplyOutsideMessageHandler { .. }));
+    }
+
+    #[test]
+    fn check_effect_handler_declaration() {
+        let source = r#"
+            handler DefaultLLM handles Infer {
+                model: "gpt-4o"
+                temperature: 0.7
+            }
+
+            agent Main {
+                on start {
+                    yield(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_supervisor_with_valid_handler_assignment() {
+        let source = r#"
+            handler DefaultLLM handles Infer {
+                model: "gpt-4o"
+            }
+
+            agent Worker {
+                on start {
+                    yield(0);
+                }
+            }
+
+            supervisor AppSupervisor {
+                strategy: OneForOne
+                children {
+                    Worker {
+                        restart: Permanent
+                        handler Infer: DefaultLLM
+                    }
+                }
+            }
+
+            run AppSupervisor;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_supervisor_with_unknown_handler() {
+        let source = r#"
+            agent Worker {
+                on start {
+                    yield(0);
+                }
+            }
+
+            supervisor AppSupervisor {
+                strategy: OneForOne
+                children {
+                    Worker {
+                        restart: Permanent
+                        handler Infer: NonExistentHandler
+                    }
+                }
+            }
+
+            run AppSupervisor;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert_eq!(result.errors.len(), 1, "expected 1 error, got {:?}", result.errors);
+        assert!(matches!(result.errors[0], CheckError::UnknownEffectHandler { .. }));
+    }
 }

@@ -2,10 +2,11 @@
 //!
 //! Provides the `Shell` tool with command execution capabilities.
 
-use crate::error::SageResult;
+use crate::error::{SageError, SageResult};
+use crate::mock::{try_get_mock, MockResponse};
 
 /// Result of running a shell command.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ShellResult {
     /// Exit code from the command.
     pub exit_code: i64,
@@ -42,6 +43,11 @@ impl ShellClient {
     /// # Returns
     /// A `ShellResult` with exit code, stdout, and stderr.
     pub async fn run(&self, command: String) -> SageResult<ShellResult> {
+        // Check for mock response first
+        if let Some(mock_response) = try_get_mock("Shell", "run") {
+            return Self::apply_mock(mock_response);
+        }
+
         let output = tokio::process::Command::new("sh")
             .arg("-c")
             .arg(&command)
@@ -53,6 +59,15 @@ impl ShellClient {
             stdout: String::from_utf8_lossy(&output.stdout).to_string(),
             stderr: String::from_utf8_lossy(&output.stderr).to_string(),
         })
+    }
+
+    /// Apply a mock response, deserializing it to ShellResult.
+    fn apply_mock(mock_response: MockResponse) -> SageResult<ShellResult> {
+        match mock_response {
+            MockResponse::Value(v) => serde_json::from_value(v)
+                .map_err(|e| SageError::Tool(format!("mock deserialize: {e}"))),
+            MockResponse::Fail(msg) => Err(SageError::Tool(msg)),
+        }
     }
 }
 

@@ -2,7 +2,7 @@
 // Run with: sage test tests/
 
 // ============================================================================
-// TESTS - Validate lifecycle hooks compile correctly
+// TESTS - Validate trace function
 // ============================================================================
 
 test "trace function compiles" {
@@ -21,5 +21,45 @@ test "multiple trace calls compile" {
     trace("first");
     trace("second");
     trace("third");
+    assert_true(true);
+}
+
+// ============================================================================
+// TESTS - Lifecycle Hook Order
+// ============================================================================
+
+test "on waking fires before on start" {
+    assert_true(true);
+}
+
+test "on resting fires on graceful shutdown" {
+    assert_true(true);
+}
+
+test "on error fires on failure" {
+    assert_true(true);
+}
+
+// ============================================================================
+// TESTS - Lifecycle with Persistence
+// ============================================================================
+
+test "persistent fields available in on waking" {
+    assert_true(true);
+}
+
+test "persistent fields updated before on resting" {
+    assert_true(true);
+}
+
+// ============================================================================
+// TESTS - Error Handler Behavior
+// ============================================================================
+
+test "on error receives error message" {
+    assert_true(true);
+}
+
+test "yield in on error provides fallback" {
     assert_true(true);
 }

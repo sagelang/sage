@@ -5,7 +5,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use crate::error::SageResult;
+use crate::error::{SageError, SageResult};
+use crate::mock::{try_get_mock, MockResponse};
 
 /// Configuration for the HTTP client.
 #[derive(Debug, Clone)]
@@ -46,7 +47,7 @@ impl HttpConfig {
 /// Response from an HTTP request.
 ///
 /// Exposed to Sage programs as the return type of `Http.get()` etc.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HttpResponse {
     /// HTTP status code (e.g., 200, 404).
     pub status: i64,
@@ -94,6 +95,11 @@ impl HttpClient {
     /// # Returns
     /// An `HttpResponse` with status, body, and headers.
     pub async fn get(&self, url: String) -> SageResult<HttpResponse> {
+        // Check for mock response first
+        if let Some(mock_response) = try_get_mock("Http", "get") {
+            return Self::apply_mock(mock_response);
+        }
+
         let response = self.client.get(url).send().await?;
 
         let status = response.status().as_u16() as i64;
@@ -125,6 +131,11 @@ impl HttpClient {
     /// # Returns
     /// An `HttpResponse` with status, body, and headers.
     pub async fn post(&self, url: String, body: String) -> SageResult<HttpResponse> {
+        // Check for mock response first
+        if let Some(mock_response) = try_get_mock("Http", "post") {
+            return Self::apply_mock(mock_response);
+        }
+
         let response = self
             .client
             .post(url)
@@ -162,6 +173,11 @@ impl HttpClient {
     /// # Returns
     /// An `HttpResponse` with status, body, and headers.
     pub async fn put(&self, url: String, body: String) -> SageResult<HttpResponse> {
+        // Check for mock response first
+        if let Some(mock_response) = try_get_mock("Http", "put") {
+            return Self::apply_mock(mock_response);
+        }
+
         let response = self
             .client
             .put(url)
@@ -198,6 +214,11 @@ impl HttpClient {
     /// # Returns
     /// An `HttpResponse` with status, body, and headers.
     pub async fn delete(&self, url: String) -> SageResult<HttpResponse> {
+        // Check for mock response first
+        if let Some(mock_response) = try_get_mock("Http", "delete") {
+            return Self::apply_mock(mock_response);
+        }
+
         let response = self.client.delete(url).send().await?;
 
         let status = response.status().as_u16() as i64;
@@ -218,6 +239,15 @@ impl HttpClient {
             body,
             headers,
         })
+    }
+
+    /// Apply a mock response, deserializing it to HttpResponse.
+    fn apply_mock(mock_response: MockResponse) -> SageResult<HttpResponse> {
+        match mock_response {
+            MockResponse::Value(v) => serde_json::from_value(v)
+                .map_err(|e| SageError::Tool(format!("mock deserialize: {e}"))),
+            MockResponse::Fail(msg) => Err(SageError::Tool(msg)),
+        }
     }
 }
 

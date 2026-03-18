@@ -163,6 +163,47 @@ pub struct SupervisorInfo {
     pub module_path: ModulePath,
 }
 
+/// Information about a protocol step (Phase 3: Session Types).
+#[derive(Debug, Clone)]
+pub struct ProtocolStepInfo {
+    /// The sending role.
+    pub sender: String,
+    /// The receiving role.
+    pub receiver: String,
+    /// The message type being sent.
+    pub message_type: Type,
+}
+
+/// Information about a declared protocol (Phase 3: Session Types).
+#[derive(Debug, Clone)]
+pub struct ProtocolInfo {
+    /// The protocol's name.
+    pub name: String,
+    /// The steps in the protocol.
+    pub steps: Vec<ProtocolStepInfo>,
+    /// The roles participating in this protocol.
+    pub roles: std::collections::HashSet<String>,
+    /// Whether this protocol is public.
+    pub is_pub: bool,
+    /// The module path where this protocol is defined.
+    pub module_path: ModulePath,
+}
+
+/// Information about an effect handler (Phase 3: Algebraic Effects).
+#[derive(Debug, Clone)]
+pub struct EffectHandlerInfo {
+    /// The handler's name.
+    pub name: String,
+    /// The effect this handler handles (e.g., "Infer").
+    pub effect: String,
+    /// Configuration values (key -> value as string).
+    pub config: HashMap<String, String>,
+    /// Whether this handler is public.
+    pub is_pub: bool,
+    /// The module path where this handler is defined.
+    pub module_path: ModulePath,
+}
+
 /// Information about a tool function (RFC-0011).
 #[derive(Debug, Clone)]
 pub struct ToolFnInfo {
@@ -413,6 +454,10 @@ pub struct SymbolTable {
     agents: HashMap<String, AgentInfo>,
     /// Declared supervisors (v2).
     supervisors: HashMap<String, SupervisorInfo>,
+    /// Declared protocols (Phase 3: Session Types).
+    protocols: HashMap<String, ProtocolInfo>,
+    /// Declared effect handlers (Phase 3: Algebraic Effects).
+    effect_handlers: HashMap<String, EffectHandlerInfo>,
     /// Declared functions.
     functions: HashMap<String, FunctionInfo>,
     /// Built-in functions.
@@ -2057,6 +2102,50 @@ impl SymbolTable {
     /// Iterate over all supervisors.
     pub fn iter_supervisors(&self) -> impl Iterator<Item = (&String, &SupervisorInfo)> {
         self.supervisors.iter()
+    }
+
+    /// Define a protocol (Phase 3: Session Types).
+    pub fn define_protocol(&mut self, info: ProtocolInfo) {
+        self.protocols.insert(info.name.clone(), info);
+    }
+
+    /// Look up a protocol by name.
+    #[must_use]
+    pub fn get_protocol(&self, name: &str) -> Option<&ProtocolInfo> {
+        self.protocols.get(name)
+    }
+
+    /// Check if a protocol is defined.
+    #[must_use]
+    pub fn has_protocol(&self, name: &str) -> bool {
+        self.protocols.contains_key(name)
+    }
+
+    /// Iterate over all protocols.
+    pub fn iter_protocols(&self) -> impl Iterator<Item = (&String, &ProtocolInfo)> {
+        self.protocols.iter()
+    }
+
+    /// Define an effect handler (Phase 3: Algebraic Effects).
+    pub fn define_effect_handler(&mut self, info: EffectHandlerInfo) {
+        self.effect_handlers.insert(info.name.clone(), info);
+    }
+
+    /// Look up an effect handler by name.
+    #[must_use]
+    pub fn get_effect_handler(&self, name: &str) -> Option<&EffectHandlerInfo> {
+        self.effect_handlers.get(name)
+    }
+
+    /// Check if an effect handler is defined.
+    #[must_use]
+    pub fn has_effect_handler(&self, name: &str) -> bool {
+        self.effect_handlers.contains_key(name)
+    }
+
+    /// Iterate over all effect handlers.
+    pub fn iter_effect_handlers(&self) -> impl Iterator<Item = (&String, &EffectHandlerInfo)> {
+        self.effect_handlers.iter()
     }
 
     /// Define a record type.

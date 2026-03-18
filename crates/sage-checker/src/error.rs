@@ -613,6 +613,56 @@ pub enum CheckError {
         #[label("consider adding @persistent fields or using Transient restart")]
         span: SourceSpan,
     },
+
+    // =========================================================================
+    // Phase 3: Session Types errors
+    // =========================================================================
+    #[error("unknown protocol `{name}`")]
+    #[diagnostic(
+        code(sage::E070),
+        help("Oswyn suggests: define a `protocol {name} {{ ... }}` declaration")
+    )]
+    UnknownProtocol {
+        name: String,
+        #[label("protocol not found")]
+        span: SourceSpan,
+    },
+
+    #[error("unknown role `{role}` in protocol `{protocol}`")]
+    #[diagnostic(
+        code(sage::E071),
+        help("Oswyn explains: the role must be one of the participants in the protocol")
+    )]
+    UnknownProtocolRole {
+        role: String,
+        protocol: String,
+        #[label("not a valid role in this protocol")]
+        span: SourceSpan,
+    },
+
+    // =========================================================================
+    // Phase 3: Algebraic Effects errors
+    // =========================================================================
+    #[error("unknown effect handler `{name}`")]
+    #[diagnostic(
+        code(sage::E072),
+        help("Oswyn suggests: define a `handler {name} handles Infer {{ ... }}` declaration")
+    )]
+    UnknownEffectHandler {
+        name: String,
+        #[label("handler not found")]
+        span: SourceSpan,
+    },
+
+    #[error("`reply` used outside of message handler")]
+    #[diagnostic(
+        code(sage::E073),
+        help("Oswyn explains: reply() can only be used inside an `on message(...)` handler")
+    )]
+    ReplyOutsideMessageHandler {
+        #[label("not inside a message handler")]
+        span: SourceSpan,
+    },
 }
 
 impl CheckError {
@@ -1197,6 +1247,46 @@ impl CheckError {
     pub fn permanent_without_persistence(child: impl Into<String>, span: &Span) -> Self {
         Self::PermanentWithoutPersistence {
             child: child.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    // =========================================================================
+    // Phase 3: Session Types & Algebraic Effects helpers
+    // =========================================================================
+
+    /// Create an unknown-protocol error (E070).
+    pub fn unknown_protocol(name: impl Into<String>, span: &Span) -> Self {
+        Self::UnknownProtocol {
+            name: name.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create an unknown-protocol-role error (E071).
+    pub fn unknown_protocol_role(
+        role: impl Into<String>,
+        protocol: impl Into<String>,
+        span: &Span,
+    ) -> Self {
+        Self::UnknownProtocolRole {
+            role: role.into(),
+            protocol: protocol.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create an unknown-effect-handler error (E072).
+    pub fn unknown_effect_handler(name: impl Into<String>, span: &Span) -> Self {
+        Self::UnknownEffectHandler {
+            name: name.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a reply-outside-message-handler error (E073).
+    pub fn reply_outside_message_handler(span: &Span) -> Self {
+        Self::ReplyOutsideMessageHandler {
             span: to_source_span(span),
         }
     }

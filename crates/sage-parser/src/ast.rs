@@ -25,6 +25,10 @@ pub struct Program {
     pub consts: Vec<ConstDecl>,
     /// Tool declarations (RFC-0011).
     pub tools: Vec<ToolDecl>,
+    /// Protocol declarations (Phase 3 session types).
+    pub protocols: Vec<ProtocolDecl>,
+    /// Effect handler declarations (Phase 3 algebraic effects).
+    pub effect_handlers: Vec<EffectHandlerDecl>,
     /// Agent declarations.
     pub agents: Vec<AgentDecl>,
     /// Supervisor declarations (v2 supervision trees).
@@ -195,6 +199,8 @@ pub struct AgentDecl {
     pub name: Ident,
     /// The message type this agent receives (for message passing).
     pub receives: Option<TypeExpr>,
+    /// Protocol roles this agent follows (Phase 3): `follows Protocol as Role`
+    pub follows: Vec<ProtocolRole>,
     /// Tools this agent uses (RFC-0011): `use Http, Fs`
     pub tool_uses: Vec<Ident>,
     /// Belief declarations (agent state).
@@ -431,7 +437,108 @@ pub struct ChildSpec {
     pub restart: RestartPolicy,
     /// Initial belief values.
     pub beliefs: Vec<FieldInit>,
+    /// Effect handler assignments (Phase 3): `handler Infer: FastLLM`
+    pub handler_assignments: Vec<HandlerAssignment>,
     /// Span covering the child spec.
+    pub span: Span,
+}
+
+// =============================================================================
+// Protocol declarations (Phase 3 session types)
+// =============================================================================
+
+/// A protocol declaration for session types.
+///
+/// Example:
+/// ```sage
+/// protocol SchemaSync {
+///     DatabaseSteward -> APISteward: SchemaChanged
+///     APISteward -> DatabaseSteward: Acknowledged
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProtocolDecl {
+    /// Whether this protocol is public.
+    pub is_pub: bool,
+    /// The protocol's name.
+    pub name: Ident,
+    /// The protocol steps.
+    pub steps: Vec<ProtocolStep>,
+    /// Span covering the declaration.
+    pub span: Span,
+}
+
+/// A single step in a protocol: `Sender -> Receiver: MessageType`
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProtocolStep {
+    /// The sender role.
+    pub sender: Ident,
+    /// The receiver role.
+    pub receiver: Ident,
+    /// The message type for this step.
+    pub message_type: TypeExpr,
+    /// Span covering the step.
+    pub span: Span,
+}
+
+/// A protocol role assignment: `follows ProtocolName as RoleName`
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProtocolRole {
+    /// The protocol being followed.
+    pub protocol: Ident,
+    /// The role this agent plays in the protocol.
+    pub role: Ident,
+    /// Span covering the role assignment.
+    pub span: Span,
+}
+
+// =============================================================================
+// Effect handler declarations (Phase 3 algebraic effects)
+// =============================================================================
+
+/// An effect handler declaration for per-agent configuration.
+///
+/// Example:
+/// ```sage
+/// handler DefaultLLM handles Infer {
+///     model: "gpt-4o"
+///     temperature: 0.7
+///     max_tokens: 1024
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct EffectHandlerDecl {
+    /// Whether this handler is public.
+    pub is_pub: bool,
+    /// The handler's name.
+    pub name: Ident,
+    /// The effect being handled (e.g., "Infer").
+    pub effect: Ident,
+    /// Configuration key-value pairs.
+    pub config: Vec<HandlerConfig>,
+    /// Span covering the declaration.
+    pub span: Span,
+}
+
+/// A configuration entry in an effect handler.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HandlerConfig {
+    /// The configuration key.
+    pub key: Ident,
+    /// The configuration value.
+    pub value: Literal,
+    /// Span covering the entry.
+    pub span: Span,
+}
+
+/// An effect handler assignment in a child spec: `handler Effect: HandlerName`
+#[derive(Debug, Clone, PartialEq)]
+pub struct HandlerAssignment {
+    /// The effect being assigned (e.g., "Infer").
+    pub effect: Ident,
+    /// The handler to use for this effect.
+    pub handler: Ident,
+    /// Span covering the assignment.
     pub span: Span,
 }
 
@@ -918,6 +1025,16 @@ pub enum Expr {
         /// Span covering the expression.
         span: Span,
     },
+
+    /// Reply to current message (Phase 3 session types): `reply(message)`
+    ///
+    /// Only valid inside `on message` handlers when the agent follows a protocol.
+    Reply {
+        /// The message to send back.
+        message: Box<Expr>,
+        /// Span covering the expression.
+        span: Span,
+    },
 }
 
 /// A map entry: `key: value`
@@ -965,7 +1082,8 @@ impl Expr {
             | Expr::TupleIndex { span, .. }
             | Expr::Map { span, .. }
             | Expr::VariantConstruct { span, .. }
-            | Expr::ToolCall { span, .. } => span,
+            | Expr::ToolCall { span, .. }
+            | Expr::Reply { span, .. } => span,
         }
     }
 }

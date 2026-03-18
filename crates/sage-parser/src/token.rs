@@ -197,6 +197,32 @@ pub enum Token {
     KwRestart,
 
     // =========================================================================
+    // Session types keywords (Phase 3)
+    // =========================================================================
+    /// Protocol declaration keyword.
+    #[token("protocol")]
+    KwProtocol,
+
+    /// Follows clause in agent declaration.
+    #[token("follows")]
+    KwFollows,
+
+    /// Reply expression in message handlers.
+    #[token("reply")]
+    KwReply,
+
+    // =========================================================================
+    // Algebraic effects keywords (Phase 3)
+    // =========================================================================
+    /// Effect handler declaration keyword.
+    #[token("handler")]
+    KwHandler,
+
+    /// Handles clause in effect handler declaration.
+    #[token("handles")]
+    KwHandles,
+
+    // =========================================================================
     // Type keywords
     // =========================================================================
     #[token("Int")]
@@ -436,6 +462,11 @@ impl Token {
                 | Token::KwChildren
                 | Token::KwStrategy
                 | Token::KwRestart
+                | Token::KwProtocol
+                | Token::KwFollows
+                | Token::KwReply
+                | Token::KwHandler
+                | Token::KwHandles
         )
     }
 
@@ -556,6 +587,11 @@ impl std::fmt::Display for Token {
             Token::KwChildren => write!(f, "children"),
             Token::KwStrategy => write!(f, "strategy"),
             Token::KwRestart => write!(f, "restart"),
+            Token::KwProtocol => write!(f, "protocol"),
+            Token::KwFollows => write!(f, "follows"),
+            Token::KwReply => write!(f, "reply"),
+            Token::KwHandler => write!(f, "handler"),
+            Token::KwHandles => write!(f, "handles"),
 
             // Type keywords
             Token::TyInt => write!(f, "Int"),
@@ -1260,5 +1296,98 @@ mod tests {
         assert_eq!(lexer.next(), Some(Ok(Token::IntLit)));
         assert_eq!(lexer.next(), Some(Ok(Token::RBrace)));
         assert_eq!(lexer.next(), None);
+    }
+
+    // =========================================================================
+    // Phase 3: Session types and algebraic effects
+    // =========================================================================
+
+    #[test]
+    fn lex_protocol_keywords() {
+        let mut lexer = Token::lexer("protocol follows reply");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwProtocol)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwFollows)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwReply)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn lex_effect_handler_keywords() {
+        let mut lexer = Token::lexer("handler handles");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwHandler)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwHandles)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn protocol_keywords_are_keywords() {
+        assert!(Token::KwProtocol.is_keyword());
+        assert!(Token::KwFollows.is_keyword());
+        assert!(Token::KwReply.is_keyword());
+        assert!(Token::KwHandler.is_keyword());
+        assert!(Token::KwHandles.is_keyword());
+    }
+
+    #[test]
+    fn lex_protocol_declaration() {
+        let mut lexer = Token::lexer("protocol SchemaSync { Steward -> API: Changed }");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwProtocol)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // SchemaSync
+        assert_eq!(lexer.next(), Some(Ok(Token::LBrace)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // Steward
+        assert_eq!(lexer.next(), Some(Ok(Token::Arrow)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // API
+        assert_eq!(lexer.next(), Some(Ok(Token::Colon)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // Changed
+        assert_eq!(lexer.next(), Some(Ok(Token::RBrace)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn lex_agent_follows() {
+        let mut lexer = Token::lexer("agent API follows SchemaSync as APISteward");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwAgent)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // API
+        assert_eq!(lexer.next(), Some(Ok(Token::KwFollows)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // SchemaSync
+        assert_eq!(lexer.next(), Some(Ok(Token::KwAs)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // APISteward
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn lex_handler_declaration() {
+        let mut lexer = Token::lexer("handler DefaultLLM handles Infer { model: \"gpt-4\" }");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwHandler)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // DefaultLLM
+        assert_eq!(lexer.next(), Some(Ok(Token::KwHandles)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // Infer
+        assert_eq!(lexer.next(), Some(Ok(Token::LBrace)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // model
+        assert_eq!(lexer.next(), Some(Ok(Token::Colon)));
+        assert_eq!(lexer.next(), Some(Ok(Token::StringLit)));
+        assert_eq!(lexer.next(), Some(Ok(Token::RBrace)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn lex_reply_expression() {
+        let mut lexer = Token::lexer("reply(Ack {})");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwReply)));
+        assert_eq!(lexer.next(), Some(Ok(Token::LParen)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // Ack
+        assert_eq!(lexer.next(), Some(Ok(Token::LBrace)));
+        assert_eq!(lexer.next(), Some(Ok(Token::RBrace)));
+        assert_eq!(lexer.next(), Some(Ok(Token::RParen)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn token_display_phase3() {
+        assert_eq!(format!("{}", Token::KwProtocol), "protocol");
+        assert_eq!(format!("{}", Token::KwFollows), "follows");
+        assert_eq!(format!("{}", Token::KwReply), "reply");
+        assert_eq!(format!("{}", Token::KwHandler), "handler");
+        assert_eq!(format!("{}", Token::KwHandles), "handles");
     }
 }

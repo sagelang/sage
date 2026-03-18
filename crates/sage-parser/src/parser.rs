@@ -3,11 +3,12 @@
 //! This module transforms a token stream into an AST.
 
 use crate::ast::{
-    AgentDecl, BeliefDecl, BinOp, Block, ChildSpec, ClosureParam, ConstDecl, ElseBranch, EnumDecl,
-    EventKind, Expr, FieldInit, FnDecl, HandlerDecl, Literal, MapEntry, MatchArm, MockValue,
-    ModDecl, Param, Pattern, Program, RecordDecl, RecordField, RestartPolicy, Stmt, StringPart,
-    StringTemplate, SupervisionStrategy, SupervisorDecl, TestDecl, ToolDecl, ToolFnDecl, UnaryOp,
-    UseDecl, UseKind,
+    AgentDecl, BeliefDecl, BinOp, Block, ChildSpec, ClosureParam, ConstDecl, EffectHandlerDecl,
+    ElseBranch, EnumDecl, EventKind, Expr, FieldInit, FnDecl, HandlerAssignment, HandlerConfig,
+    HandlerDecl, Literal, MapEntry, MatchArm, MockValue, ModDecl, Param, Pattern, Program,
+    ProtocolDecl, ProtocolRole, ProtocolStep, RecordDecl, RecordField, RestartPolicy, Stmt,
+    StringPart, StringTemplate, SupervisionStrategy, SupervisorDecl, TestDecl, ToolDecl,
+    ToolFnDecl, UnaryOp, UseDecl, UseKind,
 };
 use crate::{Ident, Span, TypeExpr};
 use crate::{Spanned, Token};
@@ -59,6 +60,8 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
         .or(enum_parser(source.clone()))
         .or(const_parser(source.clone()))
         .or(tool_parser(source.clone()))
+        .or(protocol_parser(source.clone()))
+        .or(effect_handler_parser(source.clone()))
         .or(agent_parser(source.clone()))
         .or(supervisor_parser(source.clone()))
         .or(fn_parser(source.clone()))
@@ -71,6 +74,8 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
             Token::KwEnum,
             Token::KwConst,
             Token::KwTool,
+            Token::KwProtocol,
+            Token::KwHandler,
             Token::KwAgent,
             Token::KwSupervisor,
             Token::KwFn,
@@ -91,6 +96,8 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
             let mut enums = Vec::new();
             let mut consts = Vec::new();
             let mut tools = Vec::new();
+            let mut protocols = Vec::new();
+            let mut effect_handlers = Vec::new();
             let mut agents = Vec::new();
             let mut supervisors = Vec::new();
             let mut functions = Vec::new();
@@ -104,6 +111,8 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
                     TopLevel::Enum(e) => enums.push(e),
                     TopLevel::Const(c) => consts.push(c),
                     TopLevel::Tool(t) => tools.push(t),
+                    TopLevel::Protocol(p) => protocols.push(p),
+                    TopLevel::EffectHandler(h) => effect_handlers.push(h),
                     TopLevel::Agent(a) => agents.push(a),
                     TopLevel::Supervisor(s) => supervisors.push(s),
                     TopLevel::Function(f) => functions.push(f),
@@ -118,6 +127,8 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
                 enums,
                 consts,
                 tools,
+                protocols,
+                effect_handlers,
                 agents,
                 supervisors,
                 functions,
@@ -137,6 +148,8 @@ enum TopLevel {
     Enum(EnumDecl),
     Const(ConstDecl),
     Tool(ToolDecl),
+    Protocol(ProtocolDecl),
+    EffectHandler(EffectHandlerDecl),
     Agent(AgentDecl),
     Supervisor(SupervisorDecl),
     Function(FnDecl),
@@ -447,6 +460,175 @@ fn tool_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseEr
 }
 
 // =============================================================================
+// Protocol parsers (Phase 3 session types)
+// =============================================================================
+
+/// Parser for a protocol declaration.
+///
+/// Syntax:
+/// ```sage
+/// protocol SchemaSync {
+///     DatabaseSteward -> APISteward: SchemaChanged
+///     APISteward -> DatabaseSteward: Acknowledged
+/// }
+/// ```
+#[allow(clippy::needless_pass_by_value)]
+fn protocol_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseError> {
+    let src = source.clone();
+    let src2 = source.clone();
+    let src3 = source.clone();
+
+    // Protocol step: Sender -> Receiver: MessageType
+    let protocol_step = ident_token_parser(src.clone())
+        .then_ignore(just(Token::Arrow))
+        .then(ident_token_parser(src.clone()))
+        .then_ignore(just(Token::Colon))
+        .then(type_parser(src.clone()))
+        .map_with_span({
+            let src = src.clone();
+            move |((sender, receiver), message_type), span: Range<usize>| ProtocolStep {
+                sender,
+                receiver,
+                message_type,
+                span: make_span(&src, span),
+            }
+        });
+
+    // Full protocol declaration
+    just(Token::KwPub)
+        .or_not()
+        .then_ignore(just(Token::KwProtocol))
+        .then(ident_token_parser(src2.clone()))
+        .then(
+            protocol_step
+                .repeated()
+                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+        )
+        .map_with_span(move |((is_pub, name), steps), span: Range<usize>| {
+            TopLevel::Protocol(ProtocolDecl {
+                is_pub: is_pub.is_some(),
+                name,
+                steps,
+                span: make_span(&src3, span),
+            })
+        })
+}
+
+// =============================================================================
+// Effect handler parsers (Phase 3 algebraic effects)
+// =============================================================================
+
+/// Parser for an effect handler declaration.
+///
+/// Syntax:
+/// ```sage
+/// handler DefaultLLM handles Infer {
+///     model: "gpt-4o"
+///     temperature: 0.7
+///     max_tokens: 1024
+/// }
+/// ```
+#[allow(clippy::needless_pass_by_value)]
+fn effect_handler_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseError> {
+    let src = source.clone();
+    let src2 = source.clone();
+
+    // Handler config entry: key: value (value must be a literal)
+    let config_entry = ident_token_parser(src.clone())
+        .then_ignore(just(Token::Colon))
+        .then(literal_value_parser(src.clone()))
+        .map_with_span({
+            let src = src.clone();
+            move |(key, value), span: Range<usize>| HandlerConfig {
+                key,
+                value,
+                span: make_span(&src, span),
+            }
+        });
+
+    // Full handler declaration
+    just(Token::KwPub)
+        .or_not()
+        .then_ignore(just(Token::KwHandler))
+        .then(ident_token_parser(src2.clone()))
+        .then_ignore(just(Token::KwHandles))
+        .then(ident_token_parser(src2.clone()))
+        .then(
+            config_entry
+                .repeated()
+                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+        )
+        .map_with_span(move |(((is_pub, name), effect), config), span: Range<usize>| {
+            TopLevel::EffectHandler(EffectHandlerDecl {
+                is_pub: is_pub.is_some(),
+                name,
+                effect,
+                config,
+                span: make_span(&src2, span),
+            })
+        })
+}
+
+/// Parser for literal values only (for handler config).
+#[allow(clippy::needless_pass_by_value)]
+fn literal_value_parser(source: Arc<str>) -> impl Parser<Token, Literal, Error = ParseError> {
+    let src = source.clone();
+
+    filter_map(move |span: Range<usize>, tok| match tok {
+        Token::IntLit => {
+            let s = &src[span.clone()];
+            let n = s.parse::<i64>().map_err(|_| {
+                Simple::custom(span, format!("invalid integer literal `{s}`"))
+            })?;
+            Ok(Literal::Int(n))
+        }
+        Token::FloatLit => {
+            let s = &src[span.clone()];
+            let n = s.parse::<f64>().map_err(|_| {
+                Simple::custom(span, format!("invalid float literal `{s}`"))
+            })?;
+            Ok(Literal::Float(n))
+        }
+        Token::StringLit => {
+            let s = &src[span.clone()];
+            // Remove quotes and handle escape sequences
+            let content = &s[1..s.len() - 1];
+            let unescaped = unescape_string(content);
+            Ok(Literal::String(unescaped))
+        }
+        Token::KwTrue => Ok(Literal::Bool(true)),
+        Token::KwFalse => Ok(Literal::Bool(false)),
+        _ => Err(Simple::expected_input_found(span, [], Some(tok))),
+    })
+}
+
+/// Helper to unescape string literals.
+fn unescape_string(s: &str) -> String {
+    let mut result = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => result.push('\n'),
+                Some('t') => result.push('\t'),
+                Some('r') => result.push('\r'),
+                Some('\\') => result.push('\\'),
+                Some('"') => result.push('"'),
+                Some('\'') => result.push('\''),
+                Some(other) => {
+                    result.push('\\');
+                    result.push(other);
+                }
+                None => result.push('\\'),
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+// =============================================================================
 // Test parsers (RFC-0012)
 // =============================================================================
 
@@ -565,6 +747,18 @@ fn supervisor_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = P
             }
         }));
 
+    // Handler assignment: handler Effect: HandlerName (Phase 3: Algebraic Effects)
+    let src_handler = src3.clone();
+    let handler_assignment = just(Token::KwHandler)
+        .ignore_then(ident_token_parser(src3.clone()))
+        .then_ignore(just(Token::Colon))
+        .then(ident_token_parser(src3.clone()))
+        .map_with_span(move |(effect, handler), span: Range<usize>| HandlerAssignment {
+            effect,
+            handler,
+            span: make_span(&src_handler, span),
+        });
+
     // Field init for beliefs: name: value
     let field_init = ident_token_parser(src3.clone())
         .then_ignore(just(Token::Colon))
@@ -578,11 +772,16 @@ fn supervisor_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = P
             }
         });
 
-    // Child spec: AgentName { restart: Permanent, belief1: value1, ... }
+    // Child spec: AgentName { restart: Permanent, handler Infer: DefaultLLM, belief1: value1, ... }
     // Or just: AgentName { belief1: value1, ... } (defaults to Permanent)
     let child_spec = ident_token_parser(src3.clone())
         .then_ignore(just(Token::LBrace))
         .then(restart_policy.then_ignore(just(Token::Comma).or_not()).or_not())
+        .then(
+            handler_assignment
+                .then_ignore(just(Token::Comma).or_not())
+                .repeated(),
+        )
         .then(
             field_init
                 .separated_by(just(Token::Comma))
@@ -591,11 +790,14 @@ fn supervisor_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = P
         .then_ignore(just(Token::RBrace))
         .map_with_span({
             let src = src3.clone();
-            move |((agent_name, restart), beliefs), span: Range<usize>| ChildSpec {
-                agent_name,
-                restart: restart.unwrap_or_default(),
-                beliefs,
-                span: make_span(&src, span),
+            move |(((agent_name, restart), handler_assignments), beliefs), span: Range<usize>| {
+                ChildSpec {
+                    agent_name,
+                    restart: restart.unwrap_or_default(),
+                    beliefs,
+                    handler_assignments,
+                    span: make_span(&src, span),
+                }
             }
         });
 
@@ -641,6 +843,7 @@ fn agent_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseE
     let src3 = source.clone();
     let src4 = source.clone();
     let src5 = source.clone();
+    let src6 = source.clone();
 
     // Tool use clause: `use Http, Fs`
     let tool_use = just(Token::KwUse)
@@ -702,23 +905,42 @@ fn agent_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseE
         .ignore_then(type_parser(src3.clone()))
         .or_not();
 
+    // Optional `follows Protocol as Role` clause (Phase 3: Session Types)
+    // Syntax: follows Protocol as Role [, Protocol2 as Role2]*
+    let src_follows = src6.clone();
+    let single_follows = ident_token_parser(src6.clone())
+        .then_ignore(just(Token::KwAs))
+        .then(ident_token_parser(src6.clone()))
+        .map_with_span(move |(protocol, role), span: Range<usize>| ProtocolRole {
+            protocol,
+            role,
+            span: make_span(&src_follows, span),
+        });
+
+    let follows_clause = just(Token::KwFollows)
+        .ignore_then(single_follows.separated_by(just(Token::Comma)).at_least(1))
+        .or_not()
+        .map(|follows| follows.unwrap_or_default());
+
     just(Token::KwPub)
         .or_not()
         .then_ignore(just(Token::KwAgent))
         .then(ident_token_parser(src3.clone()))
         .then(receives_clause)
+        .then(follows_clause)
         .then_ignore(just(Token::LBrace))
         .then(tool_use)
         .then(belief.repeated())
         .then(handler.repeated())
         .then_ignore(just(Token::RBrace))
         .map_with_span(
-            move |(((((is_pub, name), receives), tool_uses), beliefs), handlers),
+            move |((((((is_pub, name), receives), follows), tool_uses), beliefs), handlers),
                   span: Range<usize>| {
                 TopLevel::Agent(AgentDecl {
                     is_pub: is_pub.is_some(),
                     name,
                     receives,
+                    follows,
                     tool_uses,
                     beliefs,
                     handlers,
@@ -1260,6 +1482,19 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
                 }
             });
 
+        // reply(message) - Phase 3 session types
+        let reply_expr = just(Token::KwReply)
+            .ignore_then(just(Token::LParen))
+            .ignore_then(expr.clone())
+            .then_ignore(just(Token::RParen))
+            .map_with_span({
+                let src = src.clone();
+                move |message, span: Range<usize>| Expr::Reply {
+                    message: Box::new(message),
+                    span: make_span(&src, span),
+                }
+            });
+
         // Turbofish type arguments: ::<Int, String>
         let turbofish = just(Token::ColonColon)
             .ignore_then(
@@ -1534,6 +1769,7 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
             .or(await_expr)
             .or(send_expr)
             .or(yield_expr)
+            .or(reply_expr)
             .or(receive_expr)
             .or(trace_expr)
             .or(match_expr)
@@ -5404,5 +5640,276 @@ mod tests {
         } else {
             panic!("expected Let statement");
         }
+    }
+
+    // =============================================================================
+    // Phase 3: Session Types & Algebraic Effects
+    // =============================================================================
+
+    #[test]
+    fn parse_protocol_declaration() {
+        let source = r#"
+            protocol SchemaSync {
+                DatabaseSteward -> APISteward: SchemaChanged
+                APISteward -> DatabaseSteward: Acknowledged
+            }
+
+            agent Main {
+                on start {
+                    yield(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.protocols.len(), 1);
+        let proto = &prog.protocols[0];
+        assert_eq!(proto.name.name, "SchemaSync");
+        assert!(!proto.is_pub);
+        assert_eq!(proto.steps.len(), 2);
+
+        assert_eq!(proto.steps[0].sender.name, "DatabaseSteward");
+        assert_eq!(proto.steps[0].receiver.name, "APISteward");
+        if let TypeExpr::Named(name, _) = &proto.steps[0].message_type {
+            assert_eq!(name.name, "SchemaChanged");
+        } else {
+            panic!("expected Named type");
+        }
+
+        assert_eq!(proto.steps[1].sender.name, "APISteward");
+        assert_eq!(proto.steps[1].receiver.name, "DatabaseSteward");
+    }
+
+    #[test]
+    fn parse_public_protocol() {
+        let source = r#"
+            pub protocol PingPong {
+                Pinger -> Ponger: Ping
+                Ponger -> Pinger: Pong
+            }
+
+            agent Main { on start { yield(0); } }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.protocols.len(), 1);
+        assert!(prog.protocols[0].is_pub);
+    }
+
+    #[test]
+    fn parse_agent_follows_protocol() {
+        let source = r#"
+            protocol SchemaSync {
+                A -> B: Msg
+            }
+
+            agent APISteward follows SchemaSync as APISteward {
+                on start {
+                    yield(0);
+                }
+            }
+            run APISteward;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.agents[0].follows.len(), 1);
+        assert_eq!(prog.agents[0].follows[0].protocol.name, "SchemaSync");
+        assert_eq!(prog.agents[0].follows[0].role.name, "APISteward");
+    }
+
+    #[test]
+    fn parse_agent_follows_multiple_protocols() {
+        let source = r#"
+            agent MultiProtocolAgent follows Proto1 as RoleA, Proto2 as RoleB {
+                on start {
+                    yield(0);
+                }
+            }
+            run MultiProtocolAgent;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.agents[0].follows.len(), 2);
+        assert_eq!(prog.agents[0].follows[0].protocol.name, "Proto1");
+        assert_eq!(prog.agents[0].follows[0].role.name, "RoleA");
+        assert_eq!(prog.agents[0].follows[1].protocol.name, "Proto2");
+        assert_eq!(prog.agents[0].follows[1].role.name, "RoleB");
+    }
+
+    #[test]
+    fn parse_agent_with_receives_and_follows() {
+        let source = r#"
+            agent Worker receives Request follows WorkProto as Worker {
+                on message(msg: Request) {
+                    reply(Response {});
+                }
+            }
+            run Worker;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert!(prog.agents[0].receives.is_some());
+        assert_eq!(prog.agents[0].follows.len(), 1);
+    }
+
+    #[test]
+    fn parse_reply_expression() {
+        let source = r#"
+            agent Responder {
+                on message(msg: Request) {
+                    reply(Response { code: 200 });
+                }
+            }
+            run Responder;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Expr { expr: Expr::Reply { message, .. }, .. } = &handler.body.stmts[0] {
+            assert!(matches!(message.as_ref(), Expr::RecordConstruct { .. }));
+        } else {
+            panic!("expected Reply expression, got {:?}", handler.body.stmts[0]);
+        }
+    }
+
+    #[test]
+    fn parse_effect_handler_declaration() {
+        let source = r#"
+            handler DefaultLLM handles Infer {
+                model: "gpt-4o"
+                temperature: 0.7
+                max_tokens: 1024
+            }
+
+            agent Main { on start { yield(0); } }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.effect_handlers.len(), 1);
+        let handler = &prog.effect_handlers[0];
+        assert_eq!(handler.name.name, "DefaultLLM");
+        assert_eq!(handler.effect.name, "Infer");
+        assert!(!handler.is_pub);
+        assert_eq!(handler.config.len(), 3);
+
+        assert_eq!(handler.config[0].key.name, "model");
+        assert!(matches!(handler.config[0].value, Literal::String(_)));
+
+        assert_eq!(handler.config[1].key.name, "temperature");
+        assert!(matches!(handler.config[1].value, Literal::Float(_)));
+
+        assert_eq!(handler.config[2].key.name, "max_tokens");
+        assert!(matches!(handler.config[2].value, Literal::Int(1024)));
+    }
+
+    #[test]
+    fn parse_public_effect_handler() {
+        let source = r#"
+            pub handler FastLLM handles Infer {
+                model: "gpt-4o-mini"
+            }
+
+            agent Main { on start { yield(0); } }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert!(prog.effect_handlers[0].is_pub);
+    }
+
+    #[test]
+    fn parse_supervisor_with_handler_assignment() {
+        let source = r#"
+            handler DefaultLLM handles Infer {
+                model: "gpt-4o"
+            }
+
+            agent Worker {
+                on start {
+                    let thought = divine("Think!");
+                    yield(thought);
+                }
+            }
+
+            supervisor AppSupervisor {
+                strategy: OneForOne
+                children {
+                    Worker {
+                        restart: Permanent
+                        handler Infer: DefaultLLM
+                    }
+                }
+            }
+
+            run AppSupervisor;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let child = &prog.supervisors[0].children[0];
+        assert_eq!(child.agent_name.name, "Worker");
+        assert_eq!(child.handler_assignments.len(), 1);
+        assert_eq!(child.handler_assignments[0].effect.name, "Infer");
+        assert_eq!(child.handler_assignments[0].handler.name, "DefaultLLM");
+    }
+
+    #[test]
+    fn parse_supervisor_with_multiple_handler_assignments() {
+        let source = r#"
+            agent Worker { on start { yield(0); } }
+
+            supervisor MultiHandlerSupervisor {
+                strategy: OneForOne
+                children {
+                    Worker {
+                        restart: Permanent
+                        handler Infer: FastLLM
+                        handler Logger: FileLogger
+                    }
+                }
+            }
+
+            run MultiHandlerSupervisor;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let child = &prog.supervisors[0].children[0];
+        assert_eq!(child.handler_assignments.len(), 2);
+        assert_eq!(child.handler_assignments[0].effect.name, "Infer");
+        assert_eq!(child.handler_assignments[0].handler.name, "FastLLM");
+        assert_eq!(child.handler_assignments[1].effect.name, "Logger");
+        assert_eq!(child.handler_assignments[1].handler.name, "FileLogger");
     }
 }

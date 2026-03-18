@@ -2,6 +2,7 @@
 
 use crate::error::{SageError, SageResult};
 use crate::llm::LlmClient;
+use crate::session::{ProtocolViolation, SenderHandle, SessionId, SharedSessionRegistry};
 use std::future::Future;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -40,6 +41,12 @@ impl<T> AgentHandle<T> {
 pub struct Message {
     /// The message payload as a JSON value.
     pub payload: serde_json::Value,
+    /// Phase 3: Session ID for protocol tracking.
+    pub session_id: Option<SessionId>,
+    /// Phase 3: Handle for replying to this message.
+    pub sender: Option<SenderHandle>,
+    /// Phase 3: Type name for protocol validation.
+    pub type_name: Option<String>,
 }
 
 impl Message {
@@ -47,7 +54,32 @@ impl Message {
     pub fn new<T: serde::Serialize>(value: T) -> SageResult<Self> {
         Ok(Self {
             payload: serde_json::to_value(value)?,
+            session_id: None,
+            sender: None,
+            type_name: None,
         })
+    }
+
+    /// Create a new message with session context.
+    pub fn with_session<T: serde::Serialize>(
+        value: T,
+        session_id: SessionId,
+        sender: SenderHandle,
+        type_name: impl Into<String>,
+    ) -> SageResult<Self> {
+        Ok(Self {
+            payload: serde_json::to_value(value)?,
+            session_id: Some(session_id),
+            sender: Some(sender),
+            type_name: Some(type_name.into()),
+        })
+    }
+
+    /// Set the type name for this message.
+    #[must_use]
+    pub fn with_type_name(mut self, type_name: impl Into<String>) -> Self {
+        self.type_name = Some(type_name.into());
+        self
     }
 }
 
@@ -63,6 +95,12 @@ pub struct AgentContext<T> {
     message_rx: mpsc::Receiver<Message>,
     /// Whether emit has been called (prevents double-emit).
     emitted: bool,
+    /// Phase 3: The current message being handled (for reply()).
+    current_message: Option<Message>,
+    /// Phase 3: Session registry for protocol tracking.
+    session_registry: SharedSessionRegistry,
+    /// Phase 3: The role this agent plays in protocols.
+    agent_role: Option<String>,
 }
 
 impl<T> AgentContext<T> {
@@ -71,13 +109,28 @@ impl<T> AgentContext<T> {
         llm: LlmClient,
         result_tx: oneshot::Sender<T>,
         message_rx: mpsc::Receiver<Message>,
+        session_registry: SharedSessionRegistry,
     ) -> Self {
         Self {
             llm,
             result_tx: Some(result_tx),
             message_rx,
             emitted: false,
+            current_message: None,
+            session_registry,
+            agent_role: None,
         }
+    }
+
+    /// Set the role this agent plays in protocols.
+    pub fn set_role(&mut self, role: impl Into<String>) {
+        self.agent_role = Some(role.into());
+    }
+
+    /// Get the session registry.
+    #[must_use]
+    pub fn session_registry(&self) -> &SharedSessionRegistry {
+        &self.session_registry
     }
 
     /// Emit a value to the awaiter.
@@ -127,6 +180,9 @@ impl<T> AgentContext<T> {
             .await
             .ok_or_else(|| SageError::Agent("Message channel closed".to_string()))?;
 
+        // Phase 3: Store current message for reply()
+        self.current_message = Some(msg.clone());
+
         serde_json::from_value(msg.payload)
             .map_err(|e| SageError::Agent(format!("Failed to deserialize message: {e}")))
     }
@@ -143,6 +199,9 @@ impl<T> AgentContext<T> {
     {
         match tokio::time::timeout(timeout, self.message_rx.recv()).await {
             Ok(Some(msg)) => {
+                // Phase 3: Store current message for reply()
+                self.current_message = Some(msg.clone());
+
                 let value = serde_json::from_value(msg.payload)
                     .map_err(|e| SageError::Agent(format!("Failed to deserialize message: {e}")))?;
                 Ok(Some(value))
@@ -150,6 +209,64 @@ impl<T> AgentContext<T> {
             Ok(None) => Err(SageError::Agent("Message channel closed".to_string())),
             Err(_) => Ok(None), // Timeout
         }
+    }
+
+    /// Receive the raw message from the agent's mailbox.
+    ///
+    /// This blocks until a message is available. Returns the full Message
+    /// including session context.
+    pub async fn receive_raw(&mut self) -> SageResult<Message> {
+        let msg = self
+            .message_rx
+            .recv()
+            .await
+            .ok_or_else(|| SageError::Agent("Message channel closed".to_string()))?;
+
+        // Store current message for reply()
+        self.current_message = Some(msg.clone());
+
+        Ok(msg)
+    }
+
+    /// Set the current message context (for use in message handlers).
+    ///
+    /// This is called by generated code when entering a message handler.
+    pub fn set_current_message(&mut self, msg: Message) {
+        self.current_message = Some(msg);
+    }
+
+    /// Clear the current message context (for use after message handlers).
+    pub fn clear_current_message(&mut self) {
+        self.current_message = None;
+    }
+
+    /// Phase 3: Reply to the current message.
+    ///
+    /// This sends a response back to the sender of the current message.
+    /// Can only be called inside a message handler.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if called outside a message handler or if
+    /// the current message has no sender handle.
+    pub async fn reply<M: serde::Serialize>(&mut self, msg: M) -> SageResult<()> {
+        let current = self
+            .current_message
+            .as_ref()
+            .ok_or_else(|| SageError::from(ProtocolViolation::ReplyOutsideHandler))?;
+
+        let sender = current
+            .sender
+            .as_ref()
+            .ok_or_else(|| SageError::Agent("Message has no sender handle".to_string()))?;
+
+        sender.send(msg).await
+    }
+
+    /// Get the current message being handled (if any).
+    #[must_use]
+    pub fn current_message(&self) -> Option<&Message> {
+        self.current_message.as_ref()
     }
 }
 
@@ -166,7 +283,8 @@ where
     let (message_tx, message_rx) = mpsc::channel(32);
 
     let llm = LlmClient::from_env();
-    let ctx = AgentContext::new(llm, result_tx, message_rx);
+    let session_registry = crate::session::shared_registry();
+    let ctx = AgentContext::new(llm, result_tx, message_rx, session_registry);
 
     let join = tokio::spawn(async move { agent(ctx).await });
 

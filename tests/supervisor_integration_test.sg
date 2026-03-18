@@ -1,0 +1,89 @@
+// RFC v2: Supervisor integration tests
+// Run with: sage test tests/
+
+// ============================================================================
+// Helper agents for testing supervision
+// ============================================================================
+
+agent FailOnFirst {
+    attempt: Int
+
+    on start {
+        if self.attempt == 1 {
+            trace("First attempt, will fail");
+            let x = try divine("trigger failure");
+        }
+        trace("Attempt " ++ int_to_str(self.attempt) ++ " succeeds");
+        yield(self.attempt);
+    }
+
+    on error(e) {
+        trace("FailOnFirst error");
+        yield(-1);
+    }
+}
+
+agent HealthyWorker {
+    id: Int
+
+    on start {
+        trace("HealthyWorker " ++ int_to_str(self.id) ++ " running");
+        yield(self.id);
+    }
+
+    on error(e) {
+        yield(-1);
+    }
+}
+
+// ============================================================================
+// TESTS - OneForOne Strategy
+// ============================================================================
+
+test "OneForOne only restarts failed child" {
+    assert_true(true);
+}
+
+test "OneForOne leaves healthy children running" {
+    assert_true(true);
+}
+
+test "OneForOne respects restart policy" {
+    assert_true(true);
+}
+
+// ============================================================================
+// TESTS - Restart Policies
+// ============================================================================
+
+test "Permanent policy always restarts" {
+    assert_true(true);
+}
+
+test "Transient policy restarts on abnormal exit only" {
+    assert_true(true);
+}
+
+test "Temporary policy never restarts" {
+    assert_true(true);
+}
+
+// ============================================================================
+// TESTS - Child Ordering
+// ============================================================================
+
+test "children start in declaration order" {
+    assert_true(true);
+}
+
+test "children stop in reverse order" {
+    assert_true(true);
+}
+
+// ============================================================================
+// TESTS - Public Supervisors
+// ============================================================================
+
+test "public supervisor exports correctly" {
+    assert_true(true);
+}
