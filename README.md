@@ -63,11 +63,11 @@ run Coordinator;
 
 ## Status
 
-**v2.0.0** — The Steward Architecture release. Supervision trees, persistent beliefs, session types, effect handlers, and observability.
+**v2.0.1** — Extern functions (Rust FFI), plus The Steward Architecture. Supervision trees, persistent beliefs, session types, effect handlers, and observability.
 
 | | |
 |---|---|
-| **Latest** | [v2.0.0](https://github.com/sagelang/sage/releases/tag/v2.0.0) |
+| **Latest** | [v2.0.1](https://github.com/sagelang/sage/releases/tag/v2.0.1) |
 | **Extension** | `.sg` |
 | **Platforms** | macOS (ARM), Linux (x86_64, ARM) |
 | **Build time** | ~0.5s |
@@ -985,6 +985,7 @@ The compiler is written in ~9,000 lines of Rust, organised into focused crates:
 | `sage-checker` | Name resolution + type checker |
 | `sage-codegen` | Rust code generator |
 | `sage-runtime` | Async runtime, LLM integration |
+| `sage-persistence` | Checkpoint storage (SQLite, Postgres, file) |
 | `sage-sense` | Language Server Protocol (LSP) |
 | `sage-cli` | Command-line interface |
 
@@ -999,6 +1000,7 @@ sage/
 │   ├── sage-checker/      # Name resolution + type checker
 │   ├── sage-codegen/      # Rust code generator
 │   ├── sage-runtime/      # Runtime library (agents, LLM, etc.)
+│   ├── sage-persistence/  # Checkpoint storage layer
 │   ├── sage-sense/        # Language Server Protocol (LSP)
 │   └── sage-cli/          # CLI entry point
 ├── scripts/
