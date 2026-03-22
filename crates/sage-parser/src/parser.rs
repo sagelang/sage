@@ -621,6 +621,13 @@ fn unescape_string(s: &str) -> String {
                 Some('\\') => result.push('\\'),
                 Some('"') => result.push('"'),
                 Some('\'') => result.push('\''),
+                Some('x') => {
+                    // \xNN hex escape
+                    let hi = chars.next().unwrap_or('0');
+                    let lo = chars.next().unwrap_or('0');
+                    let code = u8::from_str_radix(&format!("{hi}{lo}"), 16).unwrap_or(b'?');
+                    result.push(code as char);
+                }
                 Some(other) => {
                     result.push('\\');
                     result.push(other);
@@ -2728,16 +2735,24 @@ fn parse_string_template(s: &str, span: &Span) -> Vec<StringPart> {
             }
         } else if ch == '\\' {
             if let Some(escaped) = chars.next() {
-                current.push(match escaped {
-                    'n' => '\n',
-                    't' => '\t',
-                    'r' => '\r',
-                    '\\' => '\\',
-                    '"' => '"',
-                    '{' => '{',
-                    '}' => '}',
-                    other => other,
-                });
+                if escaped == 'x' {
+                    // \xNN hex escape
+                    let hi = chars.next().unwrap_or('0');
+                    let lo = chars.next().unwrap_or('0');
+                    let code = u8::from_str_radix(&format!("{hi}{lo}"), 16).unwrap_or(b'?');
+                    current.push(code as char);
+                } else {
+                    current.push(match escaped {
+                        'n' => '\n',
+                        't' => '\t',
+                        'r' => '\r',
+                        '\\' => '\\',
+                        '"' => '"',
+                        '{' => '{',
+                        '}' => '}',
+                        other => other,
+                    });
+                }
             }
         } else {
             current.push(ch);

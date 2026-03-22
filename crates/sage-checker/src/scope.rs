@@ -811,6 +811,17 @@ impl SymbolTable {
             },
         );
 
+        // chr(Int) -> String — convert code point to single-character string
+        self.builtins.insert(
+            "chr",
+            BuiltinInfo {
+                name: "chr",
+                params: Some(vec![Type::Int]),
+                return_type: Type::String,
+                is_fallible: false,
+            },
+        );
+
         // str_len(String) -> Int
         self.builtins.insert(
             "str_len",

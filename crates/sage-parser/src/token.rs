@@ -296,7 +296,7 @@ pub enum Token {
     FloatLit,
 
     /// String literal (e.g., `"hello"` or `'hello'`).
-    /// Supports escape sequences: \n, \t, \r, \\, \", \'
+    /// Supports escape sequences: \n, \t, \r, \\, \", \', \xNN (hex)
     /// Both double and single quotes are allowed. Use single quotes inside
     /// interpolations when needing string literals: `"Result: {len('hello')}"`
     #[regex(r#""([^"\\]|\\.)*""#)]

@@ -57,6 +57,15 @@ pub fn str_pad_end(s: &str, target_len: i64, pad: &str) -> String {
     result
 }
 
+/// Convert a Unicode code point to a single-character string.
+/// Returns the Unicode replacement character for invalid code points.
+#[must_use]
+pub fn chr(code: i64) -> String {
+    char::from_u32(code as u32)
+        .unwrap_or('\u{FFFD}')
+        .to_string()
+}
+
 /// Slice a list by indices (bounds-safe).
 /// Indices are inclusive start, exclusive end.
 #[must_use]

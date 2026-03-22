@@ -240,6 +240,8 @@ struct Generator {
     extern_fn_names: std::collections::HashSet<String>,
     /// Subset of extern fns that are fallible (marked with `fails`)
     extern_fn_fallible: std::collections::HashSet<String>,
+    /// String constant names (need .to_string() when referenced)
+    string_consts: std::collections::HashSet<String>,
 }
 
 impl Generator {
@@ -254,6 +256,7 @@ impl Generator {
             current_agent_persistent_beliefs: Vec::new(),
             extern_fn_names: std::collections::HashSet::new(),
             extern_fn_fallible: std::collections::HashSet::new(),
+            string_consts: std::collections::HashSet::new(),
         }
     }
 
@@ -1107,6 +1110,7 @@ serde_json = "1"
         // String constants must use &'static str since .to_string() isn't const
         let is_string = matches!(const_decl.ty, TypeExpr::String);
         if is_string {
+            self.string_consts.insert(const_decl.name.name.clone());
             self.emit.write("&'static str");
         } else {
             self.emit_type(&const_decl.ty);
@@ -1120,8 +1124,7 @@ serde_json = "1"
             } = &const_decl.value
             {
                 self.emit.write("\"");
-                self.emit
-                    .write(&s.replace('\\', "\\\\").replace('"', "\\\""));
+                self.emit.write(&Self::escape_string_for_rust(s));
                 self.emit.write("\"");
             } else {
                 self.generate_expr(&const_decl.value);
@@ -2790,7 +2793,12 @@ serde_json = "1"
                     "MS_PER_MINUTE" => self.emit.write("60000_i64"),
                     "MS_PER_HOUR" => self.emit.write("3600000_i64"),
                     "MS_PER_DAY" => self.emit.write("86400000_i64"),
-                    _ => self.emit.write(&name.name),
+                    _ => {
+                        self.emit.write(&name.name);
+                        if self.string_consts.contains(&name.name) {
+                            self.emit.write(".to_string()");
+                        }
+                    }
                 }
             }
 
@@ -2961,6 +2969,12 @@ serde_json = "1"
                         self.generate_expr(&args[1]);
                         self.emit.write(", &");
                         self.generate_expr(&args[2]);
+                        self.emit.write(")");
+                    }
+
+                    "chr" => {
+                        self.emit.write("sage_runtime::stdlib::chr(");
+                        self.generate_expr(&args[0]);
                         self.emit.write(")");
                     }
 
@@ -3430,10 +3444,10 @@ serde_json = "1"
                             .write(").map_err(sage_runtime::SageError::agent)?");
                     }
                     "read_line" => {
-                        self.emit.write("sage_runtime::stdlib::read_line().map_err(sage_runtime::SageError::agent)?");
+                        self.emit.write("sage_runtime::stdlib::read_line().map_err(sage_runtime::SageError::agent)");
                     }
                     "read_all" => {
-                        self.emit.write("sage_runtime::stdlib::read_all().map_err(sage_runtime::SageError::agent)?");
+                        self.emit.write("sage_runtime::stdlib::read_all().map_err(sage_runtime::SageError::agent)");
                     }
                     "print_err" => {
                         self.emit.write("eprintln!(\"{}\", ");
@@ -4126,6 +4140,9 @@ serde_json = "1"
                         '\n' => self.emit.write_raw("\\n"),
                         '\r' => self.emit.write_raw("\\r"),
                         '\t' => self.emit.write_raw("\\t"),
+                        c if c.is_control() => {
+                            self.emit.write_raw(&format!("\\x{:02x}", c as u32));
+                        }
                         _ => self.emit.write_raw(&c.to_string()),
                     }
                 }
@@ -4134,12 +4151,28 @@ serde_json = "1"
         }
     }
 
+    fn escape_string_for_rust(s: &str) -> String {
+        let mut out = String::new();
+        for c in s.chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+                _ => out.push(c),
+            }
+        }
+        out
+    }
+
     fn emit_string_template(&mut self, template: &sage_parser::StringTemplate) {
         if !template.has_interpolations() {
             // Simple string literal
             if let Some(StringPart::Literal(s)) = template.parts.first() {
                 self.emit.write("\"");
-                self.emit.write_raw(s);
+                self.emit.write_raw(&Self::escape_string_for_rust(s));
                 self.emit.write("\".to_string()");
             }
             return;
@@ -4150,8 +4183,10 @@ serde_json = "1"
         for part in &template.parts {
             match part {
                 StringPart::Literal(s) => {
-                    // Escape braces for format string
-                    let escaped = s.replace('{', "{{").replace('}', "}}");
+                    // Escape for Rust string, then escape braces for format string
+                    let escaped = Self::escape_string_for_rust(s)
+                        .replace('{', "{{")
+                        .replace('}', "}}");
                     self.emit.write_raw(&escaped);
                 }
                 StringPart::Interpolation(_) => {
