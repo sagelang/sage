@@ -10,6 +10,7 @@ members = [
     "crates/sage-runtime-web",
     "crates/sage-sense",
     "crates/sage-cli",
+    "crates/sage-playground-engine",
 ]
 resolver = "2"
 
