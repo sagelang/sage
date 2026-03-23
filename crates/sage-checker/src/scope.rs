@@ -1741,6 +1741,58 @@ impl SymbolTable {
             },
         );
 
+        // json_escape(String) -> String
+        self.builtins.insert(
+            "json_escape",
+            BuiltinInfo {
+                name: "json_escape",
+                params: Some(vec![Type::String]),
+                return_type: Type::String,
+                is_fallible: false,
+            },
+        );
+
+        // =========================================================================
+        // Environment Variables
+        // =========================================================================
+
+        // env(String) -> Option<String>
+        self.builtins.insert(
+            "env",
+            BuiltinInfo {
+                name: "env",
+                params: Some(vec![Type::String]),
+                return_type: Type::Option(Box::new(Type::String)),
+                is_fallible: false,
+            },
+        );
+
+        // env_or(String, String) -> String
+        self.builtins.insert(
+            "env_or",
+            BuiltinInfo {
+                name: "env_or",
+                params: Some(vec![Type::String, Type::String]),
+                return_type: Type::String,
+                is_fallible: false,
+            },
+        );
+
+        // =========================================================================
+        // String Utilities
+        // =========================================================================
+
+        // str_truncate(String, Int) -> String
+        self.builtins.insert(
+            "str_truncate",
+            BuiltinInfo {
+                name: "str_truncate",
+                params: Some(vec![Type::String, Type::Int]),
+                return_type: Type::String,
+                is_fallible: false,
+            },
+        );
+
         // =========================================================================
         // RFC-0010: Option Utilities
         // =========================================================================

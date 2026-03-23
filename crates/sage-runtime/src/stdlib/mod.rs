@@ -5,6 +5,8 @@
 //! helpers for correct Unicode handling or complex logic.
 
 #[cfg(not(target_arch = "wasm32"))]
+mod env;
+#[cfg(not(target_arch = "wasm32"))]
 mod io;
 mod json;
 mod parsing;
@@ -12,11 +14,30 @@ mod string;
 mod time;
 
 #[cfg(not(target_arch = "wasm32"))]
+pub use env::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub use io::*;
 pub use json::*;
 pub use parsing::*;
 pub use string::*;
 pub use time::*;
+
+// WASM stubs for env functions that require OS access
+#[cfg(target_arch = "wasm32")]
+mod wasm_env {
+    #[must_use]
+    pub fn env_var(_key: &str) -> Option<String> {
+        None
+    }
+
+    #[must_use]
+    pub fn env_or(_key: &str, default: &str) -> String {
+        default.to_string()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub use wasm_env::*;
 
 // WASM stubs for I/O functions that require filesystem/stdin access
 #[cfg(target_arch = "wasm32")]

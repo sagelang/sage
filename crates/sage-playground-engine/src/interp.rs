@@ -996,6 +996,46 @@ impl Interpreter {
                 let c = char::from_u32(n as u32).unwrap_or('\u{FFFD}');
                 Ok(Some(Value::String(c.to_string())))
             }
+            "json_escape" => {
+                let s = args.first().ok_or(InterpError::Runtime("json_escape needs 1 arg".into()))?.as_string()?;
+                let mut out = String::with_capacity(s.len() + 16);
+                for c in s.chars() {
+                    match c {
+                        '"' => out.push_str("\\\""),
+                        '\\' => out.push_str("\\\\"),
+                        '\n' => out.push_str("\\n"),
+                        '\r' => out.push_str("\\r"),
+                        '\t' => out.push_str("\\t"),
+                        c if (c as u32) < 0x20 => {
+                            out.push_str(&format!("\\u{:04x}", c as u32));
+                        }
+                        c => out.push(c),
+                    }
+                }
+                Ok(Some(Value::String(out)))
+            }
+            "str_truncate" => {
+                let s = args.get(0).ok_or(InterpError::Runtime("str_truncate needs 2 args".into()))?.as_string()?;
+                let max_len = args.get(1).ok_or(InterpError::Runtime("str_truncate needs 2 args".into()))?.as_int()?;
+                let max = max_len.max(0) as usize;
+                let char_count = s.chars().count();
+                let result = if char_count <= max {
+                    s.to_string()
+                } else {
+                    let truncated: String = s.chars().take(max.saturating_sub(3)).collect();
+                    format!("{}...", truncated)
+                };
+                Ok(Some(Value::String(result)))
+            }
+            "env" => {
+                // In WASM playground, env vars are not available — always returns None/Unit
+                Ok(Some(Value::Unit))
+            }
+            "env_or" => {
+                // In WASM playground, env vars are not available — always returns default
+                let default = args.get(1).ok_or(InterpError::Runtime("env_or needs 2 args".into()))?.as_string()?;
+                Ok(Some(Value::String(default.to_string())))
+            }
             _ => Ok(None),
         }
     }

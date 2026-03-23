@@ -3962,6 +3962,38 @@ serde_json = "1"
                         self.generate_expr(&args[0]);
                         self.emit.write(".to_string())");
                     }
+                    "json_escape" => {
+                        self.emit.write("sage_runtime::stdlib::json_escape(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(")");
+                    }
+
+                    // =========================================================================
+                    // Environment Variables
+                    // =========================================================================
+                    "env" => {
+                        self.emit.write("sage_runtime::stdlib::env_var(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(")");
+                    }
+                    "env_or" => {
+                        self.emit.write("sage_runtime::stdlib::env_or(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(", &");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
+
+                    // =========================================================================
+                    // String Utilities
+                    // =========================================================================
+                    "str_truncate" => {
+                        self.emit.write("sage_runtime::stdlib::str_truncate(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(", ");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(")");
+                    }
 
                     name if self.extern_fn_names.contains(name) => {
                         // Extern function — call into sage_extern module

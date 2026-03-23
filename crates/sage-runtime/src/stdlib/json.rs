@@ -68,6 +68,28 @@ pub fn json_stringify_string(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| format!("\"{}\"", s))
 }
 
+/// Escape a string for safe embedding inside a JSON value.
+/// Handles quotes, backslashes, newlines, tabs, and control characters.
+/// Unlike json_stringify, this does NOT wrap the result in quotes.
+#[must_use]
+pub fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 16);
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,5 +150,15 @@ mod tests {
     fn test_json_stringify_string() {
         assert_eq!(json_stringify_string("hello"), r#""hello""#);
         assert_eq!(json_stringify_string("hello\nworld"), r#""hello\nworld""#);
+    }
+
+    #[test]
+    fn test_json_escape() {
+        assert_eq!(json_escape("hello"), "hello");
+        assert_eq!(json_escape("hello\nworld"), "hello\\nworld");
+        assert_eq!(json_escape(r#"say "hi""#), r#"say \"hi\""#);
+        assert_eq!(json_escape("back\\slash"), "back\\\\slash");
+        assert_eq!(json_escape("tab\there"), "tab\\there");
+        assert_eq!(json_escape("cr\rhere"), "cr\\rhere");
     }
 }

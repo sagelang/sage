@@ -81,6 +81,20 @@ pub fn list_slice<T: Clone>(list: Vec<T>, start: i64, end: i64) -> Vec<T> {
     list[start..end].to_vec()
 }
 
+/// Truncate a string to a maximum character length (Unicode-aware).
+/// If truncated, appends "..." to indicate continuation.
+#[must_use]
+pub fn str_truncate(s: &str, max_len: i64) -> String {
+    let max = max_len.max(0) as usize;
+    let char_count = s.chars().count();
+    if char_count <= max {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max.saturating_sub(3)).collect();
+        format!("{}...", truncated)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,5 +138,16 @@ mod tests {
         assert_eq!(str_pad_end("5", 3, "0"), "500");
         assert_eq!(str_pad_end("hello", 3, "x"), "hello");
         assert_eq!(str_pad_end("a", 5, "xy"), "axyxy");
+    }
+
+    #[test]
+    fn test_str_truncate() {
+        assert_eq!(str_truncate("hello", 10), "hello");
+        assert_eq!(str_truncate("hello world", 8), "hello...");
+        assert_eq!(str_truncate("hi", 2), "hi");
+        assert_eq!(str_truncate("hello", 5), "hello");
+        assert_eq!(str_truncate("hello world", 3), "...");
+        // Unicode test
+        assert_eq!(str_truncate("héllo wörld", 8), "héllo...");
     }
 }
