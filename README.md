@@ -1055,6 +1055,7 @@ sage/
 | [sagelang/walter-sg](https://github.com/sagelang/walter-sg) | Walter — Victorian Discord bot |
 | [sagelang/sagentic-debate](https://github.com/sagelang/sagentic-debate) | Multi-agent debate showcase |
 | [sagelang/sage-playground](https://github.com/sagelang/sage-playground) | Online playground (WASM) |
+| [sagelang/oswyn](https://github.com/sagelang/oswyn) | Oswyn — AI-powered Sage companion chatbot |
 
 ## License
 
