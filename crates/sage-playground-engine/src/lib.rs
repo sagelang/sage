@@ -128,6 +128,57 @@ pub fn run_sage(source: &str) -> RunResult {
         };
     }
 
+    // Guard: `run Agent { beliefs };` is not valid — catch this common mistake.
+    // The parser's `run_stmt` only accepts `run Name;`, so `run Name { ... };`
+    // silently fails (the `.or_not()` swallows the error), leaving run_agent
+    // as None even though agents were parsed successfully.
+    if program.run_agent.is_none() && !program.agents.is_empty() {
+        // Check if the source contains a `run` followed by `{` (belief init attempt)
+        let has_run_with_braces = {
+            let trimmed = source.trim();
+            // Look for `run <name> {` pattern in the source
+            let mut found = false;
+            for line in trimmed.lines() {
+                let line = line.trim();
+                if line.starts_with("run ") {
+                    let after_run = line["run ".len()..].trim();
+                    if after_run.contains('{') {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            found
+        };
+
+        let error = if has_run_with_braces {
+            "Oswyn suggests: `run AgentName { ... }` is not valid syntax. \
+             You cannot pass beliefs to `run`. Use `run AgentName;` instead, \
+             and initialise values with `let` inside `on start`.\n\
+             Example:\n  \
+             agent Main {\n    \
+               on start {\n      \
+                 let max = 6;  // use let, not beliefs\n      \
+                 yield(0);\n    \
+               }\n  \
+             }\n  \
+             run Main;"
+                .to_string()
+        } else {
+            "Missing `run` statement. Add `run AgentName;` at the end of your \
+             program to specify the entry point.\n\
+             Example: run Main;"
+                .to_string()
+        };
+
+        return RunResult {
+            output: vec![],
+            result: String::new(),
+            error,
+            success: false,
+        };
+    }
+
     // Step 3: Interpret
     let mut interp = Interpreter::new();
     match interp.run(&program) {
@@ -220,6 +271,44 @@ run Main;
         assert!(
             error.contains("Execution limit"),
             "should mention execution limit, got: {error}"
+        );
+    }
+
+    #[test]
+    fn run_with_beliefs_gives_helpful_error() {
+        let source = r#"
+agent Hangman {
+    max_attempts: Int
+
+    on start {
+        yield(0);
+    }
+}
+
+run Hangman { max_attempts: 6 };
+"#;
+        let (success, _output, error) = run(source);
+        assert!(!success, "should fail for run with beliefs");
+        assert!(
+            error.contains("run AgentName;"),
+            "should suggest correct run syntax, got: {error}"
+        );
+    }
+
+    #[test]
+    fn missing_run_gives_helpful_error() {
+        let source = r#"
+agent Main {
+    on start {
+        yield(0);
+    }
+}
+"#;
+        let (success, _output, error) = run(source);
+        assert!(!success, "should fail without run statement");
+        assert!(
+            error.contains("Missing `run`"),
+            "should mention missing run, got: {error}"
         );
     }
 }
