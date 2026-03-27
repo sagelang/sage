@@ -892,14 +892,32 @@ impl Interpreter {
                 Ok(Some(Value::Int(n)))
             }
             "contains" => {
-                let s = args.get(0).ok_or(InterpError::Runtime("contains needs 2 args".into()))?.as_string()?;
-                let sub = args.get(1).ok_or(InterpError::Runtime("contains needs 2 args".into()))?.as_string()?;
-                Ok(Some(Value::Bool(s.contains(sub))))
+                let first = args.get(0).ok_or(InterpError::Runtime("contains needs 2 args".into()))?;
+                let second = args.get(1).ok_or(InterpError::Runtime("contains needs 2 args".into()))?;
+                match first {
+                    Value::String(s) => {
+                        let sub = second.as_string()?;
+                        Ok(Some(Value::Bool(s.contains(sub))))
+                    }
+                    Value::List(items) => {
+                        let found = items.iter().any(|item| self.values_equal(item, second));
+                        Ok(Some(Value::Bool(found)))
+                    }
+                    other => Err(InterpError::Type(format!(
+                        "contains expects String or List, got {}",
+                        other.type_name()
+                    ))),
+                }
             }
             "split" => {
                 let s = args.get(0).ok_or(InterpError::Runtime("split needs 2 args".into()))?.as_string()?;
                 let sep = args.get(1).ok_or(InterpError::Runtime("split needs 2 args".into()))?.as_string()?;
-                let parts: Vec<Value> = s.split(sep).map(|p| Value::String(p.to_string())).collect();
+                let parts: Vec<Value> = if sep.is_empty() {
+                    // Split into individual characters (match compiled Sage behaviour)
+                    s.chars().map(|c| Value::String(c.to_string())).collect()
+                } else {
+                    s.split(sep).map(|p| Value::String(p.to_string())).collect()
+                };
                 Ok(Some(Value::List(parts)))
             }
             "trim" => {

@@ -6102,4 +6102,54 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parse_hangman_code_valid() {
+        // Ensure syntactically valid code with functions outside agent
+        // parses correctly with no errors and a run_agent set.
+        let source = r#"
+fn display_word(word: String, guessed: List<String>) -> String {
+    let letters = split(word, "");
+    let result: List<String> = [];
+    for ch in letters {
+        if contains(guessed, ch) {
+            result = push(result, ch);
+        } else {
+            result = push(result, "_");
+        }
+    }
+    return join(result, " ");
+}
+
+fn check_win(word: String, guessed: List<String>) -> Bool {
+    let letters = split(word, "");
+    for ch in letters {
+        if !contains(guessed, ch) {
+            return false;
+        }
+    }
+    return true;
+}
+
+agent Hangman {
+    on start {
+        let word = "sage";
+        let guessed: List<String> = [];
+        print(display_word(word, guessed));
+        yield(0);
+    }
+}
+
+run Hangman;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "should have no parse errors: {errors:?}");
+        let prog = prog.expect("should parse");
+        assert_eq!(prog.functions.len(), 2);
+        assert_eq!(prog.agents.len(), 1);
+        assert_eq!(prog.agents[0].name.name, "Hangman");
+        assert!(prog.run_agent.is_some(), "run_agent should be set");
+        assert_eq!(prog.run_agent.as_ref().unwrap().name, "Hangman");
+    }
+
 }

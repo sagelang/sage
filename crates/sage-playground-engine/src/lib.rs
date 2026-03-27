@@ -145,3 +145,60 @@ pub fn run_sage(source: &str) -> RunResult {
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Run source through the full playground pipeline (lex → parse → interpret)
+    /// and return (success, output_lines, error_string).
+    fn run(source: &str) -> (bool, Vec<String>, String) {
+        let r = run_sage(source);
+        (r.success, r.output, r.error)
+    }
+
+    #[test]
+    fn hangman_code_runs() {
+        let source = r#"
+fn display_word(word: String, guessed: List<String>) -> String {
+    let letters = split(word, "");
+    let result: List<String> = [];
+    for ch in letters {
+        if contains(guessed, ch) {
+            result = push(result, ch);
+        } else {
+            result = push(result, "_");
+        }
+    }
+    return join(result, " ");
+}
+
+fn check_win(word: String, guessed: List<String>) -> Bool {
+    let letters = split(word, "");
+    for ch in letters {
+        if !contains(guessed, ch) {
+            return false;
+        }
+    }
+    return true;
+}
+
+agent Hangman {
+    on start {
+        let word = "sage";
+        let guessed: List<String> = ["s", "a"];
+        print(display_word(word, guessed));
+        yield(0);
+    }
+}
+
+run Hangman;
+"#;
+        let (success, output, error) = run(source);
+        eprintln!("success: {success}");
+        eprintln!("output: {output:?}");
+        eprintln!("error: {error}");
+        assert!(success, "should succeed, got error: {error}");
+        assert!(!output.is_empty(), "should have print output");
+    }
+}
