@@ -945,19 +945,33 @@ fn agent_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseE
         .or_not()
         .map(|follows| follows.unwrap_or_default());
 
+    // Agent body: { [use Tools] beliefs... handlers... }
+    // Uses nested_delimiters recovery so that invalid constructs inside the
+    // agent body (e.g. `fn` declarations) cause a parse error instead of
+    // silently swallowing the entire program via top-level recovery.
+    let agent_body = tool_use
+        .then(belief.repeated())
+        .then(handler.repeated())
+        .delimited_by(just(Token::LBrace), just(Token::RBrace))
+        .recover_with(nested_delimiters(
+            Token::LBrace,
+            Token::RBrace,
+            [
+                (Token::LParen, Token::RParen),
+                (Token::LBracket, Token::RBracket),
+            ],
+            |_span| ((vec![], vec![]), vec![]),
+        ));
+
     just(Token::KwPub)
         .or_not()
         .then_ignore(just(Token::KwAgent))
         .then(ident_token_parser(src3.clone()))
         .then(receives_clause)
         .then(follows_clause)
-        .then_ignore(just(Token::LBrace))
-        .then(tool_use)
-        .then(belief.repeated())
-        .then(handler.repeated())
-        .then_ignore(just(Token::RBrace))
+        .then(agent_body)
         .map_with_span(
-            move |((((((is_pub, name), receives), follows), tool_uses), beliefs), handlers),
+            move |((((is_pub, name), receives), follows), ((tool_uses, beliefs), handlers)),
                   span: Range<usize>| {
                 TopLevel::Agent(AgentDecl {
                     is_pub: is_pub.is_some(),
@@ -6052,4 +6066,40 @@ mod tests {
         assert_eq!(child.handler_assignments[1].effect.name, "Logger");
         assert_eq!(child.handler_assignments[1].handler.name, "FileLogger");
     }
+
+    #[test]
+    fn recover_fn_with_self_inside_agent() {
+        // Regression: chumsky's skip_then_retry_until silently swallowed
+        // the entire program when `fn method(self)` appeared inside an
+        // agent body, because `self` isn't a valid fn parameter and the
+        // double recovery failure produced zero errors.  Now the agent
+        // body uses nested_delimiters recovery so parsing continues.
+        let source = r#"
+            agent Test {
+                name: String
+
+                fn helper(self) -> String {
+                    return "test";
+                }
+
+                on start {
+                    yield("done");
+                }
+            }
+            run Test
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(!errors.is_empty(), "should have parse errors for fn inside agent");
+        // The recovery should produce a program — the agent body is
+        // recovered via nested_delimiters, but the run statement may or
+        // may not survive depending on chumsky's recovery path.
+        let prog = prog.expect("should produce partial AST");
+        // Verify that the agent was recovered (even if empty)
+        assert!(
+            prog.agents.iter().any(|a| a.name.name == "Test"),
+            "agent Test should survive recovery"
+        );
+    }
+
 }

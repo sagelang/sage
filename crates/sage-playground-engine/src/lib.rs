@@ -107,6 +107,27 @@ pub fn run_sage(source: &str) -> RunResult {
         }
     };
 
+    // Guard: if the parser recovered from errors but produced an empty program
+    // (no run statement, no agents), give a helpful error instead of the
+    // confusing "No 'run' entry point" runtime message.
+    if program.run_agent.is_none() && program.agents.is_empty() {
+        return RunResult {
+            output: vec![],
+            result: String::new(),
+            error: "No agents found. Every Sage program needs at least one agent \
+                    with `run AgentName` at the end.\n\
+                    Example:\n  \
+                    agent Main {\n    \
+                      on start {\n      \
+                        yield(42);\n    \
+                      }\n  \
+                    }\n  \
+                    run Main"
+                .to_string(),
+            success: false,
+        };
+    }
+
     // Step 3: Interpret
     let mut interp = Interpreter::new();
     match interp.run(&program) {
