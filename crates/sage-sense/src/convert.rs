@@ -49,7 +49,7 @@ pub fn parse_error_to_diagnostic(
             "sage::parser::syntax".to_string(),
         )),
         source: Some("sage".to_string()),
-        message: format!("{}", error),
+        message: sage_parser::format_error(error),
         ..Default::default()
     })
 }

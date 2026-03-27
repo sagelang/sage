@@ -71,7 +71,7 @@ pub fn load_single_file(path: &Path) -> Result<ModuleTree, Vec<LoadError>> {
     if !parse_errors.is_empty() {
         return Err(vec![LoadError::ParseError {
             file: path.to_path_buf(),
-            errors: parse_errors.iter().map(|e| format!("{e}")).collect(),
+            errors: parse_errors.iter().map(sage_parser::format_error).collect(),
         }]);
     }
 
@@ -374,7 +374,7 @@ fn load_test_file(path: &Path) -> Result<TestFile, Vec<LoadError>> {
     if !parse_errors.is_empty() {
         return Err(vec![LoadError::ParseError {
             file: path.to_path_buf(),
-            errors: parse_errors.iter().map(|e| format!("{e}")).collect(),
+            errors: parse_errors.iter().map(sage_parser::format_error).collect(),
         }]);
     }
 
@@ -452,7 +452,7 @@ impl ModuleLoader {
         if !parse_errors.is_empty() {
             return Err(vec![LoadError::ParseError {
                 file: file_path.to_path_buf(),
-                errors: parse_errors.iter().map(|e| format!("{e}")).collect(),
+                errors: parse_errors.iter().map(sage_parser::format_error).collect(),
             }]);
         }
 

@@ -35,6 +35,7 @@ mod token;
 // Parser modules
 pub mod ast;
 pub mod formatter;
+pub mod hints;
 mod parser;
 pub mod span;
 mod ty;
@@ -49,6 +50,7 @@ pub use logos::Logos;
 // Parser exports
 pub use ast::*;
 pub use formatter::format;
+pub use hints::format_error;
 pub use parser::{parse, ParseError};
 pub use span::{Ident, Span};
 pub use ty::TypeExpr;

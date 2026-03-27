@@ -84,7 +84,7 @@ pub fn run_sage(source: &str) -> RunResult {
     if !parse_errors.is_empty() {
         let msg = parse_errors
             .iter()
-            .map(|e| format!("{e}"))
+            .map(sage_parser::format_error)
             .collect::<Vec<_>>()
             .join("\n");
         return RunResult {
